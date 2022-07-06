@@ -40,6 +40,7 @@ import org.opensearch.common.util.FeatureFlags;
 import org.opensearch.cluster.routing.allocation.AwarenessReplicaBalance;
 import org.opensearch.index.IndexModule;
 import org.opensearch.index.IndexingPressureService;
+import org.opensearch.index.translog.RemoteBlobStoreInternalTranslogFactory;
 import org.opensearch.indices.replication.SegmentReplicationSourceFactory;
 import org.opensearch.indices.replication.SegmentReplicationTargetService;
 import org.opensearch.indices.replication.SegmentReplicationSourceService;
@@ -673,7 +674,8 @@ public class Node implements Closeable {
                 Map.copyOf(directoryFactories),
                 searchModule.getValuesSourceRegistry(),
                 recoveryStateFactories,
-                remoteDirectoryFactory
+                remoteDirectoryFactory,
+                repositoriesServiceReference::get
             );
 
             final AliasValidator aliasValidator = new AliasValidator();
