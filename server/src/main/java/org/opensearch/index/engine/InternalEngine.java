@@ -103,12 +103,7 @@ import org.opensearch.index.seqno.SeqNoStats;
 import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.OpenSearchMergePolicy;
 import org.opensearch.index.shard.ShardId;
-import org.opensearch.index.translog.Translog;
-import org.opensearch.index.translog.TranslogCorruptedException;
-import org.opensearch.index.translog.TranslogDeletionPolicy;
-import org.opensearch.index.translog.TranslogManager;
-import org.opensearch.index.translog.TranslogException;
-import org.opensearch.index.translog.InternalTranslogManager;
+import org.opensearch.index.translog.*;
 import org.opensearch.index.translog.listener.TranslogEventListener;
 import org.opensearch.index.translog.listener.CompositeTranslogEventListener;
 import org.opensearch.search.suggest.completion.CompletionStats;
@@ -290,7 +285,7 @@ public class InternalEngine extends Engine {
                     translogUUID,
                     new CompositeTranslogEventListener(Arrays.asList(internalTranslogEventListener, translogEventListener), shardId),
                     this::ensureOpen,
-                    engineConfig.getTranslogFactory()
+                    config().getTranslogFactory()
                 );
                 this.translogManager = translogManagerRef;
                 this.softDeletesPolicy = newSoftDeletesPolicy();
