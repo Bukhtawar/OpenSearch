@@ -553,7 +553,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 () -> globalCheckpointSyncer.accept(shardId),
                 retentionLeaseSyncer,
                 circuitBreakerService,
-                this.indexSettings.isSegRepEnabled() && this.indexSettings.isRemoteStoreEnabled()
+                this.indexSettings.isSegRepEnabled() && this.indexSettings.isRemoteTranslogStoreEnabled()
                     ? new RemoteBlobStoreInternalTranslogFactory(repositoriesServiceSupplier, clusterService, threadPool)
                     : new InternalTranslogFactory(),
                 this.indexSettings.isSegRepEnabled() && routing.primary() ? checkpointPublisher : null,
