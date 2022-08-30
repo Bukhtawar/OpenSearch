@@ -19,4 +19,5 @@ public interface TransferService {
 
     void uploadFile(final FileSnapshot fileSnapshot, Iterable<String> remotePath) throws IOException;
 
+    FileSnapshot downloadFile(String filename, Iterable<String> remotePath) throws IOException;
 }

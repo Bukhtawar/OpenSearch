@@ -19,6 +19,7 @@ import org.opensearch.index.translog.FileSnapshot;
 import org.opensearch.threadpool.ThreadPool;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 
 /**
  * Service that handles remote transfer of translog related operations
@@ -75,5 +76,11 @@ public class BlobStoreTransferService implements TransferService {
         } catch (Exception ex) {
             logger.warn(() -> new ParameterizedMessage("Failed to upload some blobs"), ex);
         }
+    }
+
+    @Override
+    public FileSnapshot downloadFile(String filename, Iterable<String> remotePath) throws IOException {
+        blobStore.blobContainer((BlobPath) remotePath).readBlob(filename);
+        return null;
     }
 }

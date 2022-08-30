@@ -58,6 +58,7 @@ public class RemoteFsTranslog extends Translog {
         );
         try {
             final Checkpoint checkpoint = readCheckpoint(location);
+            //final Checkpoint checkpoint = downloadTranslogFiles();
             this.readers.addAll(recoverFromFiles(checkpoint));
             if (readers.isEmpty()) {
                 throw new IllegalStateException("at least one reader must be recovered");
@@ -88,6 +89,11 @@ public class RemoteFsTranslog extends Translog {
             IOUtils.closeWhileHandlingException(readers);
             throw e;
         }
+    }
+
+    private Checkpoint downloadTranslogFiles() {
+        RemoteTranslogMetadata translogMetadata = translogTransferManager.downloadTranslogMetadata();
+        return null;
     }
 
     /** recover all translog files found on disk */
@@ -213,6 +219,9 @@ public class RemoteFsTranslog extends Translog {
                     throw e;
                 }
             }
+        }
+        if(generation == null) {
+            generation = current.getGeneration();
         }
         return upload(primaryTerm, generation);
     }

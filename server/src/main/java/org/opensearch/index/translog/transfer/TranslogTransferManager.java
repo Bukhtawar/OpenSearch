@@ -15,6 +15,7 @@ import org.opensearch.ExceptionsHelper;
 import org.opensearch.action.ActionListener;
 import org.opensearch.action.LatchedActionListener;
 import org.opensearch.common.blobstore.BlobPath;
+import org.opensearch.common.bytes.BytesReference;
 import org.opensearch.common.io.stream.BytesStreamOutput;
 import org.opensearch.index.translog.FileSnapshot;
 import org.opensearch.index.translog.RemoteTranslogMetadata;
@@ -117,6 +118,10 @@ public class TranslogTransferManager {
         }
     }
 
+    public RemoteTranslogMetadata downloadTranslogMetadata() {
+        return null;
+    }
+
     private FileSnapshot prepareMetadata(TransferSnapshot transferSnapshot) throws IOException {
         RemoteTranslogMetadata remoteTranslogMetadata = new RemoteTranslogMetadata(
             transferSnapshot.getPrimaryTerm(),
@@ -140,7 +145,7 @@ public class TranslogTransferManager {
             remoteTranslogMetadata.writeTo(output);
             try (
                 CheckedInputStream stream = new CheckedInputStream(
-                    new ByteArrayInputStream(output.bytes().streamInput().readByteArray()),
+                    new ByteArrayInputStream(BytesReference.toBytes(output.bytes())),
                     new CRC32()
                 )
             ) {
