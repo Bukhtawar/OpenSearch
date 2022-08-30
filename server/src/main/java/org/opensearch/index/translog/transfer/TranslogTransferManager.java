@@ -17,14 +17,19 @@ import org.opensearch.action.LatchedActionListener;
 import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.bytes.BytesReference;
 import org.opensearch.common.io.stream.BytesStreamOutput;
+import org.opensearch.common.io.stream.InputStreamStreamInput;
 import org.opensearch.index.translog.FileSnapshot;
 import org.opensearch.index.translog.RemoteTranslogMetadata;
 import org.opensearch.index.translog.transfer.listener.FileTransferListener;
 import org.opensearch.index.translog.transfer.listener.TranslogTransferListener;
 
 import java.io.ByteArrayInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,7 +110,8 @@ public class TranslogTransferManager {
                 Thread.currentThread().interrupt();
             }
             if (exceptionList.isEmpty()) {
-                transferService.uploadFile(prepareMetadata(translogCheckpointTransferSnapshot), remoteTransferMetadataPath);
+                RemoteTranslogMetadata metadata = prepareMetadata(translogCheckpointTransferSnapshot);
+                transferService.uploadFile(getSnapshotOfMetadata(metadata), remoteTransferMetadataPath);
                 translogTransferListener.onUploadComplete(translogCheckpointTransferSnapshot);
             } else {
                 translogTransferListener.onUploadFailed(translogCheckpointTransferSnapshot, ExceptionsHelper.multiple(exceptionList));
@@ -118,11 +124,26 @@ public class TranslogTransferManager {
         }
     }
 
-    public RemoteTranslogMetadata downloadTranslogMetadata() {
-        return null;
+    public boolean downloadTranslog(String primaryTerm, String generation, Path location) throws IOException {
+        try(InputStream translogFileInputStream = transferService.readFile("translog-" + generation + ".tlog", remoteBaseTransferPath.add(primaryTerm))) {
+            try(FileOutputStream fileOutputStream = new FileOutputStream(String.valueOf(location.resolve("translog-" + generation + ".tlog")))) {
+                fileOutputStream.write(translogFileInputStream.readAllBytes());
+            }
+        }
+        try(InputStream checkpointFileInputStream = transferService.readFile("translog-" + generation + ".ckp", remoteBaseTransferPath.add(primaryTerm))) {
+            try(FileOutputStream fileOutputStream = new FileOutputStream(String.valueOf(location.resolve("translog-" + generation + ".ckp")))) {
+                fileOutputStream.write(checkpointFileInputStream.readAllBytes());
+            }
+        }
+        return true;
     }
 
-    private FileSnapshot prepareMetadata(TransferSnapshot transferSnapshot) throws IOException {
+    public RemoteTranslogMetadata readRemoteTranslogMetadata() throws IOException {
+        List<String> metadataFilenames = new ArrayList<>(transferService.listFilesByPrefix("metadata", remoteTransferMetadataPath));
+        return new RemoteTranslogMetadata(new InputStreamStreamInput(transferService.readFile(metadataFilenames.get(0), remoteTransferMetadataPath)));
+    }
+
+    private RemoteTranslogMetadata prepareMetadata(TransferSnapshot transferSnapshot) throws IOException {
         RemoteTranslogMetadata remoteTranslogMetadata = new RemoteTranslogMetadata(
             transferSnapshot.getPrimaryTerm(),
             transferSnapshot.getGeneration(),
@@ -135,11 +156,15 @@ public class TranslogTransferManager {
         })
             .collect(
                 Collectors.toMap(
-                    snapshot -> Long.toString(snapshot.getGeneration(), Character.MAX_RADIX),
-                    snapshot -> Long.toString(snapshot.getPrimaryTerm(), Character.MAX_RADIX)
+                    snapshot -> Long.toString(snapshot.getGeneration()),
+                    snapshot -> Long.toString(snapshot.getPrimaryTerm())
                 )
             );
         remoteTranslogMetadata.setGenerationToPrimaryTermMapper(new HashMap<>(generationPrimaryTermMap));
+        return remoteTranslogMetadata;
+    }
+
+    private FileSnapshot getSnapshotOfMetadata(RemoteTranslogMetadata remoteTranslogMetadata) throws IOException {
         FileSnapshot fileSnapshot;
         try (BytesStreamOutput output = new BytesStreamOutput()) {
             remoteTranslogMetadata.writeTo(output);

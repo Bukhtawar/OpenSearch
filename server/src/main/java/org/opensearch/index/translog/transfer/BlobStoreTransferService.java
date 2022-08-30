@@ -20,6 +20,8 @@ import org.opensearch.threadpool.ThreadPool;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.util.Collection;
 
 /**
  * Service that handles remote transfer of translog related operations
@@ -79,8 +81,12 @@ public class BlobStoreTransferService implements TransferService {
     }
 
     @Override
-    public FileSnapshot downloadFile(String filename, Iterable<String> remotePath) throws IOException {
-        blobStore.blobContainer((BlobPath) remotePath).readBlob(filename);
-        return null;
+    public InputStream readFile(String filename, Iterable<String> remotePath) throws IOException {
+        return blobStore.blobContainer((BlobPath) remotePath).readBlob(filename);
+    }
+
+    @Override
+    public Collection<String> listFilesByPrefix(String prefix, Iterable<String> remotePath) throws IOException {
+        return blobStore.blobContainer((BlobPath) remotePath).listBlobsByPrefix(prefix).keySet();
     }
 }

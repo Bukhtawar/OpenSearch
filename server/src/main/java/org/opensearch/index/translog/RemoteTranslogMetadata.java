@@ -39,7 +39,7 @@ public class RemoteTranslogMetadata implements Writeable, Comparable<RemoteTrans
         this.timeStamp = System.currentTimeMillis();
     }
 
-    RemoteTranslogMetadata(StreamInput in) throws IOException {
+    public RemoteTranslogMetadata(StreamInput in) throws IOException {
         this.primaryTerm = in.readLong();
         this.generation = in.readLong();
         this.minTranslogGeneration = in.readLong();
@@ -59,15 +59,16 @@ public class RemoteTranslogMetadata implements Writeable, Comparable<RemoteTrans
         return minTranslogGeneration;
     }
 
+    public Map<String, Object> setGenerationToPrimaryTermMapper() {
+        return generationToPrimaryTermMapper.get();
+    }
+
     public void setGenerationToPrimaryTermMapper(Map<String, Object> generationToPrimaryTermMap) {
         generationToPrimaryTermMapper.set(generationToPrimaryTermMap);
     }
 
     public String getMetadataFileName() {
-        return String.join(
-            METADATA_SEPARATOR,
-            Arrays.asList(String.valueOf(primaryTerm), String.valueOf(generation), String.valueOf(timeStamp))
-        );
+        return "metadata";
     }
 
     @Override

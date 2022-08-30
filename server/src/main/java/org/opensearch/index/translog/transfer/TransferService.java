@@ -12,6 +12,8 @@ import org.opensearch.action.ActionListener;
 import org.opensearch.index.translog.FileSnapshot;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.util.Collection;
 
 public interface TransferService {
 
@@ -19,5 +21,7 @@ public interface TransferService {
 
     void uploadFile(final FileSnapshot fileSnapshot, Iterable<String> remotePath) throws IOException;
 
-    FileSnapshot downloadFile(String filename, Iterable<String> remotePath) throws IOException;
+    Collection<String> listFilesByPrefix(String prefix, Iterable<String> remotePath) throws IOException;
+
+    InputStream readFile(String filename, Iterable<String> remotePath) throws IOException;
 }

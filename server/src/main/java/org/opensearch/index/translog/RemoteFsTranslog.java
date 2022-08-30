@@ -24,8 +24,10 @@ import org.opensearch.threadpool.ThreadPool;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
@@ -57,8 +59,8 @@ public class RemoteFsTranslog extends Translog {
             fileTransferTracker::exclusionFilter
         );
         try {
+            downloadTranslogFiles();
             final Checkpoint checkpoint = readCheckpoint(location);
-            //final Checkpoint checkpoint = downloadTranslogFiles();
             this.readers.addAll(recoverFromFiles(checkpoint));
             if (readers.isEmpty()) {
                 throw new IllegalStateException("at least one reader must be recovered");
@@ -91,9 +93,17 @@ public class RemoteFsTranslog extends Translog {
         }
     }
 
-    private Checkpoint downloadTranslogFiles() {
-        RemoteTranslogMetadata translogMetadata = translogTransferManager.downloadTranslogMetadata();
-        return null;
+    private void downloadTranslogFiles() {
+        try {
+            RemoteTranslogMetadata translogMetadata = translogTransferManager.readRemoteTranslogMetadata();
+            Map<String, Object> generationToPrimaryTermMapper = translogMetadata.setGenerationToPrimaryTermMapper();
+            for (long i = translogMetadata.getGeneration(); i >= translogMetadata.getMinTranslogGeneration(); i--) {
+                String generation = Long.toString(i);
+                translogTransferManager.downloadTranslog((String) generationToPrimaryTermMapper.get(generation), generation, location);
+            }
+        } catch(Throwable t) {
+            logger.error("Exception in downloadTranslogFiles", t);
+        }
     }
 
     /** recover all translog files found on disk */
