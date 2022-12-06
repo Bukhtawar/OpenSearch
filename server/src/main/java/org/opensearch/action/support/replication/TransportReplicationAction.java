@@ -546,7 +546,13 @@ public abstract class TransportReplicationAction<
                         primaryRequest.getPrimaryTerm(),
                         initialRetryBackoffBound,
                         retryTimeout,
-                        getReplicationOverridePolicy(primaryShardReference.indexShard)
+                        new ReplicationProxy() {
+                            @Override
+                            ReplicationMode determineReplicationMode(ReplicationGroup.ReplicationModeAwareShardRouting shardRouting, ShardRouting primaryRouting) {
+                                return null;
+                            }
+                        }
+
                     ).execute();
                 }
             } catch (Exception e) {
