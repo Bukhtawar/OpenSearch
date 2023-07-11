@@ -66,7 +66,6 @@ public class GatedDelegateRefreshListener implements ReferenceManager.RefreshLis
     }
 
     private void handleDelegate(Runnable delegate) {
-        assert Thread.holdsLock(this);
         if (closed.get() == false) {
             try {
                 if (semaphore.tryAcquire(1, 0, TimeUnit.SECONDS)) {
