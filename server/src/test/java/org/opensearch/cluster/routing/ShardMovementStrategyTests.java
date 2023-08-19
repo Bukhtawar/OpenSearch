@@ -9,6 +9,7 @@
 package org.opensearch.cluster.routing;
 
 import com.carrotsearch.randomizedtesting.annotations.ThreadLeakScope;
+
 import org.opensearch.action.admin.cluster.settings.ClusterUpdateSettingsRequest;
 import org.opensearch.cluster.ClusterStateListener;
 import org.opensearch.common.settings.Settings;
@@ -70,6 +71,7 @@ public class ShardMovementStrategyTests extends OpenSearchIntegTestCase {
         testClusterGreenAfterPartialRelocation(ShardMovementStrategy.REPLICA_FIRST, false);
     }
 
+    @AwaitsFix(bugUrl = "https://github.com/opensearch-project/OpenSearch/issues/9178")
     public void testClusterGreenAfterPartialRelocationNoPreferenceShardMovementPrimaryFirstEnabled() throws InterruptedException {
         testClusterGreenAfterPartialRelocation(ShardMovementStrategy.NO_PREFERENCE, true);
     }

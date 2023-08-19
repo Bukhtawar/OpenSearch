@@ -49,10 +49,8 @@ import org.apache.lucene.tests.mockfile.ExtrasFS;
 import org.apache.lucene.tests.store.BaseDirectoryWrapper;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.Constants;
-import org.junit.Assert;
 import org.opensearch.OpenSearchException;
 import org.opensearch.Version;
-import org.opensearch.action.ActionListener;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
 import org.opensearch.action.admin.indices.forcemerge.ForceMergeRequest;
 import org.opensearch.action.admin.indices.stats.CommonStats;
@@ -87,11 +85,13 @@ import org.opensearch.common.util.concurrent.AbstractRunnable;
 import org.opensearch.common.util.concurrent.AtomicArray;
 import org.opensearch.common.util.concurrent.ConcurrentCollections;
 import org.opensearch.common.xcontent.XContentFactory;
-import org.opensearch.common.xcontent.XContentType;
 import org.opensearch.core.Assertions;
+import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.bytes.BytesArray;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.index.shard.ShardId;
+import org.opensearch.core.indices.breaker.NoneCircuitBreakerService;
+import org.opensearch.core.xcontent.MediaTypeRegistry;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.env.NodeEnvironment;
@@ -123,6 +123,8 @@ import org.opensearch.index.mapper.SourceFieldMapper;
 import org.opensearch.index.mapper.SourceToParse;
 import org.opensearch.index.mapper.Uid;
 import org.opensearch.index.mapper.VersionFieldMapper;
+import org.opensearch.index.remote.RemoteSegmentStats;
+import org.opensearch.index.remote.RemoteSegmentTransferTracker;
 import org.opensearch.index.seqno.ReplicationTracker;
 import org.opensearch.index.seqno.RetentionLease;
 import org.opensearch.index.seqno.RetentionLeaseSyncer;
@@ -140,7 +142,6 @@ import org.opensearch.index.translog.Translog;
 import org.opensearch.index.translog.TranslogStats;
 import org.opensearch.index.translog.listener.TranslogEventListener;
 import org.opensearch.indices.IndicesQueryCache;
-import org.opensearch.core.indices.breaker.NoneCircuitBreakerService;
 import org.opensearch.indices.fielddata.cache.IndicesFieldDataCache;
 import org.opensearch.indices.recovery.RecoveryState;
 import org.opensearch.indices.recovery.RecoveryTarget;
@@ -157,6 +158,7 @@ import org.opensearch.test.FieldMaskingReader;
 import org.opensearch.test.VersionUtils;
 import org.opensearch.test.store.MockFSDirectoryFactory;
 import org.opensearch.threadpool.ThreadPool;
+import org.junit.Assert;
 
 import java.io.IOException;
 import java.nio.charset.Charset;
@@ -195,6 +197,12 @@ import java.util.stream.Stream;
 
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
+import static org.opensearch.cluster.routing.TestShardRouting.newShardRouting;
+import static org.opensearch.common.lucene.Lucene.cleanLuceneIndex;
+import static org.opensearch.common.xcontent.XContentFactory.jsonBuilder;
+import static org.opensearch.core.xcontent.ToXContent.EMPTY_PARAMS;
+import static org.opensearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
+import static org.opensearch.test.hamcrest.RegexMatcher.matches;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.either;
@@ -215,12 +223,6 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.oneOf;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.mockito.Mockito.mock;
-import static org.opensearch.cluster.routing.TestShardRouting.newShardRouting;
-import static org.opensearch.common.lucene.Lucene.cleanLuceneIndex;
-import static org.opensearch.common.xcontent.XContentFactory.jsonBuilder;
-import static org.opensearch.core.xcontent.ToXContent.EMPTY_PARAMS;
-import static org.opensearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
-import static org.opensearch.test.hamcrest.RegexMatcher.matches;
 
 /**
  * Simple unit-test IndexShard related operations.
@@ -1812,6 +1814,31 @@ public class IndexShardTests extends IndexShardTestCase {
         }
     }
 
+    public void testShardStatsWithRemoteStoreEnabled() throws IOException {
+        IndexShard shard = newStartedShard(
+            Settings.builder()
+                .put(IndexMetadata.SETTING_REPLICATION_TYPE, "SEGMENT")
+                .put(IndexMetadata.SETTING_REMOTE_STORE_ENABLED, true)
+                .build()
+        );
+        RemoteSegmentTransferTracker remoteRefreshSegmentTracker = shard.getRemoteStorePressureService()
+            .getRemoteRefreshSegmentTracker(shard.shardId);
+        populateSampleRemoteStoreStats(remoteRefreshSegmentTracker);
+        ShardStats shardStats = new ShardStats(
+            shard.routingEntry(),
+            shard.shardPath(),
+            new CommonStats(new IndicesQueryCache(Settings.EMPTY), shard, new CommonStatsFlags()),
+            shard.commitStats(),
+            shard.seqNoStats(),
+            shard.getRetentionLeaseStats()
+        );
+        RemoteSegmentStats remoteSegmentStats = shardStats.getStats().getSegments().getRemoteSegmentStats();
+        assertEquals(remoteRefreshSegmentTracker.getUploadBytesStarted(), remoteSegmentStats.getUploadBytesStarted());
+        assertEquals(remoteRefreshSegmentTracker.getUploadBytesSucceeded(), remoteSegmentStats.getUploadBytesSucceeded());
+        assertEquals(remoteRefreshSegmentTracker.getUploadBytesFailed(), remoteSegmentStats.getUploadBytesFailed());
+        closeShards(shard);
+    }
+
     public void testRefreshMetric() throws IOException {
         IndexShard shard = newStartedShard();
         // refresh on: finalize and end of recovery
@@ -2309,7 +2336,7 @@ public class IndexShardTests extends IndexShardTestCase {
             1,
             IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP,
             false,
-            new SourceToParse(shard.shardId().getIndexName(), "id", new BytesArray("{}"), XContentType.JSON)
+            new SourceToParse(shard.shardId().getIndexName(), "id", new BytesArray("{}"), MediaTypeRegistry.JSON)
         );
         shard.applyIndexOperationOnReplica(
             UUID.randomUUID().toString(),
@@ -2318,7 +2345,7 @@ public class IndexShardTests extends IndexShardTestCase {
             3,
             IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP,
             false,
-            new SourceToParse(shard.shardId().getIndexName(), "id-3", new BytesArray("{}"), XContentType.JSON)
+            new SourceToParse(shard.shardId().getIndexName(), "id-3", new BytesArray("{}"), MediaTypeRegistry.JSON)
         );
         // Flushing a new commit with local checkpoint=1 allows to skip the translog gen #1 in recovery.
         shard.flush(new FlushRequest().force(true).waitIfOngoing(true));
@@ -2329,7 +2356,7 @@ public class IndexShardTests extends IndexShardTestCase {
             3,
             IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP,
             false,
-            new SourceToParse(shard.shardId().getIndexName(), "id-2", new BytesArray("{}"), XContentType.JSON)
+            new SourceToParse(shard.shardId().getIndexName(), "id-2", new BytesArray("{}"), MediaTypeRegistry.JSON)
         );
         shard.applyIndexOperationOnReplica(
             UUID.randomUUID().toString(),
@@ -2338,7 +2365,7 @@ public class IndexShardTests extends IndexShardTestCase {
             1,
             IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP,
             false,
-            new SourceToParse(shard.shardId().getIndexName(), "id-5", new BytesArray("{}"), XContentType.JSON)
+            new SourceToParse(shard.shardId().getIndexName(), "id-5", new BytesArray("{}"), MediaTypeRegistry.JSON)
         );
         shard.sync(); // advance local checkpoint
 
@@ -2478,7 +2505,7 @@ public class IndexShardTests extends IndexShardTestCase {
         // start a replica shard and index the second doc
         final IndexShard otherShard = newStartedShard(false);
         updateMappings(otherShard, shard.indexSettings().getIndexMetadata());
-        SourceToParse sourceToParse = new SourceToParse(shard.shardId().getIndexName(), "1", new BytesArray("{}"), XContentType.JSON);
+        SourceToParse sourceToParse = new SourceToParse(shard.shardId().getIndexName(), "1", new BytesArray("{}"), MediaTypeRegistry.JSON);
         otherShard.applyIndexOperationOnReplica(
             UUID.randomUUID().toString(),
             1,
@@ -2614,7 +2641,7 @@ public class IndexShardTests extends IndexShardTestCase {
             1,
             IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP,
             false,
-            new SourceToParse(indexName, "doc-0", new BytesArray("{}"), XContentType.JSON)
+            new SourceToParse(indexName, "doc-0", new BytesArray("{}"), MediaTypeRegistry.JSON)
         );
         flushShard(shard);
         shard.updateGlobalCheckpointOnReplica(0, "test"); // stick the global checkpoint here.
@@ -2625,7 +2652,7 @@ public class IndexShardTests extends IndexShardTestCase {
             1,
             IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP,
             false,
-            new SourceToParse(indexName, "doc-1", new BytesArray("{}"), XContentType.JSON)
+            new SourceToParse(indexName, "doc-1", new BytesArray("{}"), MediaTypeRegistry.JSON)
         );
         flushShard(shard);
         assertThat(getShardDocUIDs(shard), containsInAnyOrder("doc-0", "doc-1"));
@@ -2638,7 +2665,7 @@ public class IndexShardTests extends IndexShardTestCase {
             1,
             IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP,
             false,
-            new SourceToParse(indexName, "doc-2", new BytesArray("{}"), XContentType.JSON)
+            new SourceToParse(indexName, "doc-2", new BytesArray("{}"), MediaTypeRegistry.JSON)
         );
         flushShard(shard);
         assertThat(getShardDocUIDs(shard), containsInAnyOrder("doc-0", "doc-1", "doc-2"));
@@ -4051,7 +4078,7 @@ public class IndexShardTests extends IndexShardTestCase {
                     indexShard.shardId().getIndexName(),
                     id,
                     new BytesArray("{}"),
-                    XContentType.JSON
+                    MediaTypeRegistry.JSON
                 );
                 indexShard.applyIndexOperationOnReplica(
                     UUID.randomUUID().toString(),
@@ -4685,7 +4712,7 @@ public class IndexShardTests extends IndexShardTestCase {
                 1,
                 IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP,
                 false,
-                new SourceToParse(shard.shardId.getIndexName(), Long.toString(i), new BytesArray("{}"), XContentType.JSON)
+                new SourceToParse(shard.shardId.getIndexName(), Long.toString(i), new BytesArray("{}"), MediaTypeRegistry.JSON)
             );
             shard.updateGlobalCheckpointOnReplica(shard.getLocalCheckpoint(), "test");
             if (randomInt(100) < 10) {
@@ -4872,5 +4899,11 @@ public class IndexShardTests extends IndexShardTestCase {
         assertThat(thirdForceMergeUUID, not(equalTo(secondForceMergeUUID)));
         assertThat(thirdForceMergeUUID, equalTo(secondForceMergeRequest.forceMergeUUID()));
         closeShards(shard);
+    }
+
+    private void populateSampleRemoteStoreStats(RemoteSegmentTransferTracker tracker) {
+        tracker.addUploadBytesStarted(10L);
+        tracker.addUploadBytesSucceeded(10L);
+        tracker.addUploadBytesFailed(10L);
     }
 }

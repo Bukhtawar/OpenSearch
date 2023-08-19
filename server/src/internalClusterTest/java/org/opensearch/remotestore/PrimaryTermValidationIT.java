@@ -21,7 +21,7 @@ import org.opensearch.cluster.health.ClusterIndexHealth;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
-import org.opensearch.common.xcontent.XContentType;
+import org.opensearch.core.xcontent.MediaTypeRegistry;
 import org.opensearch.index.shard.ShardNotFoundException;
 import org.opensearch.plugins.Plugin;
 import org.opensearch.test.OpenSearchIntegTestCase;
@@ -35,10 +35,10 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static org.hamcrest.Matchers.equalTo;
 import static org.opensearch.test.hamcrest.OpenSearchAssertions.assertAcked;
 import static org.opensearch.test.hamcrest.OpenSearchAssertions.assertHitCount;
 import static org.opensearch.test.hamcrest.OpenSearchAssertions.assertNoFailures;
+import static org.hamcrest.Matchers.equalTo;
 
 @OpenSearchIntegTestCase.ClusterScope(scope = OpenSearchIntegTestCase.Scope.TEST, numDataNodes = 0)
 
@@ -163,7 +163,7 @@ public class PrimaryTermValidationIT extends RemoteStoreBaseIntegTestCase {
     private IndexResponse indexSameDoc(String nodeName, String indexName) {
         return client(nodeName).prepareIndex(indexName)
             .setId(UUIDs.randomBase64UUID())
-            .setSource("{\"foo\" : \"bar\"}", XContentType.JSON)
+            .setSource("{\"foo\" : \"bar\"}", MediaTypeRegistry.JSON)
             .get();
     }
 }

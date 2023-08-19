@@ -64,8 +64,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static org.opensearch.core.common.unit.ByteSizeValue.parseBytesSizeValue;
 import static org.opensearch.common.unit.TimeValue.parseTimeValue;
+import static org.opensearch.core.common.unit.ByteSizeValue.parseBytesSizeValue;
 
 /**
  * REST Request
@@ -117,14 +117,14 @@ public class RestRequest implements ToXContent.Params {
         HttpChannel httpChannel,
         long requestId
     ) {
-        final MediaType xContentType;
+        final MediaType mediaType;
         try {
-            xContentType = parseContentType(headers.get("Content-Type"));
+            mediaType = parseContentType(headers.get("Content-Type"));
         } catch (final IllegalArgumentException e) {
             throw new ContentTypeHeaderException(e);
         }
-        if (xContentType != null) {
-            this.mediaType.set(xContentType);
+        if (mediaType != null) {
+            this.mediaType.set(mediaType);
         }
         this.xContentRegistry = xContentRegistry;
         this.httpRequest = httpRequest;
