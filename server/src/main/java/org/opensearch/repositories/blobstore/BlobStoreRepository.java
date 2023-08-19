@@ -74,6 +74,8 @@ import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.BlobStore;
 import org.opensearch.common.blobstore.DeleteResult;
 import org.opensearch.common.blobstore.fs.FsBlobContainer;
+import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
+import org.opensearch.common.blobstore.transfer.stream.RateLimitingOffsetRangeInputStream;
 import org.opensearch.core.common.Strings;
 import org.opensearch.core.common.bytes.BytesArray;
 import org.opensearch.core.common.bytes.BytesReference;
@@ -302,9 +304,17 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     private final RateLimiter restoreRateLimiter;
 
+    private final RateLimiter remoteUploadRateLimiter;
+
+    private final RateLimiter remoteDownloadRateLimiter;
+
     private final CounterMetric snapshotRateLimitingTimeInNanos = new CounterMetric();
 
     private final CounterMetric restoreRateLimitingTimeInNanos = new CounterMetric();
+
+    private final CounterMetric remoteDownloadRateLimitingTimeInNanos = new CounterMetric();
+
+    private final CounterMetric remoteUploadRateLimitingTimeInNanos = new CounterMetric();
 
     public static final ChecksumBlobStoreFormat<Metadata> GLOBAL_METADATA_FORMAT = new ChecksumBlobStoreFormat<>(
         "metadata",
@@ -407,6 +417,8 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         this.supportURLRepo = SUPPORT_URL_REPO.get(metadata.settings());
         snapshotRateLimiter = getRateLimiter(metadata.settings(), "max_snapshot_bytes_per_sec", new ByteSizeValue(40, ByteSizeUnit.MB));
         restoreRateLimiter = getRateLimiter(metadata.settings(), "max_restore_bytes_per_sec", ByteSizeValue.ZERO);
+        remoteUploadRateLimiter = getRateLimiter(metadata.settings(), "max_remote_upload_bytes_per_sec", ByteSizeValue.ZERO);
+        remoteDownloadRateLimiter = getRateLimiter(metadata.settings(), "max_remote_download_bytes_per_sec", ByteSizeValue.ZERO);
         readOnly = READONLY_SETTING.get(metadata.settings());
         isSystemRepository = SYSTEM_REPOSITORY_SETTING.get(metadata.settings());
         cacheRepositoryData = CACHE_REPOSITORY_DATA.get(metadata.settings());
@@ -3034,12 +3046,34 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         return new RateLimitingInputStream(stream, rateLimiterSupplier, metric::inc);
     }
 
+    private static OffsetRangeInputStream maybeRateLimitRemoteTransfers(
+        OffsetRangeInputStream offsetRangeInputStream,
+        Supplier<RateLimiter> rateLimiterSupplier,
+        CounterMetric metric
+    ) {
+        return new RateLimitingOffsetRangeInputStream(offsetRangeInputStream, rateLimiterSupplier, metric::inc);
+    }
+
     public InputStream maybeRateLimitRestores(InputStream stream) {
         return maybeRateLimit(
             maybeRateLimit(stream, () -> restoreRateLimiter, restoreRateLimitingTimeInNanos),
             recoverySettings::rateLimiter,
             restoreRateLimitingTimeInNanos
         );
+    }
+
+    public OffsetRangeInputStream maybeRateLimitRemoteTransfer(OffsetRangeInputStream offsetRangeInputStream, boolean isUpload) {
+        return isUpload
+            ? maybeRateLimitRemoteTransfers(offsetRangeInputStream, () -> remoteUploadRateLimiter, remoteUploadRateLimitingTimeInNanos)
+            : maybeRateLimitRemoteTransfers(
+                maybeRateLimitRemoteTransfers(
+                    offsetRangeInputStream,
+                    () -> remoteDownloadRateLimiter,
+                    remoteDownloadRateLimitingTimeInNanos
+                ),
+                recoverySettings::rateLimiter,
+                remoteDownloadRateLimitingTimeInNanos
+            );
     }
 
     public InputStream maybeRateLimitSnapshots(InputStream stream) {
