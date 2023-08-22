@@ -31,6 +31,8 @@
 
 package org.opensearch.common.blobstore;
 
+import org.opensearch.cluster.metadata.RepositoryMetadata;
+
 import java.io.Closeable;
 import java.util.Collections;
 import java.util.Map;
@@ -53,4 +55,17 @@ public interface BlobStore extends Closeable {
     default Map<String, Long> stats() {
         return Collections.emptyMap();
     }
+
+    /**
+     * Checks if the blob store can be reloaded inplace or not
+     * @return true if the blob store can be reloaded inplace, false otherwise
+     */
+    default boolean isReloadable() {
+        return false;
+    }
+
+    /**
+     * Reload the blob store inplace
+     */
+    default void reload(RepositoryMetadata repositoryMetadata) {}
 }

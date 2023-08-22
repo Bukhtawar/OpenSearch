@@ -70,6 +70,12 @@ public abstract class MeteredBlobStoreRepository extends BlobStoreRepository {
         );
     }
 
+    @Override
+    public void reload(RepositoryMetadata repositoryMetadata, boolean compress) {
+        super.reload(repositoryMetadata, compress);
+        // Note: repositoryInfo parameters cannot be changed
+    }
+
     public RepositoryStatsSnapshot statsSnapshot() {
         return new RepositoryStatsSnapshot(repositoryInfo, stats(), RepositoryStatsSnapshot.UNKNOWN_CLUSTER_VERSION, false);
     }

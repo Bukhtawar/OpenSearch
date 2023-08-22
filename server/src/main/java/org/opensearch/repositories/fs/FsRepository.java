@@ -187,4 +187,14 @@ public class FsRepository extends BlobStoreRepository {
     public BlobPath basePath() {
         return basePath;
     }
+
+    @Override
+    public boolean isReloadable() {
+        return true;
+    }
+
+    @Override
+    public void reload(RepositoryMetadata repositoryMetadata, boolean compress) {
+        // TODO
+    }
 }

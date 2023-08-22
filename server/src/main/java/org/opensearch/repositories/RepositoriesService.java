@@ -457,18 +457,22 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                             || previousMetadata.settings().equals(repositoryMetadata.settings()) == false) {
                             // Previous version is different from the version in settings
                             logger.debug("updating repository [{}]", repositoryMetadata.name());
-                            closeRepository(repository);
-                            archiveRepositoryStats(repository, state.version());
-                            repository = null;
-                            try {
-                                repository = createRepository(repositoryMetadata, typesRegistry);
-                            } catch (RepositoryException ex) {
-                                // TODO: this catch is bogus, it means the old repo is already closed,
-                                // but we have nothing to replace it
-                                logger.warn(
-                                    () -> new ParameterizedMessage("failed to change repository [{}]", repositoryMetadata.name()),
-                                    ex
-                                );
+                            if (repository.isReloadable()) {
+                                repository.reload(repositoryMetadata);
+                            } else {
+                                closeRepository(repository);
+                                archiveRepositoryStats(repository, state.version());
+                                repository = null;
+                                try {
+                                    repository = createRepository(repositoryMetadata, typesRegistry);
+                                } catch (RepositoryException ex) {
+                                    // TODO: this catch is bogus, it means the old repo is already closed,
+                                    // but we have nothing to replace it
+                                    logger.warn(
+                                        () -> new ParameterizedMessage("failed to change repository [{}]", repositoryMetadata.name()),
+                                        ex
+                                    );
+                                }
                             }
                         }
                     } else {

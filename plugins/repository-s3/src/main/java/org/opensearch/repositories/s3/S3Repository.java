@@ -217,7 +217,7 @@ class S3Repository extends MeteredBlobStoreRepository {
 
     private final String cannedACL;
 
-    private final RepositoryMetadata repositoryMetadata;
+    private RepositoryMetadata repositoryMetadata;
 
     private final AsyncTransferManager asyncUploadUtils;
     private final S3AsyncService s3AsyncService;
@@ -382,6 +382,29 @@ class S3Repository extends MeteredBlobStoreRepository {
     public BlobPath basePath() {
         return basePath;
     }
+
+    @Override
+    public boolean isReloadable() {
+        return true;
+    }
+
+    @Override
+    public void reload(RepositoryMetadata newRepositoryMetadata, boolean compress) {
+        // Reload configs for S3Repository
+        super.reload(newRepositoryMetadata, COMPRESS_SETTING.get(newRepositoryMetadata.settings()));
+        repositoryMetadata = newRepositoryMetadata;
+
+        // Reload configs for S3RepositoryPlugin
+        final Map<String, S3ClientSettings> clientsSettings = S3ClientSettings.load(settings, configPath);
+        service.refreshAndClearCache(clientsSettings);
+        s3AsyncService.refreshAndClearCache(clientsSettings);
+
+        // Reload configs for S3BlobStore
+        BlobStore blobStore = getBlobStore();
+        blobStore.reload(newRepositoryMetadata);
+    }
+
+
 
     @Override
     protected ByteSizeValue chunkSize() {

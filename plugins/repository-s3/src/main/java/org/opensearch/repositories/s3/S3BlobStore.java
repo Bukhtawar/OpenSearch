@@ -68,7 +68,7 @@ class S3BlobStore implements BlobStore {
 
     private final StorageClass storageClass;
 
-    private final RepositoryMetadata repositoryMetadata;
+    private RepositoryMetadata repositoryMetadata;
 
     private final StatsMetricPublisher statsMetricPublisher = new StatsMetricPublisher();
 
@@ -103,6 +103,16 @@ class S3BlobStore implements BlobStore {
         this.asyncTransferManager = asyncTransferManager;
         this.normalExecutorBuilder = normalExecutorBuilder;
         this.priorityExecutorBuilder = priorityExecutorBuilder;
+    }
+
+    @Override
+    public boolean isReloadable() {
+        return true;
+    }
+
+    @Override
+    public void reload(RepositoryMetadata repositoryMetadata) {
+        this.repositoryMetadata = repositoryMetadata;
     }
 
     public boolean isMultipartUploadEnabled() {

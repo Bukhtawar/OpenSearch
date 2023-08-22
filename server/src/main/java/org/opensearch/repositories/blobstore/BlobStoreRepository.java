@@ -295,17 +295,17 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         Setting.Property.NodeScope
     );
 
-    protected final boolean supportURLRepo;
+    protected boolean supportURLRepo;
 
-    private final int maxShardBlobDeleteBatch;
+    private int maxShardBlobDeleteBatch;
 
-    private final Compressor compressor;
+    private Compressor compressor;
 
-    private final boolean cacheRepositoryData;
+    private boolean cacheRepositoryData;
 
-    private final RateLimiter snapshotRateLimiter;
+    private RateLimiter snapshotRateLimiter;
 
-    private final RateLimiter restoreRateLimiter;
+    private RateLimiter restoreRateLimiter;
 
     private final RateLimiter remoteUploadRateLimiter;
 
@@ -354,7 +354,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         BlobStoreIndexShardSnapshots::fromXContent
     );
 
-    private final boolean readOnly;
+    private boolean readOnly;
 
     private final boolean isSystemRepository;
 
@@ -398,26 +398,32 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
     /**
      * IO buffer size hint for reading and writing to the underlying blob store.
      */
-    protected final int bufferSize;
+    protected int bufferSize;
 
     /**
      * Constructs new BlobStoreRepository
-     * @param metadata   The metadata for this repository including name and settings
+     * @param repositoryMetadata   The metadata for this repository including name and settings
      * @param clusterService ClusterService
      */
     protected BlobStoreRepository(
-        final RepositoryMetadata metadata,
+        final RepositoryMetadata repositoryMetadata,
         final boolean compress,
         final NamedXContentRegistry namedXContentRegistry,
         final ClusterService clusterService,
         final RecoverySettings recoverySettings
     ) {
-        this.metadata = metadata;
+        reload(repositoryMetadata, compress);
         this.namedXContentRegistry = namedXContentRegistry;
         this.threadPool = clusterService.getClusterApplierService().threadPool();
         this.clusterService = clusterService;
         this.recoverySettings = recoverySettings;
-        this.supportURLRepo = SUPPORT_URL_REPO.get(metadata.settings());
+    }
+
+    @Override
+    public void reload(RepositoryMetadata repositoryMetadata, boolean compress) {
+        this.metadata = repositoryMetadata;
+
+        supportURLRepo = SUPPORT_URL_REPO.get(metadata.settings());
         snapshotRateLimiter = getRateLimiter(metadata.settings(), "max_snapshot_bytes_per_sec", new ByteSizeValue(40, ByteSizeUnit.MB));
         restoreRateLimiter = getRateLimiter(metadata.settings(), "max_restore_bytes_per_sec", ByteSizeValue.ZERO);
         remoteUploadRateLimiter = getRateLimiter(metadata.settings(), "max_remote_upload_bytes_per_sec", ByteSizeValue.ZERO);
@@ -427,7 +433,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         cacheRepositoryData = CACHE_REPOSITORY_DATA.get(metadata.settings());
         bufferSize = Math.toIntExact(BUFFER_SIZE_SETTING.get(metadata.settings()).getBytes());
         maxShardBlobDeleteBatch = MAX_SNAPSHOT_SHARD_BLOB_DELETE_BATCH_SIZE.get(metadata.settings());
-        this.compressor = compress ? COMPRESSION_TYPE_SETTING.get(metadata.settings()) : CompressorRegistry.none();
+        compressor = compress ? COMPRESSION_TYPE_SETTING.get(metadata.settings()) : CompressorRegistry.none();
     }
 
     @Override

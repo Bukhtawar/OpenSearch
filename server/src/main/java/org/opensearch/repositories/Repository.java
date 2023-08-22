@@ -440,4 +440,17 @@ public interface Repository extends LifecycleComponent {
     default Map<String, Object> adaptUserMetadata(Map<String, Object> userMetadata) {
         return userMetadata;
     }
+
+    /**
+     * Checks if the repository can be reloaded inplace or not
+     * @return true if the repository can be reloaded inplace, false otherwise
+     */
+    default boolean isReloadable() {
+        return false;
+    }
+
+    /**
+     * Reload the repository inplace
+     */
+    default void reload(RepositoryMetadata repositoryMetadata, boolean compress) {}
 }
