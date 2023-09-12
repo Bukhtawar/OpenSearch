@@ -83,6 +83,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.opensearch.repositories.blobstore.BlobStoreRepository.COMPRESS_SETTING;
 import static org.opensearch.repositories.blobstore.BlobStoreRepository.REMOTE_STORE_INDEX_SHALLOW_COPY;
 
 /**
@@ -457,8 +458,8 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                             || previousMetadata.settings().equals(repositoryMetadata.settings()) == false) {
                             // Previous version is different from the version in settings
                             logger.debug("updating repository [{}]", repositoryMetadata.name());
-                            if (repository.isReloadable()) {
-                                repository.reload(repositoryMetadata);
+                            if (repository.isSystemRepository() && repository.isReloadable()) {
+                                repository.reload(repositoryMetadata, COMPRESS_SETTING.get(repositoryMetadata.settings()));
                             } else {
                                 closeRepository(repository);
                                 archiveRepositoryStats(repository, state.version());

@@ -101,11 +101,11 @@ public class FsRepository extends BlobStoreRepository {
 
     public static final Setting<String> BASE_PATH_SETTING = Setting.simpleString("base_path");
 
-    private final Environment environment;
+    protected final Environment environment;
 
-    private ByteSizeValue chunkSize;
+    protected ByteSizeValue chunkSize;
 
-    private final BlobPath basePath;
+    protected BlobPath basePath;
 
     /**
      * Constructs a shared file system repository.
@@ -186,15 +186,5 @@ public class FsRepository extends BlobStoreRepository {
     @Override
     public BlobPath basePath() {
         return basePath;
-    }
-
-    @Override
-    public boolean isReloadable() {
-        return true;
-    }
-
-    @Override
-    public void reload(RepositoryMetadata repositoryMetadata, boolean compress) {
-        // TODO
     }
 }

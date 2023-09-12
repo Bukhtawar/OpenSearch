@@ -307,9 +307,9 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     private RateLimiter restoreRateLimiter;
 
-    private final RateLimiter remoteUploadRateLimiter;
+    private RateLimiter remoteUploadRateLimiter;
 
-    private final RateLimiter remoteDownloadRateLimiter;
+    private RateLimiter remoteDownloadRateLimiter;
 
     private final CounterMetric snapshotRateLimitingTimeInNanos = new CounterMetric();
 
@@ -356,7 +356,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     private boolean readOnly;
 
-    private final boolean isSystemRepository;
+    private boolean isSystemRepository;
 
     private final Object lock = new Object();
 
@@ -364,7 +364,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     private final SetOnce<BlobStore> blobStore = new SetOnce<>();
 
-    private final ClusterService clusterService;
+    protected final ClusterService clusterService;
 
     private final RecoverySettings recoverySettings;
 
@@ -413,6 +413,8 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         final RecoverySettings recoverySettings
     ) {
         reload(repositoryMetadata, compress);
+
+        isSystemRepository = SYSTEM_REPOSITORY_SETTING.get(metadata.settings());
         this.namedXContentRegistry = namedXContentRegistry;
         this.threadPool = clusterService.getClusterApplierService().threadPool();
         this.clusterService = clusterService;
@@ -429,7 +431,6 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         remoteUploadRateLimiter = getRateLimiter(metadata.settings(), "max_remote_upload_bytes_per_sec", ByteSizeValue.ZERO);
         remoteDownloadRateLimiter = getRateLimiter(metadata.settings(), "max_remote_download_bytes_per_sec", ByteSizeValue.ZERO);
         readOnly = READONLY_SETTING.get(metadata.settings());
-        isSystemRepository = SYSTEM_REPOSITORY_SETTING.get(metadata.settings());
         cacheRepositoryData = CACHE_REPOSITORY_DATA.get(metadata.settings());
         bufferSize = Math.toIntExact(BUFFER_SIZE_SETTING.get(metadata.settings()).getBytes());
         maxShardBlobDeleteBatch = MAX_SNAPSHOT_SHARD_BLOB_DELETE_BATCH_SIZE.get(metadata.settings());

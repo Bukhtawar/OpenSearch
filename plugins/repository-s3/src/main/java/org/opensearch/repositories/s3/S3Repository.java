@@ -44,6 +44,7 @@ import org.opensearch.common.blobstore.BlobStore;
 import org.opensearch.common.logging.DeprecationLogger;
 import org.opensearch.common.settings.SecureSetting;
 import org.opensearch.common.settings.Setting;
+import org.opensearch.common.settings.Settings;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.Strings;
 import org.opensearch.core.common.settings.SecureString;
@@ -62,6 +63,7 @@ import org.opensearch.snapshots.SnapshotId;
 import org.opensearch.snapshots.SnapshotInfo;
 import org.opensearch.threadpool.Scheduler;
 
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -224,6 +226,34 @@ class S3Repository extends MeteredBlobStoreRepository {
     private final boolean multipartUploadEnabled;
     private final AsyncExecutorContainer priorityExecutorBuilder;
     private final AsyncExecutorContainer normalExecutorBuilder;
+    private final Path pluginConfigPath;
+
+    S3Repository(
+        final RepositoryMetadata metadata,
+        final NamedXContentRegistry namedXContentRegistry,
+        final S3Service service,
+        final ClusterService clusterService,
+        final RecoverySettings recoverySettings,
+        final AsyncTransferManager asyncUploadUtils,
+        final AsyncExecutorContainer priorityExecutorBuilder,
+        final AsyncExecutorContainer normalExecutorBuilder,
+        final S3AsyncService s3AsyncService,
+        final boolean multipartUploadEnabled
+    ) {
+        this(
+            metadata,
+            namedXContentRegistry,
+            service,
+            clusterService,
+            recoverySettings,
+            asyncUploadUtils,
+            priorityExecutorBuilder,
+            normalExecutorBuilder,
+            s3AsyncService,
+            multipartUploadEnabled,
+            Path.of("")
+        );
+    }
 
     /**
      * Constructs an s3 backed repository
@@ -238,7 +268,8 @@ class S3Repository extends MeteredBlobStoreRepository {
         final AsyncExecutorContainer priorityExecutorBuilder,
         final AsyncExecutorContainer normalExecutorBuilder,
         final S3AsyncService s3AsyncService,
-        final boolean multipartUploadEnabled
+        final boolean multipartUploadEnabled,
+        Path pluginConfigPath
     ) {
         super(
             metadata,
@@ -251,6 +282,7 @@ class S3Repository extends MeteredBlobStoreRepository {
         this.service = service;
         this.s3AsyncService = s3AsyncService;
         this.multipartUploadEnabled = multipartUploadEnabled;
+        this.pluginConfigPath = pluginConfigPath;
 
         this.repositoryMetadata = metadata;
         this.asyncUploadUtils = asyncUploadUtils;
@@ -391,11 +423,12 @@ class S3Repository extends MeteredBlobStoreRepository {
     @Override
     public void reload(RepositoryMetadata newRepositoryMetadata, boolean compress) {
         // Reload configs for S3Repository
-        super.reload(newRepositoryMetadata, COMPRESS_SETTING.get(newRepositoryMetadata.settings()));
+        super.reload(newRepositoryMetadata, compress);
         repositoryMetadata = newRepositoryMetadata;
 
         // Reload configs for S3RepositoryPlugin
-        final Map<String, S3ClientSettings> clientsSettings = S3ClientSettings.load(settings, configPath);
+        Settings settings = clusterService.getSettings();
+        final Map<String, S3ClientSettings> clientsSettings = S3ClientSettings.load(settings, pluginConfigPath);
         service.refreshAndClearCache(clientsSettings);
         s3AsyncService.refreshAndClearCache(clientsSettings);
 
@@ -403,8 +436,6 @@ class S3Repository extends MeteredBlobStoreRepository {
         BlobStore blobStore = getBlobStore();
         blobStore.reload(newRepositoryMetadata);
     }
-
-
 
     @Override
     protected ByteSizeValue chunkSize() {
