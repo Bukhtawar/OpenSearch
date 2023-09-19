@@ -8,35 +8,38 @@
 
 package org.opensearch.index.remote;
 
+import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.message.ParameterizedMessage;
+import org.opensearch.common.CheckedFunction;
+import org.opensearch.common.logging.Loggers;
+import org.opensearch.common.util.Streak;
+import org.opensearch.common.util.concurrent.ConcurrentCollections;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.core.common.io.stream.Writeable;
-import org.opensearch.common.util.MovingAverage;
-import org.opensearch.common.util.Streak;
-import org.opensearch.common.util.concurrent.ConcurrentCollections;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.store.DirectoryFileTransferTracker;
 
 import java.io.IOException;
-import java.util.HashMap;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+
+import static org.opensearch.index.shard.RemoteStoreRefreshListener.EXCLUDE_FILES;
 
 /**
  * Keeps track of remote refresh which happens in {@link org.opensearch.index.shard.RemoteStoreRefreshListener}. This consist of multiple critical metrics.
  *
  * @opensearch.internal
  */
-public class RemoteSegmentTransferTracker {
+public class RemoteSegmentTransferTracker extends RemoteTransferTracker {
 
-    /**
-     * ShardId for which this instance tracks the remote segment upload metadata.
-     */
-    private final ShardId shardId;
+    private final Logger logger;
 
     /**
      * Every refresh is assigned a sequence number. This is the sequence number of the most recent refresh.
@@ -84,36 +87,6 @@ public class RemoteSegmentTransferTracker {
     private volatile long lastSuccessfulRemoteRefreshBytes;
 
     /**
-     * Cumulative sum of size in bytes of segment files for which upload has started during remote refresh.
-     */
-    private volatile long uploadBytesStarted;
-
-    /**
-     * Cumulative sum of size in bytes of segment files for which upload has failed during remote refresh.
-     */
-    private volatile long uploadBytesFailed;
-
-    /**
-     * Cumulative sum of size in bytes of segment files for which upload has succeeded during remote refresh.
-     */
-    private volatile long uploadBytesSucceeded;
-
-    /**
-     * Cumulative sum of count of remote refreshes that have started.
-     */
-    private volatile long totalUploadsStarted;
-
-    /**
-     * Cumulative sum of count of remote refreshes that have failed.
-     */
-    private volatile long totalUploadsFailed;
-
-    /**
-     * Cumulative sum of count of remote refreshes that have succeeded.
-     */
-    private volatile long totalUploadsSucceeded;
-
-    /**
      * Cumulative sum of rejection counts for this shard.
      */
     private final AtomicLong rejectionCount = new AtomicLong();
@@ -124,14 +97,15 @@ public class RemoteSegmentTransferTracker {
     private final Map<String, AtomicLong> rejectionCountMap = ConcurrentCollections.newConcurrentMap();
 
     /**
-     * Map of name to size of the segment files created as part of the most recent refresh.
+     * Keeps track of segment files and their size in bytes which are part of the most recent refresh.
      */
-    private volatile Map<String, Long> latestLocalFileNameLengthMap;
+    private final Map<String, Long> latestLocalFileNameLengthMap = ConcurrentCollections.newConcurrentMap();
 
     /**
-     * Set of names of segment files that were uploaded as part of the most recent remote refresh.
+     * This contains the files from the last successful remote refresh and ongoing uploads. This gets reset to just the
+     * last successful remote refresh state on successful remote refresh.
      */
-    private final Set<String> latestUploadedFiles = new HashSet<>();
+    private final Set<String> latestUploadedFiles = ConcurrentCollections.newConcurrentSet();
 
     /**
      * Keeps the bytes lag computed so that we do not compute it for every request.
@@ -144,33 +118,6 @@ public class RemoteSegmentTransferTracker {
     private final Streak failures = new Streak();
 
     /**
-     * Provides moving average over the last N total size in bytes of segment files uploaded as part of remote refresh.
-     * N is window size. Wrapped with {@code AtomicReference} for dynamic changes in window size.
-     */
-    private final AtomicReference<MovingAverage> uploadBytesMovingAverageReference;
-
-    /**
-     * This lock object is used for making sure we do not miss any data
-     */
-    private final Object uploadBytesMutex = new Object();
-
-    /**
-     * Provides moving average over the last N upload speed (in bytes/s) of segment files uploaded as part of remote refresh.
-     * N is window size. Wrapped with {@code AtomicReference} for dynamic changes in window size.
-     */
-    private final AtomicReference<MovingAverage> uploadBytesPerSecMovingAverageReference;
-
-    private final Object uploadBytesPerSecMutex = new Object();
-
-    /**
-     * Provides moving average over the last N overall upload time (in nanos) as part of remote refresh.N is window size.
-     * Wrapped with {@code AtomicReference} for dynamic changes in window size.
-     */
-    private final AtomicReference<MovingAverage> uploadTimeMsMovingAverageReference;
-
-    private final Object uploadTimeMsMutex = new Object();
-
-    /**
      * {@link org.opensearch.index.store.Store.StoreDirectory} level file transfer tracker, used to show download stats
      */
     private final DirectoryFileTransferTracker directoryFileTransferTracker;
@@ -178,11 +125,11 @@ public class RemoteSegmentTransferTracker {
     public RemoteSegmentTransferTracker(
         ShardId shardId,
         DirectoryFileTransferTracker directoryFileTransferTracker,
-        int uploadBytesMovingAverageWindowSize,
-        int uploadBytesPerSecMovingAverageWindowSize,
-        int uploadTimeMsMovingAverageWindowSize
+        int movingAverageWindowSize
     ) {
-        this.shardId = shardId;
+        super(shardId, movingAverageWindowSize);
+
+        logger = Loggers.getLogger(getClass(), shardId);
         // Both the local refresh time and remote refresh time are set with current time to give consistent view of time lag when it arises.
         long currentClockTimeMs = System.currentTimeMillis();
         long currentTimeMs = System.nanoTime() / 1_000_000L;
@@ -190,23 +137,27 @@ public class RemoteSegmentTransferTracker {
         remoteRefreshTimeMs = currentTimeMs;
         localRefreshClockTimeMs = currentClockTimeMs;
         remoteRefreshClockTimeMs = currentClockTimeMs;
-        uploadBytesMovingAverageReference = new AtomicReference<>(new MovingAverage(uploadBytesMovingAverageWindowSize));
-        uploadBytesPerSecMovingAverageReference = new AtomicReference<>(new MovingAverage(uploadBytesPerSecMovingAverageWindowSize));
-        uploadTimeMsMovingAverageReference = new AtomicReference<>(new MovingAverage(uploadTimeMsMovingAverageWindowSize));
-
-        latestLocalFileNameLengthMap = new HashMap<>();
         this.directoryFileTransferTracker = directoryFileTransferTracker;
     }
 
-    ShardId getShardId() {
-        return shardId;
+    @Override
+    public void incrementTotalUploadsFailed() {
+        super.incrementTotalUploadsFailed();
+        failures.record(true);
+    }
+
+    @Override
+    public void incrementTotalUploadsSucceeded() {
+        super.incrementTotalUploadsSucceeded();
+        failures.record(false);
     }
 
     public long getLocalRefreshSeqNo() {
         return localRefreshSeqNo;
     }
 
-    public void updateLocalRefreshSeqNo(long localRefreshSeqNo) {
+    // Visible for testing
+    void updateLocalRefreshSeqNo(long localRefreshSeqNo) {
         assert localRefreshSeqNo >= this.localRefreshSeqNo : "newLocalRefreshSeqNo="
             + localRefreshSeqNo
             + " < "
@@ -224,7 +175,17 @@ public class RemoteSegmentTransferTracker {
         return localRefreshClockTimeMs;
     }
 
-    public void updateLocalRefreshTimeMs(long localRefreshTimeMs) {
+    /**
+     * Updates the last refresh time and refresh seq no which is seen by local store.
+     */
+    public void updateLocalRefreshTimeAndSeqNo() {
+        updateLocalRefreshClockTimeMs(System.currentTimeMillis());
+        updateLocalRefreshTimeMs(System.nanoTime() / 1_000_000L);
+        updateLocalRefreshSeqNo(getLocalRefreshSeqNo() + 1);
+    }
+
+    // Visible for testing
+    void updateLocalRefreshTimeMs(long localRefreshTimeMs) {
         assert localRefreshTimeMs >= this.localRefreshTimeMs : "newLocalRefreshTimeMs="
             + localRefreshTimeMs
             + " < "
@@ -234,7 +195,7 @@ public class RemoteSegmentTransferTracker {
         computeTimeMsLag();
     }
 
-    public void updateLocalRefreshClockTimeMs(long localRefreshClockTimeMs) {
+    private void updateLocalRefreshClockTimeMs(long localRefreshClockTimeMs) {
         this.localRefreshClockTimeMs = localRefreshClockTimeMs;
     }
 
@@ -294,62 +255,12 @@ public class RemoteSegmentTransferTracker {
         return bytesLag;
     }
 
-    public long getUploadBytesStarted() {
-        return uploadBytesStarted;
-    }
-
-    public void addUploadBytesStarted(long size) {
-        uploadBytesStarted += size;
-    }
-
-    public long getUploadBytesFailed() {
-        return uploadBytesFailed;
-    }
-
-    public void addUploadBytesFailed(long size) {
-        uploadBytesFailed += size;
-    }
-
-    public long getUploadBytesSucceeded() {
-        return uploadBytesSucceeded;
-    }
-
-    public void addUploadBytesSucceeded(long size) {
-        uploadBytesSucceeded += size;
-    }
-
     public long getInflightUploadBytes() {
-        return uploadBytesStarted - uploadBytesFailed - uploadBytesSucceeded;
-    }
-
-    public long getTotalUploadsStarted() {
-        return totalUploadsStarted;
-    }
-
-    public void incrementTotalUploadsStarted() {
-        totalUploadsStarted += 1;
-    }
-
-    public long getTotalUploadsFailed() {
-        return totalUploadsFailed;
-    }
-
-    public void incrementTotalUploadsFailed() {
-        totalUploadsFailed += 1;
-        failures.record(true);
-    }
-
-    public long getTotalUploadsSucceeded() {
-        return totalUploadsSucceeded;
-    }
-
-    public void incrementTotalUploadsSucceeded() {
-        totalUploadsSucceeded += 1;
-        failures.record(false);
+        return uploadBytesStarted.get() - uploadBytesFailed.get() - uploadBytesSucceeded.get();
     }
 
     public long getInflightUploads() {
-        return totalUploadsStarted - totalUploadsFailed - totalUploadsSucceeded;
+        return totalUploadsStarted.get() - totalUploadsFailed.get() - totalUploadsSucceeded.get();
     }
 
     public long getRejectionCount() {
@@ -369,12 +280,36 @@ public class RemoteSegmentTransferTracker {
         return rejectionCountMap.get(rejectionReason).get();
     }
 
-    Map<String, Long> getLatestLocalFileNameLengthMap() {
-        return latestLocalFileNameLengthMap;
+    public Map<String, Long> getLatestLocalFileNameLengthMap() {
+        return Collections.unmodifiableMap(latestLocalFileNameLengthMap);
     }
 
-    public void setLatestLocalFileNameLengthMap(Map<String, Long> latestLocalFileNameLengthMap) {
-        this.latestLocalFileNameLengthMap = latestLocalFileNameLengthMap;
+    /**
+     * Updates the latestLocalFileNameLengthMap by adding file name and it's size to the map. The method is given a function as an argument which is used for determining the file size (length in bytes). This method is also provided the collection of segment files which are the latest refresh local segment files. This method also removes the stale segment files from the map that are not part of the input segment files.
+     *
+     * @param segmentFiles     list of local refreshed segment files
+     * @param fileSizeFunction function is used to determine the file size in bytes
+     */
+    public void updateLatestLocalFileNameLengthMap(
+        Collection<String> segmentFiles,
+        CheckedFunction<String, Long, IOException> fileSizeFunction
+    ) {
+        // Update the map
+        segmentFiles.stream()
+            .filter(file -> EXCLUDE_FILES.contains(file) == false)
+            .filter(file -> latestLocalFileNameLengthMap.containsKey(file) == false || latestLocalFileNameLengthMap.get(file) == 0)
+            .forEach(file -> {
+                long fileSize = 0;
+                try {
+                    fileSize = fileSizeFunction.apply(file);
+                } catch (IOException e) {
+                    logger.warn(new ParameterizedMessage("Exception while reading the fileLength of file={}", file), e);
+                }
+                latestLocalFileNameLengthMap.put(file, fileSize);
+            });
+        Set<String> fileSet = new HashSet<>(segmentFiles);
+        // Remove keys from the fileSizeMap that do not exist in the latest segment files
+        latestLocalFileNameLengthMap.entrySet().removeIf(entry -> fileSet.contains(entry.getKey()) == false);
         computeBytesLag();
     }
 
@@ -390,7 +325,7 @@ public class RemoteSegmentTransferTracker {
     }
 
     private void computeBytesLag() {
-        if (latestLocalFileNameLengthMap == null || latestLocalFileNameLengthMap.isEmpty()) {
+        if (latestLocalFileNameLengthMap.isEmpty()) {
             return;
         }
         Set<String> filesNotYetUploaded = latestLocalFileNameLengthMap.keySet()
@@ -402,82 +337,6 @@ public class RemoteSegmentTransferTracker {
 
     int getConsecutiveFailureCount() {
         return failures.length();
-    }
-
-    boolean isUploadBytesAverageReady() {
-        return uploadBytesMovingAverageReference.get().isReady();
-    }
-
-    double getUploadBytesAverage() {
-        return uploadBytesMovingAverageReference.get().getAverage();
-    }
-
-    public void addUploadBytes(long size) {
-        lastSuccessfulRemoteRefreshBytes = size;
-        synchronized (uploadBytesMutex) {
-            this.uploadBytesMovingAverageReference.get().record(size);
-        }
-    }
-
-    /**
-     * Updates the window size for data collection of upload bytes. This also resets any data collected so far.
-     *
-     * @param updatedSize the updated size
-     */
-    void updateUploadBytesMovingAverageWindowSize(int updatedSize) {
-        synchronized (uploadBytesMutex) {
-            this.uploadBytesMovingAverageReference.set(this.uploadBytesMovingAverageReference.get().copyWithSize(updatedSize));
-        }
-    }
-
-    boolean isUploadBytesPerSecAverageReady() {
-        return uploadBytesPerSecMovingAverageReference.get().isReady();
-    }
-
-    double getUploadBytesPerSecAverage() {
-        return uploadBytesPerSecMovingAverageReference.get().getAverage();
-    }
-
-    public void addUploadBytesPerSec(long bytesPerSec) {
-        synchronized (uploadBytesPerSecMutex) {
-            this.uploadBytesPerSecMovingAverageReference.get().record(bytesPerSec);
-        }
-    }
-
-    /**
-     * Updates the window size for data collection of upload bytes per second. This also resets any data collected so far.
-     *
-     * @param updatedSize the updated size
-     */
-    void updateUploadBytesPerSecMovingAverageWindowSize(int updatedSize) {
-        synchronized (uploadBytesPerSecMutex) {
-            this.uploadBytesPerSecMovingAverageReference.set(this.uploadBytesPerSecMovingAverageReference.get().copyWithSize(updatedSize));
-        }
-    }
-
-    boolean isUploadTimeMsAverageReady() {
-        return uploadTimeMsMovingAverageReference.get().isReady();
-    }
-
-    double getUploadTimeMsAverage() {
-        return uploadTimeMsMovingAverageReference.get().getAverage();
-    }
-
-    public void addUploadTimeMs(long timeMs) {
-        synchronized (uploadTimeMsMutex) {
-            this.uploadTimeMsMovingAverageReference.get().record(timeMs);
-        }
-    }
-
-    /**
-     * Updates the window size for data collection of upload time (ms). This also resets any data collected so far.
-     *
-     * @param updatedSize the updated size
-     */
-    void updateUploadTimeMsMovingAverageWindowSize(int updatedSize) {
-        synchronized (uploadTimeMsMutex) {
-            this.uploadTimeMsMovingAverageReference.set(this.uploadTimeMsMovingAverageReference.get().copyWithSize(updatedSize));
-        }
     }
 
     public DirectoryFileTransferTracker getDirectoryFileTransferTracker() {
@@ -492,12 +351,12 @@ public class RemoteSegmentTransferTracker {
             timeMsLag,
             localRefreshSeqNo,
             remoteRefreshSeqNo,
-            uploadBytesStarted,
-            uploadBytesSucceeded,
-            uploadBytesFailed,
-            totalUploadsStarted,
-            totalUploadsSucceeded,
-            totalUploadsFailed,
+            uploadBytesStarted.get(),
+            uploadBytesSucceeded.get(),
+            uploadBytesFailed.get(),
+            totalUploadsStarted.get(),
+            totalUploadsSucceeded.get(),
+            totalUploadsFailed.get(),
             rejectionCount.get(),
             failures.length(),
             lastSuccessfulRemoteRefreshBytes,
@@ -505,6 +364,7 @@ public class RemoteSegmentTransferTracker {
             uploadBytesPerSecMovingAverageReference.get().getAverage(),
             uploadTimeMsMovingAverageReference.get().getAverage(),
             getBytesLag(),
+            totalUploadTimeInMillis.get(),
             directoryFileTransferTracker.stats()
         );
     }
@@ -533,6 +393,7 @@ public class RemoteSegmentTransferTracker {
         public final long lastSuccessfulRemoteRefreshBytes;
         public final double uploadBytesMovingAverage;
         public final double uploadBytesPerSecMovingAverage;
+        public final long totalUploadTimeInMs;
         public final double uploadTimeMovingAverage;
         public final long bytesLag;
         public final DirectoryFileTransferTracker.Stats directoryFileTransferTrackerStats;
@@ -557,6 +418,7 @@ public class RemoteSegmentTransferTracker {
             double uploadBytesPerSecMovingAverage,
             double uploadTimeMovingAverage,
             long bytesLag,
+            long totalUploadTimeInMs,
             DirectoryFileTransferTracker.Stats directoryFileTransferTrackerStats
         ) {
             this.shardId = shardId;
@@ -578,6 +440,7 @@ public class RemoteSegmentTransferTracker {
             this.uploadBytesPerSecMovingAverage = uploadBytesPerSecMovingAverage;
             this.uploadTimeMovingAverage = uploadTimeMovingAverage;
             this.bytesLag = bytesLag;
+            this.totalUploadTimeInMs = totalUploadTimeInMs;
             this.directoryFileTransferTrackerStats = directoryFileTransferTrackerStats;
         }
 
@@ -602,6 +465,7 @@ public class RemoteSegmentTransferTracker {
                 this.uploadBytesPerSecMovingAverage = in.readDouble();
                 this.uploadTimeMovingAverage = in.readDouble();
                 this.bytesLag = in.readLong();
+                this.totalUploadTimeInMs = in.readLong();
                 this.directoryFileTransferTrackerStats = in.readOptionalWriteable(DirectoryFileTransferTracker.Stats::new);
             } catch (IOException e) {
                 throw e;
@@ -629,7 +493,64 @@ public class RemoteSegmentTransferTracker {
             out.writeDouble(uploadBytesPerSecMovingAverage);
             out.writeDouble(uploadTimeMovingAverage);
             out.writeLong(bytesLag);
+            out.writeLong(totalUploadTimeInMs);
             out.writeOptionalWriteable(directoryFileTransferTrackerStats);
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) return true;
+            if (obj == null || getClass() != obj.getClass()) return false;
+            Stats other = (Stats) obj;
+
+            return this.shardId.toString().equals(other.shardId.toString())
+                && this.localRefreshClockTimeMs == other.localRefreshClockTimeMs
+                && this.remoteRefreshClockTimeMs == other.remoteRefreshClockTimeMs
+                && this.refreshTimeLagMs == other.refreshTimeLagMs
+                && this.localRefreshNumber == other.localRefreshNumber
+                && this.remoteRefreshNumber == other.remoteRefreshNumber
+                && this.uploadBytesStarted == other.uploadBytesStarted
+                && this.uploadBytesFailed == other.uploadBytesFailed
+                && this.uploadBytesSucceeded == other.uploadBytesSucceeded
+                && this.totalUploadsStarted == other.totalUploadsStarted
+                && this.totalUploadsFailed == other.totalUploadsFailed
+                && this.totalUploadsSucceeded == other.totalUploadsSucceeded
+                && this.rejectionCount == other.rejectionCount
+                && this.consecutiveFailuresCount == other.consecutiveFailuresCount
+                && this.lastSuccessfulRemoteRefreshBytes == other.lastSuccessfulRemoteRefreshBytes
+                && Double.compare(this.uploadBytesMovingAverage, other.uploadBytesMovingAverage) == 0
+                && Double.compare(this.uploadBytesPerSecMovingAverage, other.uploadBytesPerSecMovingAverage) == 0
+                && Double.compare(this.uploadTimeMovingAverage, other.uploadTimeMovingAverage) == 0
+                && this.bytesLag == other.bytesLag
+                && this.totalUploadTimeInMs == other.totalUploadTimeInMs
+                && this.directoryFileTransferTrackerStats.equals(other.directoryFileTransferTrackerStats);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(
+                shardId,
+                localRefreshClockTimeMs,
+                remoteRefreshClockTimeMs,
+                refreshTimeLagMs,
+                localRefreshNumber,
+                remoteRefreshNumber,
+                uploadBytesStarted,
+                uploadBytesFailed,
+                uploadBytesSucceeded,
+                totalUploadsStarted,
+                totalUploadsFailed,
+                totalUploadsSucceeded,
+                rejectionCount,
+                consecutiveFailuresCount,
+                lastSuccessfulRemoteRefreshBytes,
+                uploadBytesMovingAverage,
+                uploadBytesPerSecMovingAverage,
+                uploadTimeMovingAverage,
+                bytesLag,
+                totalUploadTimeInMs,
+                directoryFileTransferTrackerStats
+            );
         }
     }
 }

@@ -32,30 +32,9 @@
 
 package org.opensearch.repositories.s3;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.apache.logging.log4j.message.ParameterizedMessage;
-import org.opensearch.ExceptionsHelper;
-import org.opensearch.action.ActionListener;
-import org.opensearch.common.Nullable;
-import org.opensearch.common.SetOnce;
-import org.opensearch.common.StreamContext;
-import org.opensearch.common.blobstore.BlobContainer;
-import org.opensearch.common.blobstore.BlobMetadata;
-import org.opensearch.common.blobstore.BlobPath;
-import org.opensearch.common.blobstore.BlobStoreException;
-import org.opensearch.common.blobstore.DeleteResult;
-import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
-import org.opensearch.common.blobstore.stream.write.WriteContext;
-import org.opensearch.common.blobstore.stream.write.WritePriority;
-import org.opensearch.common.blobstore.support.AbstractBlobContainer;
-import org.opensearch.common.blobstore.support.PlainBlobMetadata;
-import org.opensearch.common.collect.Tuple;
-import org.opensearch.core.common.unit.ByteSizeUnit;
-import org.opensearch.core.common.unit.ByteSizeValue;
-import org.opensearch.core.common.Strings;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.CommonPrefix;
 import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
@@ -76,9 +55,31 @@ import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
 import software.amazon.awssdk.services.s3.model.UploadPartRequest;
 import software.amazon.awssdk.services.s3.model.UploadPartResponse;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.message.ParameterizedMessage;
+import org.opensearch.ExceptionsHelper;
+import org.opensearch.common.Nullable;
+import org.opensearch.common.SetOnce;
+import org.opensearch.common.StreamContext;
+import org.opensearch.common.blobstore.AsyncMultiStreamBlobContainer;
+import org.opensearch.common.blobstore.BlobContainer;
+import org.opensearch.common.blobstore.BlobMetadata;
+import org.opensearch.common.blobstore.BlobPath;
+import org.opensearch.common.blobstore.BlobStoreException;
+import org.opensearch.common.blobstore.DeleteResult;
+import org.opensearch.common.blobstore.stream.read.ReadContext;
+import org.opensearch.common.blobstore.stream.write.WriteContext;
+import org.opensearch.common.blobstore.stream.write.WritePriority;
+import org.opensearch.common.blobstore.support.AbstractBlobContainer;
+import org.opensearch.common.blobstore.support.PlainBlobMetadata;
+import org.opensearch.common.collect.Tuple;
+import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.Strings;
+import org.opensearch.core.common.unit.ByteSizeUnit;
+import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.repositories.s3.async.UploadRequest;
-import software.amazon.awssdk.services.s3.S3AsyncClient;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -98,7 +99,7 @@ import static org.opensearch.repositories.s3.S3Repository.MAX_FILE_SIZE;
 import static org.opensearch.repositories.s3.S3Repository.MAX_FILE_SIZE_USING_MULTIPART;
 import static org.opensearch.repositories.s3.S3Repository.MIN_PART_SIZE_USING_MULTIPART;
 
-class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStreamBlobContainer {
+class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamBlobContainer {
 
     private static final Logger logger = LogManager.getLogger(S3BlobContainer.class);
 
@@ -209,6 +210,15 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
             logger.info("exception error from blob container for file {}", writeContext.getFileName());
             throw new IOException(e);
         }
+    }
+
+    @Override
+    public void readBlobAsync(String blobName, ActionListener<ReadContext> listener) {
+        throw new UnsupportedOperationException();
+    }
+
+    public boolean remoteIntegrityCheckSupported() {
+        return true;
     }
 
     // package private for testing
@@ -343,17 +353,13 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
     }
 
     @Override
-    public void listBlobsByPrefixInSortedOrder(
-        String blobNamePrefix,
-        int limit,
-        BlobNameSortOrder blobNameSortOrder,
-        ActionListener<List<BlobMetadata>> listener
-    ) {
+    public List<BlobMetadata> listBlobsByPrefixInSortedOrder(String blobNamePrefix, int limit, BlobNameSortOrder blobNameSortOrder)
+        throws IOException {
         // As AWS S3 returns list of keys in Lexicographic order, we don't have to fetch all the keys in order to sort them
         // We fetch only keys as per the given limit to optimize the fetch. If provided sort order is not Lexicographic,
         // we fall-back to default implementation of fetching all the keys and sorting them.
         if (blobNameSortOrder != BlobNameSortOrder.LEXICOGRAPHIC) {
-            super.listBlobsByPrefixInSortedOrder(blobNamePrefix, limit, blobNameSortOrder, listener);
+            return super.listBlobsByPrefixInSortedOrder(blobNamePrefix, limit, blobNameSortOrder);
         } else {
             if (limit < 0) {
                 throw new IllegalArgumentException("limit should not be a negative value");
@@ -364,9 +370,9 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
                     .flatMap(listing -> listing.contents().stream())
                     .map(s3Object -> new PlainBlobMetadata(s3Object.key().substring(keyPath.length()), s3Object.size()))
                     .collect(Collectors.toList());
-                listener.onResponse(blobs.subList(0, Math.min(limit, blobs.size())));
+                return blobs.subList(0, Math.min(limit, blobs.size()));
             } catch (final Exception e) {
-                listener.onFailure(new IOException("Exception when listing blobs by prefix [" + prefix + "]", e));
+                throw new IOException("Exception when listing blobs by prefix [" + prefix + "]", e);
             }
         }
     }

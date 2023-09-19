@@ -76,6 +76,8 @@ public final class IndexScopedSettings extends AbstractScopedSettings {
 
     public static final Predicate<String> INDEX_SETTINGS_KEY_PREDICATE = (s) -> s.startsWith(IndexMetadata.INDEX_SETTING_PREFIX);
 
+    public static final Predicate<String> ARCHIVED_SETTINGS_KEY_PREDICATE = (s) -> s.startsWith(ARCHIVED_SETTINGS_PREFIX);
+
     public static final Set<Setting<?>> BUILT_IN_INDEX_SETTINGS = Collections.unmodifiableSet(
         new HashSet<>(
             Arrays.asList(
@@ -169,6 +171,7 @@ public final class IndexScopedSettings extends AbstractScopedSettings {
                 IndexSettings.INDEX_TRANSLOG_RETENTION_SIZE_SETTING,
                 IndexSettings.INDEX_SEARCH_IDLE_AFTER,
                 IndexSettings.INDEX_SEARCH_THROTTLED,
+                IndexSettings.INDEX_UNREFERENCED_FILE_CLEANUP,
                 IndexFieldDataService.INDEX_FIELDDATA_CACHE_KEY,
                 FieldMapper.IGNORE_MALFORMED_SETTING,
                 FieldMapper.COERCE_SETTING,
@@ -183,6 +186,7 @@ public final class IndexScopedSettings extends AbstractScopedSettings {
                 IndexModule.INDEX_STORE_TYPE_SETTING,
                 IndexModule.INDEX_STORE_PRE_LOAD_SETTING,
                 IndexModule.INDEX_STORE_HYBRID_MMAP_EXTENSIONS,
+                IndexModule.INDEX_STORE_HYBRID_NIO_EXTENSIONS,
                 IndexModule.INDEX_RECOVERY_TYPE_SETTING,
                 IndexModule.INDEX_QUERY_CACHE_ENABLED_SETTING,
                 FsDirectoryFactory.INDEX_LOCK_FACTOR_SETTING,
@@ -209,6 +213,11 @@ public final class IndexScopedSettings extends AbstractScopedSettings {
                 // Settings for remote translog
                 IndexSettings.INDEX_REMOTE_TRANSLOG_BUFFER_INTERVAL_SETTING,
 
+                // Settings for remote store enablement
+                IndexMetadata.INDEX_REMOTE_STORE_ENABLED_SETTING,
+                IndexMetadata.INDEX_REMOTE_SEGMENT_STORE_REPOSITORY_SETTING,
+                IndexMetadata.INDEX_REMOTE_TRANSLOG_REPOSITORY_SETTING,
+
                 // validate that built-in similarities don't get redefined
                 Setting.groupSetting("index.similarity.", (s) -> {
                     Map<String, Settings> groups = s.getAsGroups();
@@ -232,12 +241,6 @@ public final class IndexScopedSettings extends AbstractScopedSettings {
      * setting should be moved to {@link #BUILT_IN_INDEX_SETTINGS}.
      */
     public static final Map<String, List<Setting>> FEATURE_FLAGGED_INDEX_SETTINGS = Map.of(
-        FeatureFlags.REMOTE_STORE,
-        List.of(
-            IndexMetadata.INDEX_REMOTE_STORE_ENABLED_SETTING,
-            IndexMetadata.INDEX_REMOTE_SEGMENT_STORE_REPOSITORY_SETTING,
-            IndexMetadata.INDEX_REMOTE_TRANSLOG_REPOSITORY_SETTING
-        ),
         FeatureFlags.CONCURRENT_SEGMENT_SEARCH,
         List.of(IndexSettings.INDEX_CONCURRENT_SEGMENT_SEARCH_SETTING)
     );

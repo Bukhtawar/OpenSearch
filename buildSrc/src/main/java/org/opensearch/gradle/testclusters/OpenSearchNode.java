@@ -34,13 +34,13 @@ package org.opensearch.gradle.testclusters;
 import org.apache.commons.io.FileUtils;
 import org.opensearch.gradle.Architecture;
 import org.opensearch.gradle.DistributionDownloadPlugin;
-import org.opensearch.gradle.OpenSearchDistribution;
 import org.opensearch.gradle.FileSupplier;
 import org.opensearch.gradle.Jdk;
 import org.opensearch.gradle.LazyPropertyList;
 import org.opensearch.gradle.LazyPropertyMap;
 import org.opensearch.gradle.LoggedExec;
 import org.opensearch.gradle.OS;
+import org.opensearch.gradle.OpenSearchDistribution;
 import org.opensearch.gradle.PropertyNormalization;
 import org.opensearch.gradle.ReaperService;
 import org.opensearch.gradle.Version;
@@ -161,6 +161,7 @@ public class OpenSearchNode implements TestClusterConfiguration {
     private final Path httpPortsFile;
     private final Path tmpDir;
 
+    private boolean secure = false;
     private int currentDistro = 0;
     private TestDistribution testDistribution;
     private List<OpenSearchDistribution> distributions = new ArrayList<>();
@@ -206,6 +207,7 @@ public class OpenSearchNode implements TestClusterConfiguration {
         opensearchConfig = Config.getOpenSearchConfig(workingDir);
         legacyESConfig = Config.getLegacyESConfig(workingDir);
         currentConfig = opensearchConfig;
+        this.credentials.add(new HashMap<>());
     }
 
     /*
@@ -304,6 +306,11 @@ public class OpenSearchNode implements TestClusterConfiguration {
     @Optional
     public String getName() {
         return nameCustomization.apply(name);
+    }
+
+    @Internal
+    public boolean isSecure() {
+        return secure;
     }
 
     @Internal
@@ -544,6 +551,11 @@ public class OpenSearchNode implements TestClusterConfiguration {
     }
 
     @Override
+    public void setSecure(boolean secure) {
+        this.secure = secure;
+    }
+
+    @Override
     public void freeze() {
         requireNonNull(testDistribution, "null testDistribution passed when configuring test cluster `" + this + "`");
         LOGGER.info("Locking configuration of `{}`", this);
@@ -562,6 +574,18 @@ public class OpenSearchNode implements TestClusterConfiguration {
     @Override
     public synchronized void start() {
         LOGGER.info("Starting `{}`", this);
+        if (System.getProperty("tests.opensearch.secure") != null
+            && System.getProperty("tests.opensearch.secure").equalsIgnoreCase("true")) {
+            secure = true;
+        }
+        if (System.getProperty("tests.opensearch.username") != null) {
+            this.credentials.get(0).put("username", System.getProperty("tests.opensearch.username"));
+            LOGGER.info("Overwriting username to: " + this.getCredentials().get(0).get("username"));
+        }
+        if (System.getProperty("tests.opensearch.password") != null) {
+            this.credentials.get(0).put("password", System.getProperty("tests.opensearch.password"));
+            LOGGER.info("Overwriting password to: " + this.getCredentials().get(0).get("password"));
+        }
         if (Files.exists(getExtractedDistributionDir()) == false) {
             throw new TestClustersException("Can not start " + this + ", missing: " + getExtractedDistributionDir());
         }
@@ -1476,6 +1500,11 @@ public class OpenSearchNode implements TestClusterConfiguration {
     @Nested
     public List<?> getExtraConfigFiles() {
         return extraConfigFiles.getNormalizedCollection();
+    }
+
+    @Internal
+    public Map<String, File> getExtraConfigFilesMap() {
+        return extraConfigFiles;
     }
 
     @Override

@@ -37,16 +37,17 @@ import org.apache.lucene.sandbox.index.MergeOnFlushMergePolicy;
 import org.opensearch.LegacyESVersion;
 import org.opensearch.Version;
 import org.opensearch.cluster.metadata.IndexMetadata;
+import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.logging.Loggers;
 import org.opensearch.common.settings.IndexScopedSettings;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Setting.Property;
 import org.opensearch.common.settings.Settings;
-import org.opensearch.core.common.unit.ByteSizeUnit;
-import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.FeatureFlags;
 import org.opensearch.core.common.Strings;
+import org.opensearch.core.common.unit.ByteSizeUnit;
+import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.core.index.Index;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.replication.common.ReplicationType;
@@ -63,6 +64,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 
+import static org.opensearch.Version.V_2_7_0;
 import static org.opensearch.common.util.FeatureFlags.SEARCHABLE_SNAPSHOT_EXTENDED_COMPATIBILITY;
 import static org.opensearch.index.mapper.MapperService.INDEX_MAPPING_DEPTH_LIMIT_SETTING;
 import static org.opensearch.index.mapper.MapperService.INDEX_MAPPING_FIELD_NAME_LENGTH_LIMIT_SETTING;
@@ -78,8 +80,9 @@ import static org.opensearch.index.store.remote.directory.RemoteSnapshotDirector
  * a settings consumer at index creation via {@link IndexModule#addSettingsUpdateConsumer(Setting, Consumer)} that will
  * be called for each settings update.
  *
- * @opensearch.internal
+ * @opensearch.api
  */
+@PublicApi(since = "1.0.0")
 public final class IndexSettings {
     private static final String MERGE_ON_FLUSH_DEFAULT_POLICY = "default";
     private static final String MERGE_ON_FLUSH_MERGE_POLICY = "merge-on-flush";
@@ -300,10 +303,11 @@ public final class IndexSettings {
         Property.Deprecated
     );
     public static final TimeValue DEFAULT_REFRESH_INTERVAL = new TimeValue(1, TimeUnit.SECONDS);
+    public static final TimeValue MINIMUM_REFRESH_INTERVAL = new TimeValue(-1, TimeUnit.MILLISECONDS);
     public static final Setting<TimeValue> INDEX_REFRESH_INTERVAL_SETTING = Setting.timeSetting(
         "index.refresh_interval",
         DEFAULT_REFRESH_INTERVAL,
-        new TimeValue(-1, TimeUnit.MILLISECONDS),
+        MINIMUM_REFRESH_INTERVAL,
         Property.Dynamic,
         Property.IndexScope
     );
@@ -512,6 +516,18 @@ public final class IndexSettings {
     );
 
     /**
+     * This setting controls if unreferenced files will be cleaned up in case segment merge fails due to disk full.
+     *
+     * Defaults to true which means unreferenced files will be cleaned up in case segment merge fails.
+     */
+    public static final Setting<Boolean> INDEX_UNREFERENCED_FILE_CLEANUP = Setting.boolSetting(
+        "index.unreferenced_file_cleanup.enabled",
+        true,
+        Property.IndexScope,
+        Property.Dynamic
+    );
+
+    /**
      * Determines a balance between file-based and operations-based peer recoveries. The number of operations that will be used in an
      * operations-based peer recovery is limited to this proportion of the total number of documents in the shard (including deleted
      * documents) on the grounds that a file-based peer recovery may copy all of the documents in the shard over to the new peer, but is
@@ -645,6 +661,7 @@ public final class IndexSettings {
     private volatile long retentionLeaseMillis;
 
     private volatile String defaultSearchPipeline;
+    private final boolean widenIndexSortType;
 
     /**
      * The maximum age of a retention lease before it is considered expired.
@@ -675,6 +692,7 @@ public final class IndexSettings {
     private volatile String defaultPipeline;
     private volatile String requiredPipeline;
     private volatile boolean searchThrottled;
+    private volatile boolean shouldCleanupUnreferencedFiles;
     private volatile long mappingNestedFieldsLimit;
     private volatile long mappingNestedDocsLimit;
     private volatile long mappingTotalFieldsLimit;
@@ -791,6 +809,7 @@ public final class IndexSettings {
             extendedCompatibilitySnapshotVersion = Version.CURRENT.minimumIndexCompatibilityVersion();
         }
         this.searchThrottled = INDEX_SEARCH_THROTTLED.get(settings);
+        this.shouldCleanupUnreferencedFiles = INDEX_UNREFERENCED_FILE_CLEANUP.get(settings);
         this.queryStringLenient = QUERY_STRING_LENIENT_SETTING.get(settings);
         this.queryStringAnalyzeWildcard = QUERY_STRING_ANALYZE_WILDCARD.get(nodeSettings);
         this.queryStringAllowLeadingWildcard = QUERY_STRING_ALLOW_LEADING_WILDCARD.get(nodeSettings);
@@ -839,6 +858,13 @@ public final class IndexSettings {
         mergeOnFlushEnabled = scopedSettings.get(INDEX_MERGE_ON_FLUSH_ENABLED);
         setMergeOnFlushPolicy(scopedSettings.get(INDEX_MERGE_ON_FLUSH_POLICY));
         defaultSearchPipeline = scopedSettings.get(DEFAULT_SEARCH_PIPELINE);
+        /* There was unintentional breaking change got introduced with [OpenSearch-6424](https://github.com/opensearch-project/OpenSearch/pull/6424) (version 2.7).
+         * For indices created prior version (prior to 2.7) which has IndexSort type, they used to type cast the SortField.Type
+         * to higher bytes size like integer to long. This behavior was changed from OpenSearch 2.7 version not to
+         * up cast the SortField to gain some sort query optimizations.
+         * Now this sortField (IndexSort) is stored in SegmentInfo and we need to maintain backward compatibility for them.
+         */
+        widenIndexSortType = IndexMetadata.SETTING_INDEX_VERSION_CREATED.get(settings).before(V_2_7_0);
 
         scopedSettings.addSettingsUpdateConsumer(MergePolicyConfig.INDEX_COMPOUND_FORMAT_SETTING, mergePolicyConfig::setNoCFSRatio);
         scopedSettings.addSettingsUpdateConsumer(
@@ -903,6 +929,7 @@ public final class IndexSettings {
         scopedSettings.addSettingsUpdateConsumer(FINAL_PIPELINE, this::setRequiredPipeline);
         scopedSettings.addSettingsUpdateConsumer(INDEX_SOFT_DELETES_RETENTION_OPERATIONS_SETTING, this::setSoftDeleteRetentionOperations);
         scopedSettings.addSettingsUpdateConsumer(INDEX_SEARCH_THROTTLED, this::setSearchThrottled);
+        scopedSettings.addSettingsUpdateConsumer(INDEX_UNREFERENCED_FILE_CLEANUP, this::setShouldCleanupUnreferencedFiles);
         scopedSettings.addSettingsUpdateConsumer(INDEX_SOFT_DELETES_RETENTION_LEASE_PERIOD_SETTING, this::setRetentionLeaseMillis);
         scopedSettings.addSettingsUpdateConsumer(INDEX_MAPPING_NESTED_FIELDS_LIMIT_SETTING, this::setMappingNestedFieldsLimit);
         scopedSettings.addSettingsUpdateConsumer(INDEX_MAPPING_NESTED_DOCS_LIMIT_SETTING, this::setMappingNestedDocsLimit);
@@ -1044,11 +1071,11 @@ public final class IndexSettings {
     }
 
     public boolean isSegRepLocalEnabled() {
-        return isSegRepEnabled() && !isSegRepWithRemoteEnabled();
+        return isSegRepEnabled() && !isRemoteStoreEnabled();
     }
 
     public boolean isSegRepWithRemoteEnabled() {
-        return isSegRepEnabled() && isRemoteStoreEnabled() && FeatureFlags.isEnabled(FeatureFlags.SEGMENT_REPLICATION_EXPERIMENTAL);
+        return isSegRepEnabled() && isRemoteStoreEnabled();
     }
 
     /**
@@ -1145,7 +1172,9 @@ public final class IndexSettings {
      */
     public static boolean same(final Settings left, final Settings right) {
         return left.filter(IndexScopedSettings.INDEX_SETTINGS_KEY_PREDICATE)
-            .equals(right.filter(IndexScopedSettings.INDEX_SETTINGS_KEY_PREDICATE));
+            .equals(right.filter(IndexScopedSettings.INDEX_SETTINGS_KEY_PREDICATE))
+            && left.filter(IndexScopedSettings.ARCHIVED_SETTINGS_KEY_PREDICATE)
+                .equals(right.filter(IndexScopedSettings.ARCHIVED_SETTINGS_KEY_PREDICATE));
     }
 
     /**
@@ -1189,6 +1218,13 @@ public final class IndexSettings {
      */
     public TimeValue getRemoteTranslogUploadBufferInterval() {
         return remoteTranslogUploadBufferInterval;
+    }
+
+    /**
+     * Returns true iff the remote translog buffer interval setting exists or in other words is explicitly set.
+     */
+    public boolean isRemoteTranslogBufferIntervalExplicit() {
+        return INDEX_REMOTE_TRANSLOG_BUFFER_INTERVAL_SETTING.exists(settings);
     }
 
     public void setRemoteTranslogUploadBufferInterval(TimeValue remoteTranslogUploadBufferInterval) {
@@ -1527,6 +1563,18 @@ public final class IndexSettings {
         this.searchThrottled = searchThrottled;
     }
 
+    /**
+     * Returns true if unreferenced files should be cleaned up on merge failure for this index.
+     *
+     */
+    public boolean shouldCleanupUnreferencedFiles() {
+        return shouldCleanupUnreferencedFiles;
+    }
+
+    private void setShouldCleanupUnreferencedFiles(boolean shouldCleanupUnreferencedFiles) {
+        this.shouldCleanupUnreferencedFiles = shouldCleanupUnreferencedFiles;
+    }
+
     public long getMappingNestedFieldsLimit() {
         return mappingNestedFieldsLimit;
     }
@@ -1612,5 +1660,13 @@ public final class IndexSettings {
 
     public void setDefaultSearchPipeline(String defaultSearchPipeline) {
         this.defaultSearchPipeline = defaultSearchPipeline;
+    }
+
+    /**
+     * Returns true if we need to maintain backward compatibility for index sorted indices created prior to version 2.7
+     * @return boolean
+     */
+    public boolean shouldWidenIndexSortType() {
+        return this.widenIndexSortType;
     }
 }

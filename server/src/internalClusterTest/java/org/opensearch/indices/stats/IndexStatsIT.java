@@ -49,14 +49,17 @@ import org.opensearch.action.get.GetResponse;
 import org.opensearch.action.index.IndexRequestBuilder;
 import org.opensearch.action.index.IndexResponse;
 import org.opensearch.action.search.SearchType;
-import org.opensearch.core.action.support.DefaultShardOperationFailedException;
+import org.opensearch.action.support.WriteRequest;
 import org.opensearch.cluster.metadata.IndexMetadata;
-import org.opensearch.core.common.bytes.BytesReference;
+import org.opensearch.common.UUIDs;
 import org.opensearch.common.io.stream.BytesStreamOutput;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
-import org.opensearch.common.xcontent.XContentType;
+import org.opensearch.core.action.support.DefaultShardOperationFailedException;
+import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.core.common.io.stream.StreamOutput;
+import org.opensearch.core.rest.RestStatus;
+import org.opensearch.core.xcontent.MediaTypeRegistry;
 import org.opensearch.index.IndexModule;
 import org.opensearch.index.IndexService;
 import org.opensearch.index.IndexSettings;
@@ -66,17 +69,20 @@ import org.opensearch.index.VersionType;
 import org.opensearch.index.cache.query.QueryCacheStats;
 import org.opensearch.index.engine.VersionConflictEngineException;
 import org.opensearch.index.query.QueryBuilders;
+import org.opensearch.index.remote.RemoteSegmentStats;
 import org.opensearch.index.shard.IndexShard;
+import org.opensearch.index.translog.RemoteTranslogStats;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.IndicesQueryCache;
 import org.opensearch.indices.IndicesRequestCache;
 import org.opensearch.indices.IndicesService;
+import org.opensearch.indices.replication.common.ReplicationType;
 import org.opensearch.plugins.Plugin;
 import org.opensearch.search.sort.SortOrder;
+import org.opensearch.test.InternalSettingsPlugin;
 import org.opensearch.test.OpenSearchIntegTestCase;
 import org.opensearch.test.OpenSearchIntegTestCase.ClusterScope;
 import org.opensearch.test.OpenSearchIntegTestCase.Scope;
-import org.opensearch.test.InternalSettingsPlugin;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -1012,7 +1018,10 @@ public class IndexStatsIT extends OpenSearchIntegTestCase {
         );
         ensureGreen();
 
-        client().prepareIndex("test1").setId(Integer.toString(1)).setSource("{\"bar\":\"bar\",\"baz\":\"baz\"}", XContentType.JSON).get();
+        client().prepareIndex("test1")
+            .setId(Integer.toString(1))
+            .setSource("{\"bar\":\"bar\",\"baz\":\"baz\"}", MediaTypeRegistry.JSON)
+            .get();
         refresh();
 
         IndicesStatsRequestBuilder builder = client().admin().indices().prepareStats();
@@ -1357,7 +1366,7 @@ public class IndexStatsIT extends OpenSearchIntegTestCase {
                 }
                 while (!stop.get()) {
                     final String id = Integer.toString(idGenerator.incrementAndGet());
-                    final IndexResponse response = client().prepareIndex("test").setId(id).setSource("{}", XContentType.JSON).get();
+                    final IndexResponse response = client().prepareIndex("test").setId(id).setSource("{}", MediaTypeRegistry.JSON).get();
                     assertThat(response.getResult(), equalTo(DocWriteResponse.Result.CREATED));
                 }
             });
@@ -1415,6 +1424,50 @@ public class IndexStatsIT extends OpenSearchIntegTestCase {
         assertThat(executionFailures.get(), emptyCollectionOf(Exception.class));
     }
 
+    public void testZeroRemoteStoreStatsOnNonRemoteStoreIndex() {
+        String indexName = "test-index";
+        createIndex(indexName, Settings.builder().put("index.number_of_shards", 1).put("index.number_of_replicas", 0).build());
+        ensureGreen(indexName);
+        assertEquals(
+            RestStatus.CREATED,
+            client().prepareIndex(indexName)
+                .setId(UUIDs.randomBase64UUID())
+                .setSource("field", "value1", "field2", "value1")
+                .setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE)
+                .get()
+                .status()
+        );
+        ShardStats shard = client().admin().indices().prepareStats(indexName).setSegments(true).setTranslog(true).get().getShards()[0];
+        RemoteSegmentStats remoteSegmentStatsFromIndexStats = shard.getStats().getSegments().getRemoteSegmentStats();
+        assertZeroRemoteSegmentStats(remoteSegmentStatsFromIndexStats);
+        RemoteTranslogStats remoteTranslogStatsFromIndexStats = shard.getStats().getTranslog().getRemoteTranslogStats();
+        assertZeroRemoteTranslogStats(remoteTranslogStatsFromIndexStats);
+
+        NodesStatsResponse nodesStatsResponse = client().admin().cluster().prepareNodesStats(primaryNodeName(indexName)).get();
+        RemoteSegmentStats remoteSegmentStatsFromNodesStats = nodesStatsResponse.getNodes()
+            .get(0)
+            .getIndices()
+            .getSegments()
+            .getRemoteSegmentStats();
+        assertZeroRemoteSegmentStats(remoteSegmentStatsFromNodesStats);
+        RemoteTranslogStats remoteTranslogStatsFromNodesStats = nodesStatsResponse.getNodes()
+            .get(0)
+            .getIndices()
+            .getTranslog()
+            .getRemoteTranslogStats();
+        assertZeroRemoteTranslogStats(remoteTranslogStatsFromNodesStats);
+    }
+
+    private void assertZeroRemoteSegmentStats(RemoteSegmentStats remoteSegmentStats) {
+        // Compare with fresh object because all values default to 0 in default fresh object
+        assertEquals(new RemoteSegmentStats(), remoteSegmentStats);
+    }
+
+    private void assertZeroRemoteTranslogStats(RemoteTranslogStats remoteTranslogStats) {
+        // Compare with fresh object because all values default to 0 in default fresh object
+        assertEquals(new RemoteTranslogStats(), remoteTranslogStats);
+    }
+
     /**
      * Persist the global checkpoint on all shards of the given index into disk.
      * This makes sure that the persisted global checkpoint on those shards will equal to the in-memory value.
@@ -1430,5 +1483,38 @@ public class IndexStatsIT extends OpenSearchIntegTestCase {
                 }
             }
         }
+    }
+
+    public void testSegmentReplicationStats() {
+        String indexName = "test-index";
+        createIndex(
+            indexName,
+            Settings.builder().put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, 1).put(SETTING_NUMBER_OF_REPLICAS, 1).build()
+        );
+
+        ensureGreen(indexName);
+
+        IndicesStatsRequestBuilder builder = client().admin().indices().prepareStats();
+        IndicesStatsResponse stats = builder.execute().actionGet();
+
+        // document replication enabled index should return empty segment replication stats
+        assertNotNull(stats.getIndex(indexName).getTotal().getSegments().getReplicationStats());
+
+        indexName = "test-index2";
+        createIndex(
+            indexName,
+            Settings.builder()
+                .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, 1)
+                .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 1)
+                .put(IndexMetadata.SETTING_REPLICATION_TYPE, ReplicationType.SEGMENT)
+                .build()
+        );
+        ensureGreen(indexName);
+
+        builder = client().admin().indices().prepareStats();
+        stats = builder.execute().actionGet();
+
+        // segment replication enabled index should return segment replication stats
+        assertNotNull(stats.getIndex(indexName).getTotal().getSegments().getReplicationStats());
     }
 }

@@ -54,11 +54,12 @@ import org.opensearch.action.search.SearchResponse;
 import org.opensearch.action.search.SearchScrollRequest;
 import org.opensearch.client.core.CountRequest;
 import org.opensearch.client.core.CountResponse;
-import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.common.unit.TimeValue;
-import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.common.xcontent.XContentFactory;
-import org.opensearch.common.xcontent.XContentType;
+import org.opensearch.core.common.bytes.BytesReference;
+import org.opensearch.core.rest.RestStatus;
+import org.opensearch.core.xcontent.MediaTypeRegistry;
+import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.index.query.MatchQueryBuilder;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.index.query.QueryBuilders;
@@ -66,7 +67,6 @@ import org.opensearch.index.query.ScriptQueryBuilder;
 import org.opensearch.index.query.TermsQueryBuilder;
 import org.opensearch.join.aggregations.Children;
 import org.opensearch.join.aggregations.ChildrenAggregationBuilder;
-import org.opensearch.core.rest.RestStatus;
 import org.opensearch.script.Script;
 import org.opensearch.script.ScriptType;
 import org.opensearch.script.mustache.MultiSearchTemplateRequest;
@@ -1200,7 +1200,7 @@ public class SearchIT extends OpenSearchRestHighLevelClientTestCase {
         BytesReference actualSource = searchTemplateResponse.getSource();
         assertNotNull(actualSource);
 
-        assertToXContentEquivalent(expectedSource, actualSource, XContentType.JSON);
+        assertToXContentEquivalent(expectedSource, actualSource, MediaTypeRegistry.JSON);
     }
 
     public void testMultiSearchTemplate() throws Exception {
