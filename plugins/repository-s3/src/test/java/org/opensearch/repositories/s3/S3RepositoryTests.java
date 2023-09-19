@@ -73,6 +73,12 @@ public class S3RepositoryTests extends OpenSearchTestCase implements ConfigPathS
         public void close() {}
     }
 
+    private static class DummyS3AsyncService extends S3AsyncService {
+        DummyS3AsyncService(Path configPath) {
+            super(configPath);
+        }
+    }
+
     public void testInvalidChunkBufferSizeSettings() {
         // chunk < buffer should fail
         final Settings s1 = bufferAndChunkSettings(10, 5);
@@ -143,7 +149,7 @@ public class S3RepositoryTests extends OpenSearchTestCase implements ConfigPathS
             null,
             null,
             null,
-            null,
+            new DummyS3AsyncService(configPath()),
             false
         ) {
             @Override

@@ -427,8 +427,7 @@ class S3Repository extends MeteredBlobStoreRepository {
         repositoryMetadata = newRepositoryMetadata;
 
         // Reload configs for S3RepositoryPlugin
-        Settings settings = clusterService.getSettings();
-        final Map<String, S3ClientSettings> clientsSettings = S3ClientSettings.load(settings, pluginConfigPath);
+        final Map<String, S3ClientSettings> clientsSettings = S3ClientSettings.load(repositoryMetadata.settings(), pluginConfigPath);
         service.refreshAndClearCache(clientsSettings);
         s3AsyncService.refreshAndClearCache(clientsSettings);
 

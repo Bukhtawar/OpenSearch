@@ -412,7 +412,8 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         final ClusterService clusterService,
         final RecoverySettings recoverySettings
     ) {
-        reload(repositoryMetadata, compress);
+        // Read RepositoryMetadata as the first step
+        readRepositoryMetadata(repositoryMetadata, compress);
 
         isSystemRepository = SYSTEM_REPOSITORY_SETTING.get(metadata.settings());
         this.namedXContentRegistry = namedXContentRegistry;
@@ -423,6 +424,16 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     @Override
     public void reload(RepositoryMetadata repositoryMetadata, boolean compress) {
+        readRepositoryMetadata(repositoryMetadata, compress);
+    }
+
+    /**
+     * Reloads the values derived from the Repository Metadata
+     *
+     * @param repositoryMetadata RepositoryMetadata instance to derive the values from
+     * @param compress boolean representing whether compression is to be used
+     */
+    private void readRepositoryMetadata(RepositoryMetadata repositoryMetadata, boolean compress) {
         this.metadata = repositoryMetadata;
 
         supportURLRepo = SUPPORT_URL_REPO.get(metadata.settings());
