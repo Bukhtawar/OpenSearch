@@ -57,14 +57,6 @@ public interface BlobStore extends Closeable {
     }
 
     /**
-     * Checks if the blob store can be reloaded inplace or not
-     * @return true if the blob store can be reloaded inplace, false otherwise
-     */
-    default boolean isReloadable() {
-        return false;
-    }
-
-    /**
      * Reload the blob store inplace
      */
     default void reload(RepositoryMetadata repositoryMetadata) {}

@@ -42,6 +42,7 @@ import org.opensearch.cluster.metadata.RepositoryMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.lifecycle.LifecycleComponent;
+import org.opensearch.common.settings.Settings;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.mapper.MapperService;
@@ -96,6 +97,9 @@ public interface Repository extends LifecycleComponent {
      * Returns metadata about this repository.
      */
     RepositoryMetadata getMetadata();
+
+
+    default void reload(RepositoryMetadata repositoryMetadata) {};
 
     /**
      * Reads snapshot description from repository.
@@ -440,17 +444,4 @@ public interface Repository extends LifecycleComponent {
     default Map<String, Object> adaptUserMetadata(Map<String, Object> userMetadata) {
         return userMetadata;
     }
-
-    /**
-     * Checks if the repository can be reloaded inplace or not
-     * @return true if the repository can be reloaded inplace, false otherwise
-     */
-    default boolean isReloadable() {
-        return false;
-    }
-
-    /**
-     * Reload the repository inplace
-     */
-    default void reload(RepositoryMetadata repositoryMetadata, boolean compress) {}
 }

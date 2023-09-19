@@ -106,11 +106,6 @@ class S3BlobStore implements BlobStore {
     }
 
     @Override
-    public boolean isReloadable() {
-        return true;
-    }
-
-    @Override
     public void reload(RepositoryMetadata repositoryMetadata) {
         this.repositoryMetadata = repositoryMetadata;
     }

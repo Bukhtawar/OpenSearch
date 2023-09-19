@@ -400,6 +400,8 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
      */
     protected int bufferSize;
 
+    protected boolean compress;
+
     /**
      * Constructs new BlobStoreRepository
      * @param repositoryMetadata   The metadata for this repository including name and settings
@@ -413,6 +415,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         final RecoverySettings recoverySettings
     ) {
         // Read RepositoryMetadata as the first step
+        this.compress = compress;
         readRepositoryMetadata(repositoryMetadata, compress);
 
         isSystemRepository = SYSTEM_REPOSITORY_SETTING.get(metadata.settings());
@@ -423,7 +426,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
     }
 
     @Override
-    public void reload(RepositoryMetadata repositoryMetadata, boolean compress) {
+    public void reload(RepositoryMetadata repositoryMetadata) {
         readRepositoryMetadata(repositoryMetadata, compress);
     }
 

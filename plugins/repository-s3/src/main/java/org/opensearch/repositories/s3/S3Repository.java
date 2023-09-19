@@ -44,7 +44,6 @@ import org.opensearch.common.blobstore.BlobStore;
 import org.opensearch.common.logging.DeprecationLogger;
 import org.opensearch.common.settings.SecureSetting;
 import org.opensearch.common.settings.Setting;
-import org.opensearch.common.settings.Settings;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.Strings;
 import org.opensearch.core.common.settings.SecureString;
@@ -416,14 +415,9 @@ class S3Repository extends MeteredBlobStoreRepository {
     }
 
     @Override
-    public boolean isReloadable() {
-        return true;
-    }
-
-    @Override
-    public void reload(RepositoryMetadata newRepositoryMetadata, boolean compress) {
+    public void reload(RepositoryMetadata newRepositoryMetadata) {
         // Reload configs for S3Repository
-        super.reload(newRepositoryMetadata, compress);
+        super.reload(newRepositoryMetadata);
         repositoryMetadata = newRepositoryMetadata;
 
         // Reload configs for S3RepositoryPlugin

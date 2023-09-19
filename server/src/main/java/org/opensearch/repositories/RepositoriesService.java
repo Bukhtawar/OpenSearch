@@ -458,8 +458,8 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                             || previousMetadata.settings().equals(repositoryMetadata.settings()) == false) {
                             // Previous version is different from the version in settings
                             logger.debug("updating repository [{}]", repositoryMetadata.name());
-                            if (repository.isSystemRepository() && repository.isReloadable()) {
-                                repository.reload(repositoryMetadata, COMPRESS_SETTING.get(repositoryMetadata.settings()));
+                            if (repository.isSystemRepository()) {
+                                repository.reload(repositoryMetadata);
                             } else {
                                 closeRepository(repository);
                                 archiveRepositoryStats(repository, state.version());

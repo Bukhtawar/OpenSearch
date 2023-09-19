@@ -70,14 +70,6 @@ public abstract class MeteredBlobStoreRepository extends BlobStoreRepository {
         );
     }
 
-    @Override
-    public void reload(RepositoryMetadata repositoryMetadata, boolean compress) {
-        super.reload(repositoryMetadata, compress);
-
-        // Not adding any additional reload logic here is intentional as the constructor only
-        // initializes the repositoryInfo from the repo metadata, which cannot be changed.
-    }
-
     public RepositoryStatsSnapshot statsSnapshot() {
         return new RepositoryStatsSnapshot(repositoryInfo, stats(), RepositoryStatsSnapshot.UNKNOWN_CLUSTER_VERSION, false);
     }

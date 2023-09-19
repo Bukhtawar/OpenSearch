@@ -44,13 +44,8 @@ public class ReloadableFsRepository extends FsRepository {
     }
 
     @Override
-    public boolean isReloadable() {
-        return true;
-    }
-
-    @Override
-    public void reload(RepositoryMetadata repositoryMetadata, boolean compress) {
-        super.reload(repositoryMetadata, compress);
+    public void reload(RepositoryMetadata repositoryMetadata) {
+        super.reload(repositoryMetadata);
         metadata = repositoryMetadata;
 
         // TODO - deduplicate the below block
