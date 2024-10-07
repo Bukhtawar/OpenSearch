@@ -8,19 +8,12 @@
 
 package org.opensearch.index.store;
 
-import org.apache.lucene.util.Version;
-import org.opensearch.common.UUIDs;
-import org.opensearch.common.blobstore.BlobMetadata;
+import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.BlobPath;
+import org.opensearch.common.blobstore.BlobStore;
 import org.opensearch.common.blobstore.support.PlainBlobMetadata;
 import org.opensearch.common.settings.ClusterSettings;
 import org.opensearch.common.settings.Settings;
-import org.opensearch.core.action.ActionListener;
-import org.opensearch.gateway.remote.model.RemotePinnedTimestamps;
-import org.opensearch.gateway.remote.model.RemoteStorePinnedTimestampsBlobStore;
-import org.opensearch.index.remote.RemoteStoreUtils;
-import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
-import org.opensearch.index.translog.transfer.BlobStoreTransferService;
 import org.opensearch.indices.RemoteStoreSettings;
 import org.opensearch.node.Node;
 import org.opensearch.node.remotestore.RemoteStoreNodeAttribute;
@@ -30,7 +23,6 @@ import org.opensearch.repositories.blobstore.BlobStoreRepository;
 import org.junit.Before;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,11 +32,9 @@ import java.util.stream.Collectors;
 import org.mockito.Mockito;
 
 import static org.opensearch.indices.RemoteStoreSettings.CLUSTER_REMOTE_STORE_PINNED_TIMESTAMP_ENABLED;
-import static org.opensearch.test.RemoteStoreTestUtils.createMetadataFileBytes;
 import static org.hamcrest.CoreMatchers.is;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.anyInt;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -54,8 +44,7 @@ import static org.mockito.Mockito.when;
 public class RemoteSegmentStoreDirectoryWithPinnedTimestampTests extends RemoteSegmentStoreDirectoryTests {
 
     Runnable updatePinnedTimstampTask;
-    BlobStoreTransferService blobStoreTransferService;
-    RemoteStorePinnedTimestampsBlobStore remoteStorePinnedTimestampsBlobStore;
+    BlobContainer blobContainer;
     RemoteStorePinnedTimestampService remoteStorePinnedTimestampServiceSpy;
 
     @Before
@@ -88,16 +77,13 @@ public class RemoteSegmentStoreDirectoryWithPinnedTimestampTests extends RemoteS
         );
         remoteStorePinnedTimestampServiceSpy = Mockito.spy(remoteStorePinnedTimestampService);
 
-        remoteStorePinnedTimestampsBlobStore = mock(RemoteStorePinnedTimestampsBlobStore.class);
-        blobStoreTransferService = mock(BlobStoreTransferService.class);
-        when(remoteStorePinnedTimestampServiceSpy.pinnedTimestampsBlobStore()).thenReturn(remoteStorePinnedTimestampsBlobStore);
-        when(remoteStorePinnedTimestampServiceSpy.blobStoreTransferService()).thenReturn(blobStoreTransferService);
+        BlobStore blobStore = mock(BlobStore.class);
+        when(blobStoreRepository.blobStore()).thenReturn(blobStore);
+        when(blobStoreRepository.basePath()).thenReturn(new BlobPath());
+        blobContainer = mock(BlobContainer.class);
+        when(blobStore.blobContainer(any())).thenReturn(blobContainer);
 
-        doAnswer(invocationOnMock -> {
-            ActionListener<List<BlobMetadata>> actionListener = invocationOnMock.getArgument(3);
-            actionListener.onResponse(new ArrayList<>());
-            return null;
-        }).when(blobStoreTransferService).listAllInSortedOrder(any(), any(), eq(1), any());
+        when(blobContainer.listBlobs()).thenReturn(new HashMap<>());
 
         remoteStorePinnedTimestampServiceSpy.start();
 
@@ -141,62 +127,6 @@ public class RemoteSegmentStoreDirectoryWithPinnedTimestampTests extends RemoteS
             "node-1",
             System.currentTimeMillis() - 600000
         );
-    }
-
-    public void testInitializeToSpecificTimestampNoMetadataFiles() throws IOException {
-        when(
-            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-                RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX,
-                Integer.MAX_VALUE
-            )
-        ).thenReturn(new ArrayList<>());
-        assertNull(remoteSegmentStoreDirectory.initializeToSpecificTimestamp(1234L));
-    }
-
-    public void testInitializeToSpecificTimestampNoMdMatchingTimestamp() throws IOException {
-        String metadataPrefix = "metadata__1__2__3__4__5__";
-        List<String> metadataFiles = new ArrayList<>();
-        metadataFiles.add(metadataPrefix + RemoteStoreUtils.invertLong(2000));
-        metadataFiles.add(metadataPrefix + RemoteStoreUtils.invertLong(3000));
-        metadataFiles.add(metadataPrefix + RemoteStoreUtils.invertLong(4000));
-
-        when(
-            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-                RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX,
-                Integer.MAX_VALUE
-            )
-        ).thenReturn(metadataFiles);
-        assertNull(remoteSegmentStoreDirectory.initializeToSpecificTimestamp(1234L));
-    }
-
-    public void testInitializeToSpecificTimestampMatchingMdFile() throws IOException {
-        String metadataPrefix = "metadata__1__2__3__4__5__";
-        List<String> metadataFiles = new ArrayList<>();
-        metadataFiles.add(metadataPrefix + RemoteStoreUtils.invertLong(1000));
-        metadataFiles.add(metadataPrefix + RemoteStoreUtils.invertLong(2000));
-        metadataFiles.add(metadataPrefix + RemoteStoreUtils.invertLong(3000));
-
-        Map<String, String> metadata = new HashMap<>();
-        metadata.put("_0.cfe", "_0.cfe::_0.cfe__" + UUIDs.base64UUID() + "::1234::512::" + Version.LATEST.major);
-        metadata.put("_0.cfs", "_0.cfs::_0.cfs__" + UUIDs.base64UUID() + "::2345::1024::" + Version.LATEST.major);
-
-        when(
-            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-                RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX,
-                Integer.MAX_VALUE
-            )
-        ).thenReturn(metadataFiles);
-        when(remoteMetadataDirectory.getBlobStream(metadataPrefix + RemoteStoreUtils.invertLong(1000))).thenReturn(
-            createMetadataFileBytes(metadata, indexShard.getLatestReplicationCheckpoint(), segmentInfos)
-        );
-
-        RemoteSegmentMetadata remoteSegmentMetadata = remoteSegmentStoreDirectory.initializeToSpecificTimestamp(1234L);
-        assertNotNull(remoteSegmentMetadata);
-        Map<String, RemoteSegmentStoreDirectory.UploadedSegmentMetadata> uploadedSegments = remoteSegmentStoreDirectory
-            .getSegmentsUploadedToRemoteStore();
-        assertEquals(2, uploadedSegments.size());
-        assertTrue(uploadedSegments.containsKey("_0.cfe"));
-        assertTrue(uploadedSegments.containsKey("_0.cfs"));
     }
 
     public void testDeleteStaleCommitsNoPinnedTimestampMdFilesLatest() throws Exception {
@@ -257,15 +187,9 @@ public class RemoteSegmentStoreDirectoryWithPinnedTimestampTests extends RemoteS
             )
         ).thenReturn(List.of(metadataFilename, metadataFilename2, metadataFilename3));
 
-        doAnswer(invocationOnMock -> {
-            ActionListener<List<BlobMetadata>> actionListener = invocationOnMock.getArgument(3);
-            actionListener.onResponse(List.of(new PlainBlobMetadata("pinned_timestamp_123", 1000)));
-            return null;
-        }).when(blobStoreTransferService).listAllInSortedOrder(any(), any(), eq(1), any());
-
         long pinnedTimestampMatchingMetadataFilename2 = RemoteSegmentStoreDirectory.MetadataFilenameUtils.getTimestamp(metadataFilename2) + 10;
-        when(remoteStorePinnedTimestampsBlobStore.read(any())).thenReturn(new RemotePinnedTimestamps.PinnedTimestamps(Map.of(pinnedTimestampMatchingMetadataFilename2, List.of("xyz"))));
-        when(remoteStorePinnedTimestampsBlobStore.getBlobPathForUpload(any())).thenReturn(new BlobPath());
+        String blobName = "snapshot1__" + pinnedTimestampMatchingMetadataFilename2;
+        when(blobContainer.listBlobs()).thenReturn(Map.of(blobName, new PlainBlobMetadata(blobName, 100)));
 
         final Map<String, Map<String, String>> metadataFilenameContentMapping = populateMetadata();
         final List<String> filesToBeDeleted = metadataFilenameContentMapping.get(metadataFilename3)
