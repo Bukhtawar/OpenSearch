@@ -50,11 +50,19 @@ public class StarTreeTestUtils {
         List<StarTreeDocument> starTreeDocuments = new ArrayList<>();
         for (StarTreeValues starTreeValues : starTreeValuesSubs) {
             List<Dimension> dimensionsSplitOrder = starTreeValues.getStarTreeField().getDimensionsOrder();
-            SequentialDocValuesIterator[] dimensionReaders = new SequentialDocValuesIterator[dimensionsSplitOrder.size()];
+            int numDimensions = 0;
+            for (Dimension dimension : dimensionsSplitOrder) {
+                numDimensions += dimension.getNumSubDimensions();
+            }
+            SequentialDocValuesIterator[] dimensionReaders = new SequentialDocValuesIterator[numDimensions];
 
+            int dimIndex = 0;
             for (int i = 0; i < dimensionsSplitOrder.size(); i++) {
-                String dimension = dimensionsSplitOrder.get(i).getField();
-                dimensionReaders[i] = new SequentialDocValuesIterator(starTreeValues.getDimensionValuesIterator(dimension));
+                Dimension dimension = dimensionsSplitOrder.get(i);
+                for (String name : dimension.getSubDimensionNames()) {
+                    dimensionReaders[dimIndex] = new SequentialDocValuesIterator(starTreeValues.getDimensionValuesIterator(name));
+                    dimIndex++;
+                }
             }
 
             List<SequentialDocValuesIterator> metricReaders = new ArrayList<>();
@@ -91,6 +99,7 @@ public class StarTreeTestUtils {
     ) throws IOException {
         Long[] dims = new Long[dimensionReaders.length];
         int i = 0;
+
         for (SequentialDocValuesIterator dimensionDocValueIterator : dimensionReaders) {
             dimensionDocValueIterator.nextEntry(currentDocId);
             Long val = dimensionDocValueIterator.value(currentDocId);
@@ -109,6 +118,9 @@ public class StarTreeTestUtils {
 
     public static Double toAggregatorValueType(Long value, FieldValueConverter fieldValueConverter) {
         try {
+            if (value == null) {
+                return 0.0;
+            }
             return fieldValueConverter.toDoubleValue(value);
         } catch (Exception e) {
             throw new IllegalStateException("Cannot convert " + value + " to sortable aggregation type", e);

@@ -14,6 +14,7 @@ import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.RandomAccessInput;
+import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.index.compositeindex.datacube.startree.StarTreeDocument;
 import org.opensearch.index.compositeindex.datacube.startree.StarTreeField;
@@ -45,7 +46,9 @@ import java.util.Map;
  * <p>The set of 'star-tree.documents' files is maintained, and a tracker array is used to keep track of the start document ID for each file.
  * Once the number of files reaches a set threshold, the files are merged.
  *
+ * @opensearch.experimental
  */
+@ExperimentalApi
 public class StarTreeDocsFileManager extends AbstractDocumentsFileManager implements Closeable {
     private static final Logger logger = LogManager.getLogger(StarTreeDocsFileManager.class);
     private static final String STAR_TREE_DOC_FILE_NAME = "star-tree.documents";
@@ -60,18 +63,23 @@ public class StarTreeDocsFileManager extends AbstractDocumentsFileManager implem
     private final int fileCountMergeThreshold;
     private int numStarTreeDocs = 0;
 
-    public StarTreeDocsFileManager(SegmentWriteState state, StarTreeField starTreeField, List<MetricAggregatorInfo> metricAggregatorInfos)
-        throws IOException {
-        this(state, starTreeField, metricAggregatorInfos, DEFAULT_FILE_COUNT_MERGE_THRESHOLD);
+    public StarTreeDocsFileManager(
+        SegmentWriteState state,
+        StarTreeField starTreeField,
+        List<MetricAggregatorInfo> metricAggregatorInfos,
+        int numDimensions
+    ) throws IOException {
+        this(state, starTreeField, metricAggregatorInfos, DEFAULT_FILE_COUNT_MERGE_THRESHOLD, numDimensions);
     }
 
     public StarTreeDocsFileManager(
         SegmentWriteState state,
         StarTreeField starTreeField,
         List<MetricAggregatorInfo> metricAggregatorInfos,
-        int fileCountThreshold
+        int fileCountThreshold,
+        int numDimensions
     ) throws IOException {
-        super(state, starTreeField, metricAggregatorInfos);
+        super(state, starTreeField, metricAggregatorInfos, numDimensions);
         fileToEndDocIdMap = new LinkedHashMap<>();
         try {
             starTreeDocsFileOutput = createStarTreeDocumentsFileOutput();
@@ -126,7 +134,7 @@ public class StarTreeDocsFileManager extends AbstractDocumentsFileManager implem
     @Override
     public Long[] readDimensions(int docId) throws IOException {
         ensureDocumentReadable(docId);
-        Long[] dims = new Long[starTreeField.getDimensionsOrder().size()];
+        Long[] dims = new Long[numDimensions];
         readDimensions(dims, starTreeDocsFileRandomInput, getOffset(docId));
         return dims;
     }
