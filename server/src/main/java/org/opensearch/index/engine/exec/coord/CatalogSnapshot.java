@@ -90,6 +90,18 @@ public abstract class CatalogSnapshot implements Writeable, Cloneable {
         out.writeLong(version);
     }
 
+    public CatalogSnapshot(StreamInput in) throws IOException {
+        super("catalog_snapshot");
+        this.generation = in.readLong();
+        this.version = in.readLong();
+    }
+
+    @Override
+    public void writeTo(StreamOutput out) throws IOException {
+        out.writeLong(generation);
+        out.writeLong(version);
+    }
+
     public long getGeneration() {
         return generation;
     }

@@ -185,6 +185,10 @@ public class RemoteDirectory extends Directory {
         blobContainer.deleteBlobsIgnoringIfNotExists(Collections.singletonList(name));
     }
 
+    public void deleteFile(UploadedSegmentMetadata uploadedSegmentMetadata) throws IOException {
+        deleteFile(uploadedSegmentMetadata.getUploadedFilename());
+    }
+
     /**
      * Removes multiple existing files in the directory in a batch operation.
      *
