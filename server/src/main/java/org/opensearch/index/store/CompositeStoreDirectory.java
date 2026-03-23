@@ -179,7 +179,7 @@ public class CompositeStoreDirectory extends FilterDirectory {
      */
     public String toFileIdentifier(FileMetadata fm) {
         String format = fm.dataFormat();
-        if (format == null || INDEX_DIRECTORY_FORMATS.contains(format.toLowerCase())) {
+        if (isDefaultFormat(format)) {
             return fm.file();
         }
         return format + "/" + fm.file();
@@ -196,8 +196,8 @@ public class CompositeStoreDirectory extends FilterDirectory {
 
     public long calculateChecksum(FileMetadata fm) throws IOException {
         String fileIdentifier = toFileIdentifier(fm);
-        if (isLuceneFormat(fm.dataFormat())) {
-            return calculateLuceneChecksum(fileIdentifier);
+        if (isDefaultFormat(fm.dataFormat())) {
+            return calculateDefaultChecksum(fileIdentifier);
         } else {
             return calculateGenericChecksum(fileIdentifier);
         }
@@ -278,16 +278,17 @@ public class CompositeStoreDirectory extends FilterDirectory {
     // Private Helpers
     // ═══════════════════════════════════════════════════════════════
 
-    private boolean isLuceneFormat(String format) {
-        return registeredFormats.contains(format) == false;
+    private boolean isDefaultFormat(String format) {
+        return format == null || format.isEmpty() || INDEX_DIRECTORY_FORMATS.contains(format.toLowerCase());
     }
 
-    private long calculateLuceneChecksum(String fileIdentifier) throws IOException {
+    private long calculateDefaultChecksum(String fileIdentifier) throws IOException {
         try (IndexInput input = openInput(fileIdentifier, IOContext.READONCE)) {
             return CodecUtil.retrieveChecksum(input);
         }
     }
 
+    // TODO: delegate checksum calculation to the respective data format plugin for efficiency
     private long calculateGenericChecksum(String fileIdentifier) throws IOException {
         try (IndexInput input = openInput(fileIdentifier, IOContext.READONCE)) {
             CRC32 crc32 = new CRC32();

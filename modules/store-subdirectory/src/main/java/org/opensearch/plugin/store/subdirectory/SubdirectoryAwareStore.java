@@ -26,7 +26,6 @@ import org.opensearch.index.IndexSettings;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.store.Store;
 import org.opensearch.index.store.StoreFileMetadata;
-import org.opensearch.index.store.SubdirectoryAwareDirectory;
 import org.opensearch.plugins.IndexStorePlugin;
 
 import java.io.IOException;
@@ -238,6 +237,16 @@ public class SubdirectoryAwareStore extends Store {
                 Version version = org.opensearch.Version.CURRENT.minimumIndexCompatibilityVersion().luceneVersion;
                 builder.put(fileName, new StoreFileMetadata(fileName, length, checksum, version, null));
             }
+        }
+    }
+
+    /**
+     * A Lucene Directory implementation that handles files in subdirectories.
+     * Extends the server's SubdirectoryAwareDirectory for backward compatibility.
+     */
+    public static class SubdirectoryAwareDirectory extends org.opensearch.index.store.SubdirectoryAwareDirectory {
+        public SubdirectoryAwareDirectory(Directory delegate, ShardPath shardPath) {
+            super(delegate, shardPath);
         }
     }
 }

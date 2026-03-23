@@ -407,7 +407,7 @@ public class RemoteDirectory extends Directory {
         return false;
     }
 
-    private void uploadBlob(
+    protected void uploadBlob(
         Directory from,
         String src,
         String remoteFileName,
@@ -417,6 +417,20 @@ public class RemoteDirectory extends Directory {
         boolean lowPriorityUpload,
         CryptoMetadata cryptoMetadata
     ) throws Exception {
+        uploadBlob(from, src, remoteFileName, ioContext, postUploadRunner, listener, lowPriorityUpload, cryptoMetadata, blobContainer);
+    }
+
+    protected void uploadBlob(
+        Directory from,
+        String src,
+        String remoteFileName,
+        IOContext ioContext,
+        Runnable postUploadRunner,
+        ActionListener<Void> listener,
+        boolean lowPriorityUpload,
+        CryptoMetadata cryptoMetadata,
+        BlobContainer targetBlobContainer
+    ) throws Exception {
         assert ioContext != IOContext.READONCE : "Remote upload will fail with IoContext.READONCE";
         long expectedChecksum = calculateChecksumOfChecksum(from, src);
         long contentLength;
@@ -424,7 +438,7 @@ public class RemoteDirectory extends Directory {
         try {
             contentLength = indexInput.length();
             boolean remoteIntegrityEnabled = false;
-            if (getBlobContainer() instanceof AsyncMultiStreamBlobContainer asyncContainer) {
+            if (targetBlobContainer instanceof AsyncMultiStreamBlobContainer asyncContainer) {
                 remoteIntegrityEnabled = asyncContainer.remoteIntegrityCheckSupported();
             }
             lowPriorityUpload = lowPriorityUpload || contentLength > ByteSizeUnit.GB.toBytes(15);
@@ -492,7 +506,7 @@ public class RemoteDirectory extends Directory {
             });
 
             WriteContext writeContext = remoteTransferContainer.createWriteContext();
-            ((AsyncMultiStreamBlobContainer) blobContainer).asyncBlobUpload(writeContext, completionListener);
+            ((AsyncMultiStreamBlobContainer) targetBlobContainer).asyncBlobUpload(writeContext, completionListener);
         } catch (Exception e) {
             logger.warn("Exception while calling asyncBlobUpload, closing IndexInput to avoid leak");
             indexInput.close();

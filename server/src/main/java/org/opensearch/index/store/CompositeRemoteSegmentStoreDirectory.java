@@ -27,7 +27,6 @@ import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.engine.exec.FileMetadata;
 import org.opensearch.index.engine.exec.CatalogSnapshot;
-import org.opensearch.index.engine.exec.coord.CompositeEngineCatalogSnapshot;
 import org.opensearch.index.remote.RemoteStoreUtils;
 import org.opensearch.index.shard.SegmentUploadFailedException;
 import org.opensearch.index.store.lockmanager.FileLockInfo;
@@ -44,11 +43,20 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.NoSuchFileException;
-import java.util.*;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
+
+import static org.opensearch.index.engine.exec.CatalogSnapshot.CATALOG_SNAPSHOT_KEY;
 
 /**
  * Remote segment store directory with format-aware storage capabilities.
@@ -531,7 +539,7 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
 
                     SegmentInfos segmentInfosSnapshot = new SegmentInfos(Version.LATEST.major);
                     Map<String, String> userData = catalogSnapshot.getUserData();
-                    userData.put(CompositeEngineCatalogSnapshot.CATALOG_SNAPSHOT_KEY, catalogSnapshot.serializeToString());
+                    userData.put(CATALOG_SNAPSHOT_KEY, catalogSnapshot.serializeToString());
                     segmentInfosSnapshot.setUserData(userData, false);
                     segmentInfosSnapshot.setNextWriteGeneration(replicationCheckpoint.getSegmentsGen());
                     ByteBuffersDataOutput byteBuffersIndexOutput = new ByteBuffersDataOutput();

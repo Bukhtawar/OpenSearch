@@ -65,9 +65,6 @@ public record Segment(long generation, Map<String, WriterFileSet> dfGroupedSearc
         return new Builder(generation);
     }
 
-    public void writeTo(StreamOutput out) {
-    }
-
     /**
      * Builder for {@link Segment}.
      */

@@ -9,29 +9,25 @@
 package org.opensearch.index.store.remote;
 
 import org.apache.logging.log4j.Logger;
-import org.apache.logging.log4j.message.ParameterizedMessage;
-import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
-import org.opensearch.ExceptionsHelper;
 import org.opensearch.common.annotation.InternalApi;
 import org.opensearch.common.blobstore.AsyncMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.BlobStore;
 import org.opensearch.common.blobstore.BlobMetadata;
-import org.opensearch.common.blobstore.exception.CorruptFileException;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
-import org.opensearch.common.blobstore.stream.write.WritePriority;
-import org.opensearch.common.blobstore.transfer.RemoteTransferContainer;
-import org.opensearch.common.blobstore.transfer.stream.OffsetRangeIndexInputStream;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
 import org.opensearch.core.action.ActionListener;
-import org.opensearch.core.common.unit.ByteSizeUnit;
 import org.opensearch.index.engine.MergedSegmentWarmer;
 import org.opensearch.index.engine.exec.FileMetadata;
-import org.opensearch.index.store.*;
+import org.opensearch.index.store.CompositeStoreDirectory;
+import org.opensearch.index.store.UploadedSegmentMetadata;
+import org.opensearch.index.store.RemoteIndexOutput;
+import org.opensearch.index.store.RemoteIndexInput;
+import org.opensearch.index.store.RemoteDirectory;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadataHandlerFactory;
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
@@ -200,87 +196,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         ActionListener<Void> listener,
         boolean lowPriorityUpload
     ) throws Exception {
-        assert ioContext != IOContext.READONCE : "Remote upload will fail with IoContext.READONCE";
-        String dataFormat = src.dataFormat();
-        long expectedChecksum = calculateChecksumOfChecksum(from, src);
-        long contentLength;
-        IndexInput indexInput = from.openInput(src, ioContext);
-        try {
-            contentLength = indexInput.length();
-            boolean remoteIntegrityEnabled = false;
-            if (getBlobContainer(dataFormat) instanceof AsyncMultiStreamBlobContainer) {
-                remoteIntegrityEnabled = ((AsyncMultiStreamBlobContainer) getBlobContainer(dataFormat)).remoteIntegrityCheckSupported();
-            }
-            lowPriorityUpload = lowPriorityUpload || contentLength > ByteSizeUnit.GB.toBytes(15);
-            RemoteTransferContainer.OffsetRangeInputStreamSupplier offsetRangeInputStreamSupplier;
-
-            if (lowPriorityUpload) {
-                offsetRangeInputStreamSupplier = (size, position) -> lowPriorityUploadRateLimiter.apply(
-                    new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
-                );
-            } else {
-                offsetRangeInputStreamSupplier = (size, position) -> uploadRateLimiter.apply(
-                    new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
-                );
-            }
-            RemoteTransferContainer remoteTransferContainer = new RemoteTransferContainer(
-                src.file(),
-                remoteFileName,
-                contentLength,
-                true,
-                lowPriorityUpload ? WritePriority.LOW : WritePriority.NORMAL,
-                offsetRangeInputStreamSupplier,
-                expectedChecksum,
-                remoteIntegrityEnabled,
-                null
-            );
-            ActionListener<Void> completionListener = ActionListener.wrap(resp -> {
-                try {
-                    postUploadRunner.run();
-                    listener.onResponse(null);
-                } catch (Exception e) {
-                    logger.error(() -> new ParameterizedMessage("Exception in segment postUpload for file [{}]", src), e);
-                    listener.onFailure(e);
-                }
-            }, ex -> {
-                logger.error(() -> new ParameterizedMessage("Failed to upload blob {}", src), ex);
-                IOException corruptIndexException = ExceptionsHelper.unwrapCorruption(ex);
-                if (corruptIndexException != null) {
-                    listener.onFailure(corruptIndexException);
-                    return;
-                }
-                Throwable throwable = ExceptionsHelper.unwrap(ex, CorruptFileException.class);
-                if (throwable != null) {
-                    CorruptFileException corruptFileException = (CorruptFileException) throwable;
-                    listener.onFailure(new CorruptIndexException(corruptFileException.getMessage(), corruptFileException.getFileName()));
-                    return;
-                }
-                listener.onFailure(ex);
-            });
-
-            completionListener = ActionListener.runBefore(completionListener, () -> {
-                try {
-                    remoteTransferContainer.close();
-                } catch (Exception e) {
-                    logger.warn("Error occurred while closing streams", e);
-                }
-            });
-
-            completionListener = ActionListener.runAfter(completionListener, () -> {
-                try {
-                    indexInput.close();
-                } catch (IOException e) {
-                    logger.warn("Error occurred while closing index input", e);
-                }
-            });
-
-            WriteContext writeContext = remoteTransferContainer.createWriteContext();
-            ((AsyncMultiStreamBlobContainer) getBlobContainer(dataFormat)).asyncBlobUpload(writeContext, completionListener);
-        } catch (Exception e) {
-            logger.warn("Exception while calling asyncBlobUpload, closing IndexInput to avoid leak");
-            indexInput.close();
-            throw e;
-        }
+        uploadBlob(from, src.file(), remoteFileName, ioContext, postUploadRunner, listener, lowPriorityUpload, null, getBlobContainer(src.dataFormat()));
     }
 
     private BlobContainer getBlobContainer(String df) {
