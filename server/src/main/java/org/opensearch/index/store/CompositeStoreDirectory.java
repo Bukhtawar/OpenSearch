@@ -203,10 +203,6 @@ public class CompositeStoreDirectory extends FilterDirectory {
         }
     }
 
-    public String calculateUploadChecksum(String name) throws IOException {
-        return Long.toString(calculateChecksum(name));
-    }
-
     public String calculateUploadChecksum(FileMetadata fm) throws IOException {
         return Long.toString(calculateChecksum(fm));
     }

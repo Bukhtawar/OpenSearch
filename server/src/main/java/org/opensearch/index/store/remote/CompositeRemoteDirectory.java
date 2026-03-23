@@ -240,6 +240,8 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
             throw new NoSuchFileException(
                 String.format("File %s not found in container for format %s", fileMetadata.file(), fileMetadata.dataFormat())
             );
+        } catch (NoSuchFileException e) {
+            throw e;
         } catch (IOException e) {
             throw new IOException(
                 String.format("Error getting length for file %s in format %s", fileMetadata.file(), fileMetadata.dataFormat()), e
