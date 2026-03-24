@@ -14,7 +14,7 @@ import org.apache.lucene.util.Version;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
-import org.opensearch.index.engine.exec.FileMetadata;
+import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.StoreFileMetadata;
 import org.opensearch.index.store.UploadedSegmentMetadata;
 import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;

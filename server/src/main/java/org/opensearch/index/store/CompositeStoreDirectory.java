@@ -17,12 +17,9 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.logging.Loggers;
-import org.opensearch.core.index.shard.ShardId;
-import org.opensearch.index.engine.exec.FileMetadata;
 import org.opensearch.index.shard.ShardPath;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.util.Collection;
 import java.util.Set;
 import java.util.stream.Collectors;

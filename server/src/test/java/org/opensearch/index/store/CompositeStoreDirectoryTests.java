@@ -9,14 +9,13 @@
 package org.opensearch.index.store;
 
 import org.apache.lucene.codecs.CodecUtil;
-import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
-import org.opensearch.index.engine.exec.FileMetadata;
+import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.test.OpenSearchTestCase;
 import org.junit.After;
@@ -54,7 +53,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
         ShardId sid = new ShardId(new Index("test-index", indexUUID), shardId);
         shardPath = new ShardPath(false, shardDataPath, shardDataPath, sid);
 
-        compositeStoreDirectory = new CompositeStoreDirectory(fsDirectory, sid, shardPath, Set.of("parquet", "arrow"));
+        compositeStoreDirectory = new CompositeStoreDirectory(fsDirectory, shardPath);
     }
 
     @After

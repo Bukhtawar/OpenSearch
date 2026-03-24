@@ -6,7 +6,7 @@
  * compatible open source license.
  */
 
-package org.opensearch.index.engine.exec;
+package org.opensearch.index.store;
 
 import org.opensearch.test.OpenSearchTestCase;
 

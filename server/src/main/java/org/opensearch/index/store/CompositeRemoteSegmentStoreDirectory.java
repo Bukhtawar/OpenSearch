@@ -30,7 +30,6 @@ import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
-import org.opensearch.index.engine.exec.FileMetadata;
 import org.opensearch.index.engine.exec.CatalogSnapshot;
 import org.opensearch.index.remote.RemoteStoreUtils;
 import org.opensearch.index.shard.SegmentUploadFailedException;

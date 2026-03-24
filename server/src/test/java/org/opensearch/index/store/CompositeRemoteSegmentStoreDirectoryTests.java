@@ -14,16 +14,13 @@ import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.engine.exec.CatalogSnapshot;
-import org.opensearch.index.engine.exec.FileMetadata;
 import org.opensearch.index.store.lockmanager.RemoteStoreMetadataLockManager;
 import org.opensearch.index.store.remote.CompositeRemoteDirectory;
 import org.opensearch.test.OpenSearchTestCase;
 import org.opensearch.threadpool.ThreadPool;
-import org.junit.After;
 import org.junit.Before;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -45,7 +42,6 @@ import static org.mockito.Mockito.when;
 
 public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCase {
 
-    private static final Logger logger = LogManager.getLogger(CompositeRemoteSegmentStoreDirectoryTests.class);
 
     private CompositeRemoteDirectory compositeRemoteDirectory;
     private RemoteDirectory remoteMetadataDirectory;

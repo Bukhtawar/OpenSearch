@@ -21,7 +21,7 @@ import org.opensearch.common.blobstore.BlobMetadata;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.index.engine.MergedSegmentWarmer;
-import org.opensearch.index.engine.exec.FileMetadata;
+import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.CompositeStoreDirectory;
 import org.opensearch.index.store.UploadedSegmentMetadata;
 import org.opensearch.index.store.RemoteIndexOutput;

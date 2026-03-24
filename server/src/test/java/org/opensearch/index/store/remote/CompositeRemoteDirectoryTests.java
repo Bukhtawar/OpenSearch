@@ -20,7 +20,7 @@ import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.BlobStore;
 import org.opensearch.common.blobstore.support.PlainBlobMetadata;
 import org.opensearch.core.action.ActionListener;
-import org.opensearch.index.engine.exec.FileMetadata;
+import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.CompositeStoreDirectory;
 import org.opensearch.index.store.RemoteIndexOutput;
 import org.opensearch.index.store.UploadedSegmentMetadata;
