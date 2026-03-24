@@ -8,18 +8,22 @@
 
 package org.opensearch.index.store;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.LockFactory;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
+import org.opensearch.index.engine.exec.FileMetadata;
 import org.opensearch.index.remote.RemoteStorePathStrategy;
 import org.opensearch.index.remote.RemoteStoreUtils;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.store.lockmanager.RemoteStoreLockManager;
 import org.opensearch.index.store.lockmanager.RemoteStoreLockManagerFactory;
+import org.opensearch.index.store.remote.CompositeRemoteDirectory;
 import org.opensearch.plugins.IndexStorePlugin;
+import org.opensearch.plugins.PluginsService;
 import org.opensearch.repositories.RepositoriesService;
 import org.opensearch.repositories.Repository;
 import org.opensearch.repositories.RepositoryMissingException;
@@ -48,15 +52,26 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
     private final String segmentsPathFixedPrefix;
 
     private final ThreadPool threadPool;
+    private final PluginsService pluginsService;
 
     public RemoteSegmentStoreDirectoryFactory(
         Supplier<RepositoriesService> repositoriesService,
         ThreadPool threadPool,
         String segmentsPathFixedPrefix
     ) {
+        this(repositoriesService, threadPool, segmentsPathFixedPrefix, null);
+    }
+
+    public RemoteSegmentStoreDirectoryFactory(
+        Supplier<RepositoriesService> repositoriesService,
+        ThreadPool threadPool,
+        String segmentsPathFixedPrefix,
+        PluginsService pluginsService
+    ) {
         this.repositoriesService = repositoriesService;
         this.segmentsPathFixedPrefix = segmentsPathFixedPrefix;
         this.threadPool = threadPool;
+        this.pluginsService = pluginsService;
     }
 
     @Override
@@ -68,15 +83,27 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
     public Directory newDirectory(IndexSettings indexSettings, ShardPath path) throws IOException {
         String repositoryName = indexSettings.getRemoteStoreRepository();
         String indexUUID = indexSettings.getIndex().getUUID();
-        return newDirectory(
-            repositoryName,
-            indexUUID,
-            path.getShardId(),
-            indexSettings.getRemoteStorePathStrategy(),
-            null,
-            RemoteStoreUtils.isServerSideEncryptionEnabledIndex(indexSettings.getIndexMetadata()),
-            indexSettings.isWarmIndex()
-        );
+
+        // Check if this is an optimized index to determine directory type
+        if (indexSettings.isOptimizedIndex()) {
+            return newCompositeDirectory(
+                repositoryName,
+                indexUUID,
+                path.getShardId(),
+                indexSettings.getRemoteStorePathStrategy(),
+                RemoteStoreUtils.isServerSideEncryptionEnabledIndex(indexSettings.getIndexMetadata())
+            );
+        } else {
+            return newDirectory(
+                repositoryName,
+                indexUUID,
+                path.getShardId(),
+                indexSettings.getRemoteStorePathStrategy(),
+                null,
+                RemoteStoreUtils.isServerSideEncryptionEnabledIndex(indexSettings.getIndexMetadata()),
+                indexSettings.isWarmIndex()
+            );
+        }
     }
 
     public Directory newDirectory(String repositoryName, String indexUUID, ShardId shardId, RemoteStorePathStrategy pathStrategy)
@@ -175,6 +202,99 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
 
             return new RemoteSegmentStoreDirectory(
                 dataDirectory,
+                metadataDirectory,
+                mdLockManager,
+                threadPool,
+                shardId,
+                pendingDownloadMergedSegments
+            );
+        } catch (RepositoryMissingException e) {
+            throw new IllegalArgumentException("Repository should be created before creating index with remote_store enabled setting", e);
+        }
+    }
+
+    /**
+     * Creates a CompositeRemoteSegmentStoreDirectory for optimized indices.
+     * This method is called when indexSettings.isOptimizedIndex() returns true.
+     */
+    private Directory newCompositeDirectory(
+        String repositoryName,
+        String indexUUID,
+        ShardId shardId,
+        RemoteStorePathStrategy pathStrategy,
+        boolean isServerSideEncryptionEnabled
+    ) throws IOException {
+        return newCompositeDirectory(repositoryName, indexUUID, shardId, pathStrategy, null, isServerSideEncryptionEnabled);
+    }
+
+    private Directory newCompositeDirectory(
+        String repositoryName,
+        String indexUUID,
+        ShardId shardId,
+        RemoteStorePathStrategy pathStrategy,
+        String indexFixedPrefix,
+        boolean isServerSideEncryptionEnabled
+    ) throws IOException {
+        assert Objects.nonNull(pathStrategy);
+        try (Repository repository = repositoriesService.get().repository(repositoryName)) {
+
+            assert repository instanceof BlobStoreRepository : "repository should be instance of BlobStoreRepository";
+            BlobStoreRepository blobStoreRepository = ((BlobStoreRepository) repository);
+            BlobPath repositoryBasePath = blobStoreRepository.basePath();
+            String shardIdStr = String.valueOf(shardId.id());
+            Map<FileMetadata, String> pendingDownloadMergedSegments = new ConcurrentHashMap<>();
+
+            RemoteStorePathStrategy.ShardDataPathInput dataPathInput = RemoteStorePathStrategy.ShardDataPathInput.builder()
+                .basePath(repositoryBasePath)
+                .indexUUID(indexUUID)
+                .shardId(shardIdStr)
+                .dataCategory(SEGMENTS)
+                .dataType(DATA)
+                .fixedPrefix(segmentsPathFixedPrefix)
+                .indexFixedPrefix(indexFixedPrefix)
+                .build();
+
+            BlobPath dataPath = pathStrategy.generatePath(dataPathInput);
+
+            CompositeRemoteDirectory compositeDataDirectory = new CompositeRemoteDirectory(
+                blobStoreRepository.blobStore(isServerSideEncryptionEnabled),
+                dataPath,
+                blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
+                blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
+                blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
+                blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
+                pendingDownloadMergedSegments,
+                LogManager.getLogger("index.store.remote.composite." + shardId),
+                pluginsService
+            );
+
+            RemoteStorePathStrategy.ShardDataPathInput mdPathInput = RemoteStorePathStrategy.ShardDataPathInput.builder()
+                .basePath(repositoryBasePath)
+                .indexUUID(indexUUID)
+                .shardId(shardIdStr)
+                .dataCategory(SEGMENTS)
+                .dataType(METADATA)
+                .fixedPrefix(segmentsPathFixedPrefix)
+                .indexFixedPrefix(indexFixedPrefix)
+                .build();
+
+            BlobPath mdPath = pathStrategy.generatePath(mdPathInput);
+            RemoteDirectory metadataDirectory = new RemoteDirectory(
+                blobStoreRepository.blobStore(isServerSideEncryptionEnabled).blobContainer(mdPath)
+            );
+
+            RemoteStoreLockManager mdLockManager = RemoteStoreLockManagerFactory.newLockManager(
+                repositoriesService.get(),
+                repositoryName,
+                indexUUID,
+                shardIdStr,
+                pathStrategy,
+                segmentsPathFixedPrefix,
+                indexFixedPrefix
+            );
+
+            return new CompositeRemoteSegmentStoreDirectory(
+                compositeDataDirectory,
                 metadataDirectory,
                 mdLockManager,
                 threadPool,

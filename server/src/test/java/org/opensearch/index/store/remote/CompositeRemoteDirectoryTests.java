@@ -72,7 +72,8 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
             UnaryOperator.identity(),
             UnaryOperator.identity(),
             new ConcurrentHashMap<>(),
-            logger
+            logger,
+            null
         );
     }
 
@@ -358,7 +359,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
             blobStore, baseBlobPath,
             UnaryOperator.identity(), UnaryOperator.identity(),
             UnaryOperator.identity(), UnaryOperator.identity(),
-            pendingSegments, logger
+            pendingSegments, logger, null
         );
 
         assertTrue(dir.pendingDownloadMergedSegments.containsKey(fm));

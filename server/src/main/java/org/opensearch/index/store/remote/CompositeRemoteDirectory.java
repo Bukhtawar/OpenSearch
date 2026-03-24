@@ -30,6 +30,7 @@ import org.opensearch.index.store.RemoteDirectory;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadataHandlerFactory;
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
+import org.opensearch.plugins.PluginsService;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -92,7 +93,8 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         UnaryOperator<InputStream> downloadRateLimiter,
         UnaryOperator<InputStream> lowPriorityDownloadRateLimiter,
         Map<FileMetadata, String> pendingDownloadMergedSegments,
-        Logger logger
+        Logger logger,
+        PluginsService pluginsService
     ) {
         super(
             blobStore.blobContainer(baseBlobPath),
@@ -115,6 +117,8 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         this.downloadRateLimiterProvider = new DownloadRateLimiterProvider(downloadRateLimiter, lowPriorityDownloadRateLimiter);
         this.pendingDownloadMergedSegments = pendingDownloadMergedSegments;
         this.logger = logger;
+
+        //TODO: need to initialize blobstores
 
         logger.debug("Created CompositeRemoteDirectory with {} format BlobContainers",
             formatBlobContainers.size());

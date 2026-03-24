@@ -99,6 +99,11 @@ public final class IndexSettings {
     private static final String DEFAULT_POLICY = "default";
     private static final String MERGE_ON_FLUSH_MERGE_POLICY = "merge-on-flush";
 
+    //ToDo: Needs to be implemented to support multi-format data.
+    public boolean isOptimizedIndex() {
+        return false;
+    }
+
     /**
      * Enum representing supported merge policies
      */

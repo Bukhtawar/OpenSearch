@@ -962,7 +962,8 @@ public class Node implements Closeable {
             final IndexStorePlugin.DirectoryFactory remoteDirectoryFactory = new RemoteSegmentStoreDirectoryFactory(
                 repositoriesServiceReference::get,
                 threadPool,
-                remoteStoreSettings.getSegmentsPathFixedPrefix()
+                remoteStoreSettings.getSegmentsPathFixedPrefix(),
+                pluginsService
             );
 
             final TaskResourceTrackingService taskResourceTrackingService = new TaskResourceTrackingService(

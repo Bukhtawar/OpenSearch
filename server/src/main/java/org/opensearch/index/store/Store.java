@@ -176,6 +176,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     );
 
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
+    private final CompositeStoreDirectory compositeStoreDirectory;
     private final StoreDirectory directory;
     private final ReentrantReadWriteLock metadataLock = new ReentrantReadWriteLock();
     private final ShardLock shardLock;
@@ -220,6 +221,31 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         ShardPath shardPath,
         IndexStorePlugin.DirectoryFactory directoryFactory
     ) {
+        this(shardId, indexSettings, directory, shardLock, onClose, shardPath, directoryFactory, null);
+    }
+
+    /**
+     * Constructor with factory-created CompositeStoreDirectory.
+     *
+     * @param shardId              the shard identifier
+     * @param indexSettings        the index settings
+     * @param directory            the underlying Lucene directory
+     * @param shardLock            the shard lock
+     * @param onClose              callback invoked when the store is closed
+     * @param shardPath            the shard's file path
+     * @param directoryFactory     the directory factory for creating temp directories
+     * @param compositeStoreDirectory the factory-created CompositeStoreDirectory, or null if not available
+     */
+    public Store(
+        ShardId shardId,
+        IndexSettings indexSettings,
+        Directory directory,
+        ShardLock shardLock,
+        OnClose onClose,
+        ShardPath shardPath,
+        IndexStorePlugin.DirectoryFactory directoryFactory,
+        CompositeStoreDirectory compositeStoreDirectory
+    ) {
         super(shardId, indexSettings);
         final TimeValue refreshInterval = indexSettings.getValue(INDEX_STORE_STATS_REFRESH_INTERVAL_SETTING);
         logger.debug("store stats are refreshed with refresh_interval [{}]", refreshInterval);
@@ -231,6 +257,12 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         this.isIndexSortEnabled = indexSettings.getIndexSortConfig().hasIndexSort();
         this.isParentFieldEnabledVersion = indexSettings.getIndexVersionCreated().onOrAfter(org.opensearch.Version.V_3_2_0);
         this.directoryFactory = directoryFactory;
+        this.compositeStoreDirectory = compositeStoreDirectory;
+
+        if (compositeStoreDirectory != null) {
+            logger.debug("Store created with factory-provided CompositeStoreDirectory for shard {}", shardId);
+        }
+
         assert onClose != null;
         assert shardLock != null;
         assert shardLock.getShardId().equals(shardId);
@@ -572,6 +604,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         try (Closeable c = shardLock) {
             try {
                 directory.innerClose(); // this closes the distributorDirectory as well
+                IOUtils.close(compositeStoreDirectory);
             } finally {
                 onClose.accept(shardLock);
             }
