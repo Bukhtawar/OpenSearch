@@ -54,7 +54,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
         ShardId sid = new ShardId(new Index("test-index", indexUUID), shardId);
         shardPath = new ShardPath(false, shardDataPath, shardDataPath, sid);
 
-        compositeStoreDirectory = new CompositeStoreDirectory(fsDirectory, shardPath, Set.of("parquet", "arrow"));
+        compositeStoreDirectory = new CompositeStoreDirectory(fsDirectory, sid, shardPath, Set.of("parquet", "arrow"));
     }
 
     @After
@@ -397,17 +397,6 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
         // sync should not throw
         compositeStoreDirectory.sync(Set.of(fileName));
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // getRegisteredFormats / getShardPath
-    // ═══════════════════════════════════════════════════════════════
-
-    public void testGetRegisteredFormats() {
-        Set<String> formats = compositeStoreDirectory.getRegisteredFormats();
-        assertTrue(formats.contains("parquet"));
-        assertTrue(formats.contains("arrow"));
-        assertEquals(2, formats.size());
     }
 
     public void testGetShardPath() {

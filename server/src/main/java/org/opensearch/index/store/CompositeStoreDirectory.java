@@ -12,17 +12,17 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.common.annotation.PublicApi;
+import org.opensearch.common.logging.Loggers;
+import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.engine.exec.FileMetadata;
 import org.opensearch.index.shard.ShardPath;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -65,7 +65,7 @@ import java.util.zip.CRC32;
  * @opensearch.api
  */
 @PublicApi(since = "3.0.0")
-public class CompositeStoreDirectory extends FilterDirectory {
+public class CompositeStoreDirectory extends Store.StoreDirectory {
 
     private static final Logger logger = LogManager.getLogger(CompositeStoreDirectory.class);
 
@@ -76,36 +76,21 @@ public class CompositeStoreDirectory extends FilterDirectory {
     private static final int CHECKSUM_BUFFER_SIZE = 8192;
 
     private final SubdirectoryAwareDirectory subdirectoryAwareDirectory;
-    private final Set<String> registeredFormats;
     private final ShardPath shardPath;
 
     /**
      * Constructs a CompositeStoreDirectory.
      *
      * @param delegate          the underlying FSDirectory (typically for &lt;shard&gt;/index/)
-     * @param shardPath         the shard path for resolving subdirectories
-     * @param registeredFormats set of non-Lucene format names discovered from plugins
+     * @param shardPath set of non-Lucene format names discovered from plugins
      *                          (e.g., {"parquet", "arrow"}). These formats use generic CRC32 checksums.
      */
-    public CompositeStoreDirectory(Directory delegate, ShardPath shardPath, Set<String> registeredFormats) {
-        super(delegate);
+    public CompositeStoreDirectory(Directory delegate, ShardPath shardPath) {
+        super(null, Loggers.getLogger("index.store.deletes", shardPath.getShardId()));
         this.shardPath = shardPath;
         this.subdirectoryAwareDirectory = new SubdirectoryAwareDirectory(delegate, shardPath);
-        this.registeredFormats = registeredFormats;
 
-        for (String format : registeredFormats) {
-            try {
-                Files.createDirectories(shardPath.getDataPath().resolve(format));
-            } catch (IOException e) {
-                logger.warn("Failed to pre-create directory for format: {}", format, e);
-            }
-        }
-
-        logger.debug(
-            "Created CompositeStoreDirectory for shard {} with registered formats: {}",
-            shardPath.getShardId(),
-            registeredFormats
-        );
+        logger.debug("Created CompositeStoreDirectory for shard {}", shardPath.getShardId());
     }
 
     private String resolveFileName(String fileName) {
@@ -252,14 +237,6 @@ public class CompositeStoreDirectory extends FilterDirectory {
 
     public long getChecksumOfLocalFile(FileMetadata fm) throws IOException {
         return calculateChecksum(fm);
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // Format Query Methods
-    // ═══════════════════════════════════════════════════════════════
-
-    public Set<String> getRegisteredFormats() {
-        return registeredFormats;
     }
 
     public String getDataFormat(String fileIdentifier) {
