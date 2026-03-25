@@ -245,6 +245,12 @@ public class SubdirectoryAwareStore extends Store {
      * Extends the server's SubdirectoryAwareDirectory for backward compatibility.
      */
     public static class SubdirectoryAwareDirectory extends org.opensearch.index.store.SubdirectoryAwareDirectory {
+        /**
+         * Creates a new SubdirectoryAwareDirectory wrapping the given delegate.
+         *
+         * @param delegate  the underlying Lucene directory
+         * @param shardPath the shard path for resolving subdirectories
+         */
         public SubdirectoryAwareDirectory(Directory delegate, ShardPath shardPath) {
             super(delegate, shardPath);
         }
