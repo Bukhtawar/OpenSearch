@@ -306,7 +306,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
                     e.addSuppressed(closeEx);
                 }
             }
-            logger.error("Exception while reading blob for file: " + fileMetadata.file(), e);
+            logger.error("Exception while reading blob for file: {}", fileMetadata.file(), e);
             throw e;
         }
     }

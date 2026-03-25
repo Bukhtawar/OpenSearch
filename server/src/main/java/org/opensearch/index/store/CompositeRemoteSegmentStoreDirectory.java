@@ -684,9 +684,9 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
         try {
             directory.deleteFile(fileMetadata);
         } catch (NoSuchFileException | FileNotFoundException e) {
-            logger.trace("Exception while deleting. Missing file : " + fileMetadata.file(), e);
+            logger.trace("Exception while deleting. Missing file : {}", fileMetadata.file(), e);
         } catch (IOException e) {
-            logger.warn("Exception while deleting: " + fileMetadata.file(), e);
+            logger.warn("Exception while deleting: {}", fileMetadata.file(), e);
         }
     }
 }

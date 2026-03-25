@@ -696,12 +696,12 @@ public class RemoteSegmentStoreDirectory extends FilterDirectory implements Remo
      */
     private void tryAndDeleteLocalFile(String filename, Directory directory) {
         try {
-            logger.debug("Deleting file: " + filename);
+            logger.debug("Deleting file: {}", filename);
             directory.deleteFile(filename);
         } catch (NoSuchFileException | FileNotFoundException e) {
-            logger.trace("Exception while deleting. Missing file : " + filename, e);
+            logger.trace("Exception while deleting. Missing file : {}", filename, e);
         } catch (IOException e) {
-            logger.warn("Exception while deleting: " + filename, e);
+            logger.warn("Exception while deleting: {}", filename, e);
         }
     }
 

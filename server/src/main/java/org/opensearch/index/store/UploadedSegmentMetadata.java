@@ -87,9 +87,10 @@ public class UploadedSegmentMetadata {
             dataFormat                  // dataFormat
         );
 
-        // Set writtenByMajor if present
+        // Set writtenByMajor if present (only valid for lucene format)
+        // ToDo: need to add check for non-optimized index here.
         if (values.length >= 5) {
-            // metadata.setWrittenByMajor(Integer.parseInt(values[4]));
+            metadata.setWrittenByMajor(Integer.parseInt(values[4]));
         }
 
         return metadata;
