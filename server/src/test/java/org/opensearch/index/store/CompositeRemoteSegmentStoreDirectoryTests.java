@@ -13,7 +13,7 @@ import org.opensearch.common.util.concurrent.OpenSearchExecutors;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
-import org.opensearch.index.engine.exec.CatalogSnapshot;
+import org.opensearch.index.engine.exec.coord.CatalogSnapshot;
 import org.opensearch.index.store.lockmanager.RemoteStoreMetadataLockManager;
 import org.opensearch.index.store.remote.CompositeRemoteDirectory;
 import org.opensearch.test.OpenSearchTestCase;
