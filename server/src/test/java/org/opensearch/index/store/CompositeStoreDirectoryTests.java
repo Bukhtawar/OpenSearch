@@ -21,6 +21,7 @@ import org.junit.After;
 import org.junit.Before;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -146,7 +147,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testCreateOutputAndOpenInput_lucene() throws IOException {
         String fileName = "_0_test.si";
-        byte[] testData = "hello world lucene".getBytes();
+        byte[] testData = "hello world lucene".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fileName, IOContext.DEFAULT)) {
             out.writeBytes(testData, testData.length);
@@ -165,7 +166,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testCreateOutputAndOpenInput_nonLucene() throws IOException {
         String fileIdentifier = "parquet/data.parquet";
-        byte[] testData = "hello world parquet".getBytes();
+        byte[] testData = "hello world parquet".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
             out.writeBytes(testData, testData.length);
@@ -184,7 +185,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testFileLength_lucene() throws IOException {
         String fileName = "_test_len.si";
-        byte[] data = "some content for length test".getBytes();
+        byte[] data = "some content for length test".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fileName, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -195,7 +196,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testFileLength_fileMetadata() throws IOException {
         String fileIdentifier = "parquet/len_test.parquet";
-        byte[] data = "parquet length test".getBytes();
+        byte[] data = "parquet length test".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -310,7 +311,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testCalculateChecksum_nonLuceneFile() throws IOException {
         String fileIdentifier = "parquet/cksum.parquet";
-        byte[] data = "parquet content for checksum".getBytes();
+        byte[] data = "parquet content for checksum".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -330,7 +331,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testCalculateUploadChecksum() throws IOException {
         String fileIdentifier = "parquet/upload_cksum.parquet";
-        byte[] data = "upload checksum test".getBytes();
+        byte[] data = "upload checksum test".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -409,7 +410,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testGetChecksumOfLocalFile() throws IOException {
         String fileIdentifier = "parquet/local_cksum.parquet";
-        byte[] data = "local checksum test".getBytes();
+        byte[] data = "local checksum test".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -427,7 +428,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
     public void testOpenInput_withSerializedFileMetadata() throws IOException {
         // Write a file using plain identifier
         String fileIdentifier = "parquet/delimited_test.parquet";
-        byte[] data = "delimited test data".getBytes();
+        byte[] data = "delimited test data".getBytes(StandardCharsets.UTF_8);
         try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
         }
@@ -447,7 +448,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testCreateOutputAndOpenInput_fileMetadata_lucene() throws IOException {
         FileMetadata fm = new FileMetadata("lucene", "_fm_test.si");
-        byte[] testData = "file metadata lucene test".getBytes();
+        byte[] testData = "file metadata lucene test".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fm, IOContext.DEFAULT)) {
             out.writeBytes(testData, testData.length);
@@ -462,7 +463,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testCreateOutputAndOpenInput_fileMetadata_parquet() throws IOException {
         FileMetadata fm = new FileMetadata("parquet", "fm_test.parquet");
-        byte[] testData = "file metadata parquet test".getBytes();
+        byte[] testData = "file metadata parquet test".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fm, IOContext.DEFAULT)) {
             out.writeBytes(testData, testData.length);
@@ -481,7 +482,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testCalculateChecksum_idempotent_nonLucene() throws IOException {
         String fileIdentifier = "parquet/idempotent.parquet";
-        byte[] data = "idempotent checksum data".getBytes();
+        byte[] data = "idempotent checksum data".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -494,7 +495,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testCalculateChecksum_stringAndFileMetadataConsistent() throws IOException {
         String fileIdentifier = "parquet/consistency.parquet";
-        byte[] data = "consistency checksum".getBytes();
+        byte[] data = "consistency checksum".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -512,7 +513,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testRename_preservesContent_lucene() throws IOException {
         String srcFile = "_rename_content.si";
-        byte[] data = "content to preserve after rename".getBytes();
+        byte[] data = "content to preserve after rename".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(srcFile, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -530,7 +531,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
     public void testRename_preservesContent_nonLucene() throws IOException {
         FileMetadata src = new FileMetadata("parquet", "rename_content.parquet");
         FileMetadata dest = new FileMetadata("parquet", "rename_content_dest.parquet");
-        byte[] data = "parquet content to preserve".getBytes();
+        byte[] data = "parquet content to preserve".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(src, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -662,7 +663,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testFileLength_withSerializedString_lucene() throws IOException {
         String fileName = "_len_serial.si";
-        byte[] data = "serialized length test".getBytes();
+        byte[] data = "serialized length test".getBytes(StandardCharsets.UTF_8);
         try (IndexOutput out = compositeStoreDirectory.createOutput(fileName, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
         }
@@ -872,7 +873,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testEndToEnd_writeViaFileMetadata_readViaString_lucene() throws IOException {
         FileMetadata fm = new FileMetadata("lucene", "_e2e_lucene.si");
-        byte[] data = "e2e lucene test".getBytes();
+        byte[] data = "e2e lucene test".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fm, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -888,7 +889,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testEndToEnd_writeViaFileMetadata_readViaString_parquet() throws IOException {
         FileMetadata fm = new FileMetadata("parquet", "e2e_data.parquet");
-        byte[] data = "e2e parquet test".getBytes();
+        byte[] data = "e2e parquet test".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput(fm, IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -903,7 +904,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testEndToEnd_writeViaString_readViaFileMetadata_parquet() throws IOException {
-        byte[] data = "reverse e2e".getBytes();
+        byte[] data = "reverse e2e".getBytes(StandardCharsets.UTF_8);
 
         try (IndexOutput out = compositeStoreDirectory.createOutput("parquet/rev_e2e.parquet", IOContext.DEFAULT)) {
             out.writeBytes(data, data.length);
@@ -921,9 +922,9 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
     // --- Physical path isolation: files of different formats don't collide ---
 
     public void testPathIsolation_sameFilenameInDifferentFormats() throws IOException {
-        byte[] luceneData = "lucene version".getBytes();
-        byte[] parquetData = "parquet version".getBytes();
-        byte[] arrowData = "arrow version".getBytes();
+        byte[] luceneData = "lucene version".getBytes(StandardCharsets.UTF_8);
+        byte[] parquetData = "parquet version".getBytes(StandardCharsets.UTF_8);
+        byte[] arrowData = "arrow version".getBytes(StandardCharsets.UTF_8);
 
         // Write "data.file" in three different formats
         try (IndexOutput out = compositeStoreDirectory.createOutput("data.file", IOContext.DEFAULT)) {

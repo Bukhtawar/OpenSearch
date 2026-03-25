@@ -30,6 +30,7 @@ import org.junit.Before;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.NoSuchFileException;
 import java.util.Collections;
 import java.util.HashMap;
@@ -232,7 +233,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobContainer container = mock(BlobContainer.class);
         when(blobStore.blobContainer(baseBlobPath.add("lucene"))).thenReturn(container);
 
-        byte[] content = "test content".getBytes();
+        byte[] content = "test content".getBytes(StandardCharsets.UTF_8);
         InputStream stream = new ByteArrayInputStream(content);
         when(container.readBlob("_0.si__uuid")).thenReturn(stream);
 
@@ -572,7 +573,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobContainer container = mock(BlobContainer.class);
         when(blobStore.blobContainer(baseBlobPath.add("parquet"))).thenReturn(container);
 
-        byte[] content = "parquet content".getBytes();
+        byte[] content = "parquet content".getBytes(StandardCharsets.UTF_8);
         when(container.readBlob("data.parquet__uuid")).thenReturn(new ByteArrayInputStream(content));
 
         compositeRemoteDirectory.getBlobContainerForFormat("parquet");
