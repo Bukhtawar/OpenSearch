@@ -21,6 +21,7 @@ import org.opensearch.index.shard.ShardPath;
 
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.zip.CRC32;
@@ -249,7 +250,7 @@ public class CompositeStoreDirectory extends Store.StoreDirectory {
     // ═══════════════════════════════════════════════════════════════
 
     private boolean isDefaultFormat(String format) {
-        return format == null || format.isEmpty() || INDEX_DIRECTORY_FORMATS.contains(format.toLowerCase());
+        return format == null || format.isEmpty() || INDEX_DIRECTORY_FORMATS.contains(format.toLowerCase(Locale.ROOT));
     }
 
     private long calculateDefaultChecksum(String fileIdentifier) throws IOException {

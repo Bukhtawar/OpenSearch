@@ -34,6 +34,7 @@ import org.opensearch.plugins.PluginsService;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Locale;
 import java.nio.file.NoSuchFileException;
 import java.util.Collections;
 import java.util.List;
@@ -135,7 +136,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
     public BlobContainer getBlobContainerForFormat(String format) {
         return formatBlobContainers.computeIfAbsent(format, f -> {
             // Create format-specific BlobPath: basePath/formatName/
-            BlobPath formatPath = baseBlobPath.add(f.toLowerCase());
+            BlobPath formatPath = baseBlobPath.add(f.toLowerCase(Locale.ROOT));
             BlobContainer container = blobStore.blobContainer(formatPath);
 
             logger.debug("Created new BlobContainer for format {} at path: {}", f, formatPath);
@@ -229,7 +230,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
 
         if (blobContainer == null) {
             throw new NoSuchFileException(
-                String.format("File %s not found in any containers for format %s", fileMetadata.file(), fileMetadata.dataFormat())
+                String.format(Locale.ROOT, "File %s not found in any containers for format %s", fileMetadata.file(), fileMetadata.dataFormat())
             );
         }
 
@@ -242,13 +243,13 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
             }
 
             throw new NoSuchFileException(
-                String.format("File %s not found in container for format %s", fileMetadata.file(), fileMetadata.dataFormat())
+                String.format(Locale.ROOT, "File %s not found in container for format %s", fileMetadata.file(), fileMetadata.dataFormat())
             );
         } catch (NoSuchFileException e) {
             throw e;
         } catch (IOException e) {
             throw new IOException(
-                String.format("Error getting length for file %s in format %s", fileMetadata.file(), fileMetadata.dataFormat()), e
+                String.format(Locale.ROOT, "Error getting length for file %s in format %s", fileMetadata.file(), fileMetadata.dataFormat()), e
             );
         }
     }
@@ -269,11 +270,11 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
             }
 
             throw new IOException(
-                String.format("Failed to create output for file %s in format %s", remoteFileName, df)
+                String.format(Locale.ROOT, "Failed to create output for file %s in format %s", remoteFileName, df)
             );
         } catch (Exception e) {
             throw new IOException(
-                String.format("Failed to create output for file %s in format %s", remoteFileName, df),
+                String.format(Locale.ROOT, "Failed to create output for file %s in format %s", remoteFileName, df),
                 e
             );
         }
@@ -291,7 +292,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         try {
             BlobContainer blobContainer = getBlobContainer(fileMetadata.dataFormat());
             if (blobContainer==null) {
-                throw new IOException(String.format("Failed to find blobContainer for file %s in format %s", fileMetadata.file(), fileMetadata.dataFormat()));
+                throw new IOException(String.format(Locale.ROOT, "Failed to find blobContainer for file %s in format %s", fileMetadata.file(), fileMetadata.dataFormat()));
             }
 
             inputStream = blobContainer.readBlob(fileMetadata.file());

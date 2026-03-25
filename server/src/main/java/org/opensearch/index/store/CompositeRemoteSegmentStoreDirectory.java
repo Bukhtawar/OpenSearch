@@ -42,7 +42,8 @@ import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadataHandlerFa
 import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 import org.opensearch.threadpool.ThreadPool;
 
-import java.io.File;
+import java.nio.file.Path;
+import java.util.Locale;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -363,8 +364,8 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
                         IOContext context, ActionListener<Void> listener, boolean lowPriorityUpload) {
 
         String fileName = fileMetadata.file();
-        File file = new File(fileName);
-        String remoteFileName = getNewRemoteSegmentFilename(file.getName());
+        String localName = Path.of(fileName).getFileName().toString();
+        String remoteFileName = getNewRemoteSegmentFilename(localName);
 
         logger.debug("FileMetadata-based upload initiated: file={}, format={}, remoteFileName={}",
                     fileName, fileMetadata.dataFormat(), remoteFileName);
@@ -403,7 +404,7 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
             logger.error("FileMetadata-based upload failed: file={}, format={}, error={}",
                         fileName, fileMetadata.dataFormat(), e.getMessage(), e);
             listener.onFailure(new SegmentUploadFailedException(
-                String.format("Failed to upload file %s with format %s", fileName, fileMetadata.dataFormat())));
+                String.format(Locale.ROOT, "Failed to upload file %s with format %s", fileName, fileMetadata.dataFormat())));
         }
     }
 

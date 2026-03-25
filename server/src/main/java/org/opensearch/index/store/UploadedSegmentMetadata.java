@@ -11,7 +11,7 @@ package org.opensearch.index.store;
 import org.apache.lucene.util.Version;
 import org.opensearch.common.annotation.PublicApi;
 
-import java.io.File;
+import java.nio.file.Path;
 
 /**
  * Metadata of a segment that is uploaded to remote segment store.
@@ -72,8 +72,7 @@ public class UploadedSegmentMetadata {
     }
 
     public static UploadedSegmentMetadata fromString(String uploadedFilename) {
-        File file = new File(uploadedFilename);
-        var filename = file.getName();
+        String filename = Path.of(uploadedFilename).getFileName().toString();
         String[] values = filename.split(SEPARATOR);
 
         // Extract dataFormat from position 5, default to "lucene" for backward compatibility

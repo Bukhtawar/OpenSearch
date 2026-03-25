@@ -18,6 +18,7 @@ import org.opensearch.index.shard.ShardPath;
 import org.opensearch.plugins.PluginsService;
 
 import java.io.IOException;
+import java.util.Locale;
 
 /**
  * Default implementation of CompositeStoreDirectoryFactory that provides
@@ -71,7 +72,7 @@ public class DefaultCompositeStoreDirectoryFactory implements CompositeStoreDire
             logger.error("Failed to create CompositeStoreDirectory for shard: {}",
                 shardPath.getShardId(), e);
             throw new IOException(
-                String.format("Failed to create CompositeStoreDirectory for shard %s: %s",
+                String.format(Locale.ROOT, "Failed to create CompositeStoreDirectory for shard %s: %s",
                     shardPath.getShardId(), e.getMessage()),
                 e
             );
