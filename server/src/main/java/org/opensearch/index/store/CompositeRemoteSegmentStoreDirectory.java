@@ -659,12 +659,8 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
         return metadataFiles.get(0);
     }
 
-//    public void markMergedSegmentsPendingDownload(Map<FileMetadata, String> localToRemoteFilesMetadata) {
-//        pendingDownloadMergedSegments.putAll(localToRemoteFilesMetadata);
-//    }
-
     public void unmarkMergedSegmentsPendingDownload(Set<String> localFilenames) {
-        localFilenames.forEach(pendingDownloadMergedSegments::remove);
+        localFilenames.forEach(name -> pendingDownloadMergedSegments.remove(new FileMetadata(name)));
     }
 
     public boolean isMergedSegmentPendingDownload(FileMetadata fileMetadata) {

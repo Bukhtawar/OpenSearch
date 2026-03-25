@@ -31,9 +31,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -311,9 +308,9 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
 
         dirWithPending.unmarkMergedSegmentsPendingDownload(Set.of("_1.si"));
 
-        // Note: unmark uses string keys, the implementation uses pendingDownloadMergedSegments.remove(String)
-        // Depending on impl, fm1 may or may not be removed. Let's check what actually happens.
-        assertFalse("fm2 should still be pending", dirWithPending.isMergedSegmentPendingDownload(fm2) == false);
+        // fm1 should be unmarked (removed from pending), fm2 should still be pending
+        assertFalse("fm1 should no longer be pending after unmark", dirWithPending.isMergedSegmentPendingDownload(fm1));
+        assertTrue("fm2 should still be pending", dirWithPending.isMergedSegmentPendingDownload(fm2));
     }
 
     public void testGetSegmentsUploadedToRemoteStore_empty() {
@@ -597,5 +594,403 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         expectThrows(UnsupportedOperationException.class, () ->
             directory.copyFrom(dir, "_0.si", "_0.si", IOContext.DEFAULT)
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // fileLength - from cache (uploaded segments)
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testFileLength_fromCache() throws IOException {
+        // Upload a file to populate the cache
+        CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("lucene", "_cached.si");
+
+        when(compositeRemoteDirectory.copyFrom(
+            eq(storeDir), any(FileMetadata.class), any(String.class),
+            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
+        )).thenAnswer(invocation -> {
+            Runnable postUploadRunner = invocation.getArgument(4);
+            postUploadRunner.run();
+            ActionListener<Void> listener = invocation.getArgument(5);
+            listener.onResponse(null);
+            return true;
+        });
+
+        when(storeDir.calculateUploadChecksum(any(FileMetadata.class))).thenReturn("11111");
+        when(storeDir.fileLength(any(FileMetadata.class))).thenReturn(4096L);
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        directory.copyFrom(fm, storeDir, IOContext.DEFAULT, listener, false);
+
+        // fileLength should return the cached value (4096) without calling compositeRemoteDirectory
+        long length = directory.fileLength(fm);
+        assertEquals(4096L, length);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // containsFile after upload with correct and wrong checksums
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testContainsFile_afterUpload_wrongChecksum() throws IOException {
+        CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("parquet", "_data.parquet");
+
+        when(compositeRemoteDirectory.copyFrom(
+            eq(storeDir), any(FileMetadata.class), any(String.class),
+            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
+        )).thenAnswer(invocation -> {
+            Runnable postUploadRunner = invocation.getArgument(4);
+            postUploadRunner.run();
+            ActionListener<Void> listener = invocation.getArgument(5);
+            listener.onResponse(null);
+            return true;
+        });
+
+        when(storeDir.calculateUploadChecksum(any(FileMetadata.class))).thenReturn("99999");
+        when(storeDir.fileLength(any(FileMetadata.class))).thenReturn(500L);
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        directory.copyFrom(fm, storeDir, IOContext.DEFAULT, listener, false);
+
+        // Correct checksum should match
+        assertTrue(directory.containsFile(fm, "99999"));
+        // Wrong checksum should not match
+        assertFalse(directory.containsFile(fm, "00000"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // copyFrom with string-based overload dispatches to FileMetadata
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testCopyFrom_stringOverload_delegatesToCompositeStoreDirectory() {
+        CompositeStoreDirectory storeDirectory = mock(CompositeStoreDirectory.class);
+        ActionListener<Void> listener = mock(ActionListener.class);
+
+        // Should dispatch through to the FileMetadata-based path
+        when(compositeRemoteDirectory.copyFrom(
+            eq(storeDirectory), any(FileMetadata.class), any(String.class),
+            eq(IOContext.DEFAULT), any(Runnable.class), any(ActionListener.class), eq(false)
+        )).thenReturn(true);
+
+        directory.copyFrom(storeDirectory, "_0.si", IOContext.DEFAULT, listener, false);
+
+        verify(compositeRemoteDirectory).copyFrom(
+            eq(storeDirectory), any(FileMetadata.class), any(String.class),
+            eq(IOContext.DEFAULT), any(Runnable.class), any(ActionListener.class), eq(false)
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // getExistingRemoteFilename from uploaded cache
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testGetExistingRemoteFilename_fromUploadedCache() throws IOException {
+        CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("lucene", "_cached_remote.si");
+
+        when(compositeRemoteDirectory.copyFrom(
+            eq(storeDir), any(FileMetadata.class), any(String.class),
+            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
+        )).thenAnswer(invocation -> {
+            Runnable postUploadRunner = invocation.getArgument(4);
+            postUploadRunner.run();
+            ActionListener<Void> listener = invocation.getArgument(5);
+            listener.onResponse(null);
+            return true;
+        });
+
+        when(storeDir.calculateUploadChecksum(any(FileMetadata.class))).thenReturn("55555");
+        when(storeDir.fileLength(any(FileMetadata.class))).thenReturn(300L);
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        directory.copyFrom(fm, storeDir, IOContext.DEFAULT, listener, false);
+
+        String remoteFilename = directory.getExistingRemoteFilename(fm);
+        assertNotNull("Should find remote filename from uploaded cache", remoteFilename);
+        assertTrue("Remote filename should contain the original filename", remoteFilename.contains("_cached_remote"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // getSegmentsUploadedToRemoteStore after upload
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testGetSegmentsUploadedToRemoteStore_afterUpload() throws IOException {
+        CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("lucene", "_seg_cache.si");
+
+        when(compositeRemoteDirectory.copyFrom(
+            eq(storeDir), any(FileMetadata.class), any(String.class),
+            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
+        )).thenAnswer(invocation -> {
+            Runnable postUploadRunner = invocation.getArgument(4);
+            postUploadRunner.run();
+            ActionListener<Void> listener = invocation.getArgument(5);
+            listener.onResponse(null);
+            return true;
+        });
+
+        when(storeDir.calculateUploadChecksum(any(FileMetadata.class))).thenReturn("77777");
+        when(storeDir.fileLength(any(FileMetadata.class))).thenReturn(1024L);
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        directory.copyFrom(fm, storeDir, IOContext.DEFAULT, listener, false);
+
+        Map<String, UploadedSegmentMetadata> cache = directory.getSegmentsUploadedToRemoteStore();
+        assertFalse("Cache should not be empty after upload", cache.isEmpty());
+        // The key in the returned map should be the serialized form of FileMetadata
+        assertTrue("Cache should contain the uploaded file", cache.containsKey(fm.serialize()));
+        assertEquals("77777", cache.get(fm.serialize()).getChecksum());
+        assertEquals(1024L, cache.get(fm.serialize()).getLength());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // copyFrom listener failure path
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testCopyFrom_fileMetadata_uploadException_callsListenerOnFailure() throws IOException {
+        CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("lucene", "_fail_upload.si");
+
+        when(compositeRemoteDirectory.copyFrom(
+            eq(storeDir), any(FileMetadata.class), any(String.class),
+            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
+        )).thenThrow(new RuntimeException("Upload failed"));
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        directory.copyFrom(fm, storeDir, IOContext.DEFAULT, listener, false);
+
+        verify(listener).onFailure(any());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // delete - partial failure
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testDelete_metadataDirectoryFails() throws IOException {
+        org.mockito.Mockito.doThrow(new IOException("metadata delete failed")).when(remoteMetadataDirectory).delete();
+
+        boolean result = directory.delete();
+        assertFalse(result);
+    }
+
+    public void testDelete_lockManagerFails() throws IOException {
+        org.mockito.Mockito.doThrow(new IOException("lock delete failed")).when(mdLockManager).delete();
+
+        boolean result = directory.delete();
+        assertFalse(result);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // unmark - empty set is no-op
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testUnmarkMergedSegmentsPendingDownload_emptySet() throws IOException {
+        Map<FileMetadata, String> pendingSegments = new ConcurrentHashMap<>();
+        FileMetadata fm = new FileMetadata("lucene", "_stay.si");
+        pendingSegments.put(fm, "_stay.si__uuid");
+
+        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+            MetadataFilenameUtils.METADATA_PREFIX,
+            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+        )).thenReturn(Collections.emptyList());
+
+        CompositeRemoteSegmentStoreDirectory dirWithPending = new CompositeRemoteSegmentStoreDirectory(
+            compositeRemoteDirectory,
+            remoteMetadataDirectory,
+            mdLockManager,
+            threadPool,
+            shardId,
+            pendingSegments
+        );
+
+        // Unmark with empty set - nothing should change
+        dirWithPending.unmarkMergedSegmentsPendingDownload(Set.of());
+        assertTrue("File should still be pending", dirWithPending.isMergedSegmentPendingDownload(fm));
+    }
+
+    public void testUnmarkMergedSegmentsPendingDownload_allFiles() throws IOException {
+        Map<FileMetadata, String> pendingSegments = new ConcurrentHashMap<>();
+        FileMetadata fm1 = new FileMetadata("lucene", "_a.si");
+        FileMetadata fm2 = new FileMetadata("lucene", "_b.si");
+        pendingSegments.put(fm1, "_a.si__uuid");
+        pendingSegments.put(fm2, "_b.si__uuid");
+
+        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+            MetadataFilenameUtils.METADATA_PREFIX,
+            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+        )).thenReturn(Collections.emptyList());
+
+        CompositeRemoteSegmentStoreDirectory dirWithPending = new CompositeRemoteSegmentStoreDirectory(
+            compositeRemoteDirectory,
+            remoteMetadataDirectory,
+            mdLockManager,
+            threadPool,
+            shardId,
+            pendingSegments
+        );
+
+        // Unmark all files
+        dirWithPending.unmarkMergedSegmentsPendingDownload(Set.of("_a.si", "_b.si"));
+        assertFalse(dirWithPending.isMergedSegmentPendingDownload(fm1));
+        assertFalse(dirWithPending.isMergedSegmentPendingDownload(fm2));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // getMetadataFilesToFilterActiveSegments - mixed locked/unlocked
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testGetMetadataFilesForActiveSegments_mixedLockedUnlocked() {
+        List<String> sortedMdFiles = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            sortedMdFiles.add("metadata__" + i);
+        }
+        // Lock files at indices 5, 6, 7, 8
+        Set<String> lockedFiles = new HashSet<>();
+        lockedFiles.add("metadata__5");
+        lockedFiles.add("metadata__6");
+        lockedFiles.add("metadata__7");
+        lockedFiles.add("metadata__8");
+
+        int lastNToKeep = 3;
+        Set<String> result = directory.getMetadataFilesToFilterActiveSegments(lastNToKeep, sortedMdFiles, lockedFiles);
+
+        // Should include boundary files for active segment filtering
+        assertNotNull(result);
+        // metadata__2 should be included as the boundary for lastNToKeep=3
+        assertTrue("Should include boundary metadata file", result.contains("metadata__2"));
+    }
+
+    public void testGetMetadataFilesForActiveSegments_emptyList() {
+        List<String> sortedMdFiles = new ArrayList<>();
+        Set<String> lockedFiles = new HashSet<>();
+
+        Set<String> result = directory.getMetadataFilesToFilterActiveSegments(0, sortedMdFiles, lockedFiles);
+        assertTrue("Empty file list should produce empty result", result.isEmpty());
+    }
+
+    public void testGetMetadataFilesForActiveSegments_keepAllFiles() {
+        List<String> sortedMdFiles = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            sortedMdFiles.add("metadata__" + i);
+        }
+        Set<String> lockedFiles = new HashSet<>();
+
+        // Keep all 5 files, nothing to delete
+        Set<String> result = directory.getMetadataFilesToFilterActiveSegments(5, sortedMdFiles, lockedFiles);
+        assertTrue("Keeping all files should produce empty result", result.isEmpty());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // METADATA_FILES_TO_FETCH constant
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testMetadataFilesToFetchConstant() {
+        assertEquals(10, CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Multiple uploads to same file (cache overwrite)
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testMultipleUploads_cacheOverwrite() throws IOException {
+        CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("lucene", "_overwrite.si");
+
+        when(compositeRemoteDirectory.copyFrom(
+            eq(storeDir), any(FileMetadata.class), any(String.class),
+            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
+        )).thenAnswer(invocation -> {
+            Runnable postUploadRunner = invocation.getArgument(4);
+            postUploadRunner.run();
+            ActionListener<Void> listener = invocation.getArgument(5);
+            listener.onResponse(null);
+            return true;
+        });
+
+        // First upload with checksum "11111"
+        when(storeDir.calculateUploadChecksum(any(FileMetadata.class))).thenReturn("11111");
+        when(storeDir.fileLength(any(FileMetadata.class))).thenReturn(100L);
+
+        ActionListener<Void> listener1 = mock(ActionListener.class);
+        directory.copyFrom(fm, storeDir, IOContext.DEFAULT, listener1, false);
+
+        assertTrue(directory.containsFile(fm, "11111"));
+
+        // Second upload with checksum "22222" (e.g., file was modified)
+        when(storeDir.calculateUploadChecksum(any(FileMetadata.class))).thenReturn("22222");
+        when(storeDir.fileLength(any(FileMetadata.class))).thenReturn(200L);
+
+        ActionListener<Void> listener2 = mock(ActionListener.class);
+        directory.copyFrom(fm, storeDir, IOContext.DEFAULT, listener2, false);
+
+        // Old checksum should no longer match
+        assertFalse(directory.containsFile(fm, "11111"));
+        // New checksum should match
+        assertTrue(directory.containsFile(fm, "22222"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Non-lucene format files in pending download
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testPendingDownload_nonLuceneFormat() throws IOException {
+        Map<FileMetadata, String> pendingSegments = new ConcurrentHashMap<>();
+        FileMetadata fm = new FileMetadata("parquet", "_data.parquet");
+        pendingSegments.put(fm, "_data.parquet__remote_uuid");
+
+        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+            MetadataFilenameUtils.METADATA_PREFIX,
+            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+        )).thenReturn(Collections.emptyList());
+
+        CompositeRemoteSegmentStoreDirectory dirWithPending = new CompositeRemoteSegmentStoreDirectory(
+            compositeRemoteDirectory,
+            remoteMetadataDirectory,
+            mdLockManager,
+            threadPool,
+            shardId,
+            pendingSegments
+        );
+
+        assertTrue(dirWithPending.isMergedSegmentPendingDownload(fm));
+        assertEquals("_data.parquet__remote_uuid", dirWithPending.getExistingRemoteFilename(fm));
+
+        // Different format same file name should not match
+        FileMetadata fmDiffFormat = new FileMetadata("arrow", "_data.parquet");
+        assertFalse(dirWithPending.isMergedSegmentPendingDownload(fmDiffFormat));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // removeFileFromSegmentsUploadedToRemoteStore - non-lucene format
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testRemoveFileFromSegmentsUploadedToRemoteStore_nonLucene() throws IOException {
+        CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("parquet", "_remove_parquet.parquet");
+
+        when(compositeRemoteDirectory.copyFrom(
+            eq(storeDir), any(FileMetadata.class), any(String.class),
+            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
+        )).thenAnswer(invocation -> {
+            Runnable postUploadRunner = invocation.getArgument(4);
+            postUploadRunner.run();
+            ActionListener<Void> listener = invocation.getArgument(5);
+            listener.onResponse(null);
+            return true;
+        });
+
+        when(storeDir.calculateUploadChecksum(any(FileMetadata.class))).thenReturn("88888");
+        when(storeDir.fileLength(any(FileMetadata.class))).thenReturn(500L);
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        directory.copyFrom(fm, storeDir, IOContext.DEFAULT, listener, false);
+
+        assertTrue(directory.containsFile(fm, "88888"));
+
+        UploadedSegmentMetadata metadata = new UploadedSegmentMetadata(
+            "_remove_parquet.parquet", "_remove_parquet.parquet__uuid", "88888", 500, "parquet");
+        directory.removeFileFromSegmentsUploadedToRemoteStore(metadata);
+
+        assertFalse(directory.containsFile(fm, "88888"));
     }
 }

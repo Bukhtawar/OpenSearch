@@ -15,7 +15,6 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
-import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.test.OpenSearchTestCase;
 import org.junit.After;
@@ -58,7 +57,8 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
 
     @After
     public void tearDown() throws Exception {
-        compositeStoreDirectory.close();
+        // Don't call compositeStoreDirectory.close() - StoreDirectory.close() asserts
+        // that only the Store itself should close it. Just close the underlying FSDirectory.
         fsDirectory.close();
         super.tearDown();
     }
@@ -439,5 +439,597 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
         // The resolveFileName method should handle the delimiter and resolve correctly
         long length = compositeStoreDirectory.fileLength(serialized);
         assertEquals(data.length, length);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FileMetadata-based openInput / createOutput
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testCreateOutputAndOpenInput_fileMetadata_lucene() throws IOException {
+        FileMetadata fm = new FileMetadata("lucene", "_fm_test.si");
+        byte[] testData = "file metadata lucene test".getBytes();
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(fm, IOContext.DEFAULT)) {
+            out.writeBytes(testData, testData.length);
+        }
+
+        try (IndexInput in = compositeStoreDirectory.openInput(fm, IOContext.DEFAULT)) {
+            byte[] readData = new byte[testData.length];
+            in.readBytes(readData, 0, readData.length);
+            assertArrayEquals(testData, readData);
+        }
+    }
+
+    public void testCreateOutputAndOpenInput_fileMetadata_parquet() throws IOException {
+        FileMetadata fm = new FileMetadata("parquet", "fm_test.parquet");
+        byte[] testData = "file metadata parquet test".getBytes();
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(fm, IOContext.DEFAULT)) {
+            out.writeBytes(testData, testData.length);
+        }
+
+        try (IndexInput in = compositeStoreDirectory.openInput(fm, IOContext.DEFAULT)) {
+            byte[] readData = new byte[testData.length];
+            in.readBytes(readData, 0, readData.length);
+            assertArrayEquals(testData, readData);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Checksum idempotency
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testCalculateChecksum_idempotent_nonLucene() throws IOException {
+        String fileIdentifier = "parquet/idempotent.parquet";
+        byte[] data = "idempotent checksum data".getBytes();
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
+            out.writeBytes(data, data.length);
+        }
+
+        long checksum1 = compositeStoreDirectory.calculateChecksum(fileIdentifier);
+        long checksum2 = compositeStoreDirectory.calculateChecksum(fileIdentifier);
+        assertEquals("Checksum should be the same on repeated calls", checksum1, checksum2);
+    }
+
+    public void testCalculateChecksum_stringAndFileMetadataConsistent() throws IOException {
+        String fileIdentifier = "parquet/consistency.parquet";
+        byte[] data = "consistency checksum".getBytes();
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
+            out.writeBytes(data, data.length);
+        }
+
+        long checksumFromString = compositeStoreDirectory.calculateChecksum(fileIdentifier);
+        FileMetadata fm = new FileMetadata("parquet", "consistency.parquet");
+        long checksumFromFm = compositeStoreDirectory.calculateChecksum(fm);
+        assertEquals(checksumFromString, checksumFromFm);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Data integrity after rename
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testRename_preservesContent_lucene() throws IOException {
+        String srcFile = "_rename_content.si";
+        byte[] data = "content to preserve after rename".getBytes();
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(srcFile, IOContext.DEFAULT)) {
+            out.writeBytes(data, data.length);
+        }
+
+        compositeStoreDirectory.rename(srcFile, "_rename_content_dest.si");
+
+        try (IndexInput in = compositeStoreDirectory.openInput("_rename_content_dest.si", IOContext.DEFAULT)) {
+            byte[] readData = new byte[data.length];
+            in.readBytes(readData, 0, readData.length);
+            assertArrayEquals(data, readData);
+        }
+    }
+
+    public void testRename_preservesContent_nonLucene() throws IOException {
+        FileMetadata src = new FileMetadata("parquet", "rename_content.parquet");
+        FileMetadata dest = new FileMetadata("parquet", "rename_content_dest.parquet");
+        byte[] data = "parquet content to preserve".getBytes();
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(src, IOContext.DEFAULT)) {
+            out.writeBytes(data, data.length);
+        }
+
+        compositeStoreDirectory.rename(src, dest);
+
+        try (IndexInput in = compositeStoreDirectory.openInput(dest, IOContext.DEFAULT)) {
+            byte[] readData = new byte[data.length];
+            in.readBytes(readData, 0, readData.length);
+            assertArrayEquals(data, readData);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Multiple formats in listAll
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testListAll_multipleFormats() throws IOException {
+        try (IndexOutput out = compositeStoreDirectory.createOutput("_0.si", IOContext.DEFAULT)) {
+            out.writeString("lucene");
+        }
+        try (IndexOutput out = compositeStoreDirectory.createOutput("parquet/data.parquet", IOContext.DEFAULT)) {
+            out.writeString("parquet");
+        }
+        try (IndexOutput out = compositeStoreDirectory.createOutput("arrow/data.arrow", IOContext.DEFAULT)) {
+            out.writeString("arrow");
+        }
+
+        String[] files = compositeStoreDirectory.listAll();
+        List<String> fileList = Arrays.asList(files);
+        assertTrue("Should contain lucene file", fileList.contains("_0.si"));
+        assertTrue("Should contain parquet file", fileList.contains("parquet/data.parquet"));
+        assertTrue("Should contain arrow file", fileList.contains("arrow/data.arrow"));
+    }
+
+    public void testListFileMetadata_multipleFormats() throws IOException {
+        try (IndexOutput out = compositeStoreDirectory.createOutput("_0.si", IOContext.DEFAULT)) {
+            out.writeString("lucene");
+        }
+        try (IndexOutput out = compositeStoreDirectory.createOutput("parquet/data.parquet", IOContext.DEFAULT)) {
+            out.writeString("parquet");
+        }
+        try (IndexOutput out = compositeStoreDirectory.createOutput("arrow/data.arrow", IOContext.DEFAULT)) {
+            out.writeString("arrow");
+        }
+
+        FileMetadata[] metadataArray = compositeStoreDirectory.listFileMetadata();
+        boolean foundLucene = false, foundParquet = false, foundArrow = false;
+        for (FileMetadata fm : metadataArray) {
+            if ("lucene".equals(fm.dataFormat()) && "_0.si".equals(fm.file())) foundLucene = true;
+            if ("parquet".equals(fm.dataFormat()) && "data.parquet".equals(fm.file())) foundParquet = true;
+            if ("arrow".equals(fm.dataFormat()) && "data.arrow".equals(fm.file())) foundArrow = true;
+        }
+        assertTrue("Should find lucene", foundLucene);
+        assertTrue("Should find parquet", foundParquet);
+        assertTrue("Should find arrow", foundArrow);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // sync with non-Lucene and multiple files
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testSync_nonLuceneFile() throws IOException {
+        String fileIdentifier = "parquet/sync_test.parquet";
+        try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
+            out.writeString("sync test parquet");
+        }
+
+        // Should not throw
+        compositeStoreDirectory.sync(Set.of(fileIdentifier));
+    }
+
+    public void testSync_multipleFiles() throws IOException {
+        try (IndexOutput out = compositeStoreDirectory.createOutput("_sync1.si", IOContext.DEFAULT)) {
+            out.writeString("sync1");
+        }
+        try (IndexOutput out = compositeStoreDirectory.createOutput("parquet/sync2.parquet", IOContext.DEFAULT)) {
+            out.writeString("sync2");
+        }
+
+        // Should not throw with multiple files
+        compositeStoreDirectory.sync(Set.of("_sync1.si", "parquet/sync2.parquet"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // deleteFile with non-existent file
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testDeleteFile_nonExistent_throws() {
+        expectThrows(IOException.class, () ->
+            compositeStoreDirectory.deleteFile("_nonexistent.si")
+        );
+    }
+
+    public void testDeleteFile_fileMetadata_nonExistent_throws() {
+        FileMetadata fm = new FileMetadata("parquet", "nonexistent.parquet");
+        expectThrows(IOException.class, () ->
+            compositeStoreDirectory.deleteFile(fm)
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // toFileMetadata edge cases
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testToFileMetadata_nestedPath() {
+        FileMetadata fm = compositeStoreDirectory.toFileMetadata("custom/nested_file.data");
+        assertEquals("custom", fm.dataFormat());
+        assertEquals("nested_file.data", fm.file());
+    }
+
+    public void testToFileIdentifier_nullFormatTreatedAsDefault() {
+        FileMetadata fm = new FileMetadata(null, "_0.si");
+        // null format should be treated as default (no prefix)
+        String identifier = compositeStoreDirectory.toFileIdentifier(fm);
+        assertEquals("_0.si", identifier);
+    }
+
+    public void testToFileIdentifier_emptyFormatTreatedAsDefault() {
+        FileMetadata fm = new FileMetadata("", "_0.si");
+        String identifier = compositeStoreDirectory.toFileIdentifier(fm);
+        assertEquals("_0.si", identifier);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // fileLength with serialized FileMetadata string
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testFileLength_withSerializedString_lucene() throws IOException {
+        String fileName = "_len_serial.si";
+        byte[] data = "serialized length test".getBytes();
+        try (IndexOutput out = compositeStoreDirectory.createOutput(fileName, IOContext.DEFAULT)) {
+            out.writeBytes(data, data.length);
+        }
+
+        // Access via serialized form
+        String serialized = new FileMetadata("lucene", fileName).serialize();
+        assertEquals(data.length, compositeStoreDirectory.fileLength(serialized));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Empty file checksum
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testCalculateChecksum_emptyNonLuceneFile() throws IOException {
+        String fileIdentifier = "parquet/empty.parquet";
+        try (IndexOutput out = compositeStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
+            // Write nothing - empty file
+        }
+
+        long checksum = compositeStoreDirectory.calculateChecksum(fileIdentifier);
+
+        CRC32 crc32 = new CRC32();
+        // CRC32 of empty data
+        assertEquals("CRC32 of empty file should match", crc32.getValue(), checksum);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // calculateUploadChecksum for lucene file
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testCalculateUploadChecksum_lucene() throws IOException {
+        String fileName = "_upload_cksum_lucene.si";
+        try (IndexOutput out = compositeStoreDirectory.createOutput(fileName, IOContext.DEFAULT)) {
+            CodecUtil.writeHeader(out, "UploadTest", 1);
+            out.writeString("upload checksum lucene data");
+            CodecUtil.writeFooter(out);
+        }
+
+        FileMetadata fm = new FileMetadata("lucene", fileName);
+        String uploadChecksum = compositeStoreDirectory.calculateUploadChecksum(fm);
+        assertNotNull(uploadChecksum);
+        long parsedChecksum = Long.parseLong(uploadChecksum);
+        assertEquals(compositeStoreDirectory.calculateChecksum(fm), parsedChecksum);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FileMetadata → "/" identifier → SubdirectoryAwareDirectory
+    // Path mapping & storage location tests
+    // ═══════════════════════════════════════════════════════════════
+
+    // --- Lucene files: no prefix, stored in <shard>/index/ ---
+
+    public void testPathMapping_luceneFile_storedInIndexDir() throws IOException {
+        // Lucene files (no slash) should be stored in <shard>/index/<filename>
+        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
+        String identifier = compositeStoreDirectory.toFileIdentifier(fm);
+        assertEquals("_0.cfs", identifier); // no prefix
+        assertFalse("Lucene identifier should not contain '/'", identifier.contains("/"));
+
+        // Write and verify it's accessible
+        try (IndexOutput out = compositeStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
+            out.writeString("lucene data");
+        }
+        // Verify physical file exists in index directory
+        assertTrue(Files.exists(indexPath.resolve("_0.cfs")));
+    }
+
+    public void testPathMapping_segmentsFile_storedInIndexDir() throws IOException {
+        // segments_N files should be treated as lucene format (default)
+        FileMetadata fm = compositeStoreDirectory.toFileMetadata("segments_1");
+        assertEquals("lucene", fm.dataFormat());
+        assertEquals("segments_1", fm.file());
+
+        String identifier = compositeStoreDirectory.toFileIdentifier(fm);
+        assertEquals("segments_1", identifier); // no prefix
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
+            out.writeString("segments data");
+        }
+        assertTrue("segments file should be in index dir", Files.exists(indexPath.resolve("segments_1")));
+    }
+
+    public void testPathMapping_segmentInfoFile_storedInIndexDir() throws IOException {
+        // _0.si (segment info) is a lucene file
+        FileMetadata fm = compositeStoreDirectory.toFileMetadata("_0.si");
+        assertEquals("lucene", fm.dataFormat());
+        String identifier = compositeStoreDirectory.toFileIdentifier(fm);
+        assertEquals("_0.si", identifier);
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
+            out.writeString("si data");
+        }
+        assertTrue(Files.exists(indexPath.resolve("_0.si")));
+    }
+
+    // --- Metadata files: treated as default format, stored in <shard>/index/ ---
+
+    public void testPathMapping_metadataFormat_storedInIndexDir() throws IOException {
+        // "metadata" is in INDEX_DIRECTORY_FORMATS, so no prefix is added
+        FileMetadata fm = new FileMetadata("metadata", "metadata__1__5__abc");
+        String identifier = compositeStoreDirectory.toFileIdentifier(fm);
+        assertEquals("metadata__1__5__abc", identifier); // no prefix
+        assertFalse("Metadata identifier should not contain '/'", identifier.contains("/"));
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
+            out.writeString("metadata content");
+        }
+        assertTrue("Metadata file should be in index dir", Files.exists(indexPath.resolve("metadata__1__5__abc")));
+    }
+
+    public void testPathMapping_metadataFormat_getDataFormat() {
+        // A plain metadata filename (no slash) defaults to "lucene"
+        assertEquals("lucene", compositeStoreDirectory.getDataFormat("metadata__1__2__3"));
+    }
+
+    // --- Parquet files: "parquet/" prefix, stored in <shard>/parquet/ ---
+
+    public void testPathMapping_parquetFile_storedInSubdir() throws IOException {
+        FileMetadata fm = new FileMetadata("parquet", "_0_1.parquet");
+        String identifier = compositeStoreDirectory.toFileIdentifier(fm);
+        assertEquals("parquet/_0_1.parquet", identifier);
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
+            out.writeString("parquet data");
+        }
+        assertTrue("Parquet file should be in parquet subdir",
+            Files.exists(shardDataPath.resolve("parquet").resolve("_0_1.parquet")));
+        assertFalse("Parquet file should NOT be in index dir",
+            Files.exists(indexPath.resolve("_0_1.parquet")));
+    }
+
+    public void testPathMapping_parquetFile_fromIdentifier() {
+        FileMetadata fm = compositeStoreDirectory.toFileMetadata("parquet/_0_1.parquet");
+        assertEquals("parquet", fm.dataFormat());
+        assertEquals("_0_1.parquet", fm.file());
+    }
+
+    // --- Arrow files: "arrow/" prefix, stored in <shard>/arrow/ ---
+
+    public void testPathMapping_arrowFile_storedInSubdir() throws IOException {
+        FileMetadata fm = new FileMetadata("arrow", "data.arrow");
+        String identifier = compositeStoreDirectory.toFileIdentifier(fm);
+        assertEquals("arrow/data.arrow", identifier);
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
+            out.writeString("arrow data");
+        }
+        assertTrue("Arrow file should be in arrow subdir",
+            Files.exists(shardDataPath.resolve("arrow").resolve("data.arrow")));
+        assertFalse("Arrow file should NOT be in index dir",
+            Files.exists(indexPath.resolve("data.arrow")));
+    }
+
+    // --- Custom format: "custom/" prefix, stored in <shard>/custom/ ---
+
+    public void testPathMapping_customFormat_storedInSubdir() throws IOException {
+        FileMetadata fm = new FileMetadata("custom", "myfile.dat");
+        String identifier = compositeStoreDirectory.toFileIdentifier(fm);
+        assertEquals("custom/myfile.dat", identifier);
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
+            out.writeString("custom data");
+        }
+        assertTrue("Custom file should be in custom subdir",
+            Files.exists(shardDataPath.resolve("custom").resolve("myfile.dat")));
+    }
+
+    // --- resolveFileName: serialized FileMetadata (with :::) → "/" identifier ---
+
+    public void testResolveFileName_luceneSerialized() throws IOException {
+        // Write using plain name
+        try (IndexOutput out = compositeStoreDirectory.createOutput("_0.si", IOContext.DEFAULT)) {
+            out.writeString("lucene data");
+        }
+
+        // Access using serialized FileMetadata ":::lucene"
+        String serialized = "_0.si:::lucene";
+        long length = compositeStoreDirectory.fileLength(serialized);
+        assertTrue("Should resolve serialized lucene name", length > 0);
+    }
+
+    public void testResolveFileName_parquetSerialized() throws IOException {
+        // Write using "/" identifier
+        try (IndexOutput out = compositeStoreDirectory.createOutput("parquet/data.parquet", IOContext.DEFAULT)) {
+            out.writeString("parquet data");
+        }
+
+        // Access using serialized FileMetadata ":::parquet"
+        String serialized = "data.parquet:::parquet";
+        long length = compositeStoreDirectory.fileLength(serialized);
+        assertTrue("Should resolve serialized parquet name", length > 0);
+    }
+
+    public void testResolveFileName_metadataSerialized() throws IOException {
+        // Write using plain name (metadata is a default format)
+        try (IndexOutput out = compositeStoreDirectory.createOutput("metadata__1__2__3", IOContext.DEFAULT)) {
+            out.writeString("metadata content");
+        }
+
+        // Access using serialized FileMetadata ":::metadata"
+        String serialized = "metadata__1__2__3:::metadata";
+        long length = compositeStoreDirectory.fileLength(serialized);
+        assertTrue("Should resolve serialized metadata name", length > 0);
+    }
+
+    // --- End-to-end: Write via FileMetadata, read via string identifier and vice versa ---
+
+    public void testEndToEnd_writeViaFileMetadata_readViaString_lucene() throws IOException {
+        FileMetadata fm = new FileMetadata("lucene", "_e2e_lucene.si");
+        byte[] data = "e2e lucene test".getBytes();
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(fm, IOContext.DEFAULT)) {
+            out.writeBytes(data, data.length);
+        }
+
+        // Read using string identifier (no prefix for lucene)
+        try (IndexInput in = compositeStoreDirectory.openInput("_e2e_lucene.si", IOContext.DEFAULT)) {
+            byte[] readData = new byte[data.length];
+            in.readBytes(readData, 0, readData.length);
+            assertArrayEquals(data, readData);
+        }
+    }
+
+    public void testEndToEnd_writeViaFileMetadata_readViaString_parquet() throws IOException {
+        FileMetadata fm = new FileMetadata("parquet", "e2e_data.parquet");
+        byte[] data = "e2e parquet test".getBytes();
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput(fm, IOContext.DEFAULT)) {
+            out.writeBytes(data, data.length);
+        }
+
+        // Read using "/" string identifier
+        try (IndexInput in = compositeStoreDirectory.openInput("parquet/e2e_data.parquet", IOContext.DEFAULT)) {
+            byte[] readData = new byte[data.length];
+            in.readBytes(readData, 0, readData.length);
+            assertArrayEquals(data, readData);
+        }
+    }
+
+    public void testEndToEnd_writeViaString_readViaFileMetadata_parquet() throws IOException {
+        byte[] data = "reverse e2e".getBytes();
+
+        try (IndexOutput out = compositeStoreDirectory.createOutput("parquet/rev_e2e.parquet", IOContext.DEFAULT)) {
+            out.writeBytes(data, data.length);
+        }
+
+        // Read via FileMetadata
+        FileMetadata fm = new FileMetadata("parquet", "rev_e2e.parquet");
+        try (IndexInput in = compositeStoreDirectory.openInput(fm, IOContext.DEFAULT)) {
+            byte[] readData = new byte[data.length];
+            in.readBytes(readData, 0, readData.length);
+            assertArrayEquals(data, readData);
+        }
+    }
+
+    // --- Physical path isolation: files of different formats don't collide ---
+
+    public void testPathIsolation_sameFilenameInDifferentFormats() throws IOException {
+        byte[] luceneData = "lucene version".getBytes();
+        byte[] parquetData = "parquet version".getBytes();
+        byte[] arrowData = "arrow version".getBytes();
+
+        // Write "data.file" in three different formats
+        try (IndexOutput out = compositeStoreDirectory.createOutput("data.file", IOContext.DEFAULT)) {
+            out.writeBytes(luceneData, luceneData.length);
+        }
+        try (IndexOutput out = compositeStoreDirectory.createOutput("parquet/data.file", IOContext.DEFAULT)) {
+            out.writeBytes(parquetData, parquetData.length);
+        }
+        try (IndexOutput out = compositeStoreDirectory.createOutput("arrow/data.file", IOContext.DEFAULT)) {
+            out.writeBytes(arrowData, arrowData.length);
+        }
+
+        // Verify different physical locations
+        assertTrue(Files.exists(indexPath.resolve("data.file")));
+        assertTrue(Files.exists(shardDataPath.resolve("parquet").resolve("data.file")));
+        assertTrue(Files.exists(shardDataPath.resolve("arrow").resolve("data.file")));
+
+        // Verify content is different (not overwritten)
+        assertEquals(luceneData.length, compositeStoreDirectory.fileLength("data.file"));
+        assertEquals(parquetData.length, compositeStoreDirectory.fileLength("parquet/data.file"));
+        assertEquals(arrowData.length, compositeStoreDirectory.fileLength("arrow/data.file"));
+    }
+
+    // --- Comprehensive toFileMetadata + toFileIdentifier round-trip for all formats ---
+
+    public void testRoundtrip_allFormats() {
+        // Lucene
+        verifyRoundtrip("_0.cfs", "lucene", "_0.cfs");
+        verifyRoundtrip("_0.si", "lucene", "_0.si");
+        verifyRoundtrip("segments_1", "lucene", "segments_1");
+
+        // Non-lucene formats
+        verifyRoundtrip("parquet/_0_1.parquet", "parquet", "_0_1.parquet");
+        verifyRoundtrip("arrow/data.arrow", "arrow", "data.arrow");
+        verifyRoundtrip("custom/myfile.dat", "custom", "myfile.dat");
+    }
+
+    private void verifyRoundtrip(String identifier, String expectedFormat, String expectedFile) {
+        FileMetadata fm = compositeStoreDirectory.toFileMetadata(identifier);
+        assertEquals("Format for " + identifier, expectedFormat, fm.dataFormat());
+        assertEquals("File for " + identifier, expectedFile, fm.file());
+
+        String roundtripped = compositeStoreDirectory.toFileIdentifier(fm);
+        assertEquals("Roundtrip for " + identifier, identifier, roundtripped);
+    }
+
+    // --- isDefaultFormat edge cases (should not add prefix) ---
+
+    public void testToFileIdentifier_defaultFormats_noPrefix() {
+        // "lucene" → no prefix
+        assertEquals("file.si", compositeStoreDirectory.toFileIdentifier(new FileMetadata("lucene", "file.si")));
+        // "LUCENE" (case-insensitive) → no prefix
+        assertEquals("file.si", compositeStoreDirectory.toFileIdentifier(new FileMetadata("LUCENE", "file.si")));
+        // "metadata" → no prefix
+        assertEquals("meta.dat", compositeStoreDirectory.toFileIdentifier(new FileMetadata("metadata", "meta.dat")));
+        // "METADATA" (case-insensitive) → no prefix
+        assertEquals("meta.dat", compositeStoreDirectory.toFileIdentifier(new FileMetadata("METADATA", "meta.dat")));
+        // null → no prefix
+        assertEquals("file.si", compositeStoreDirectory.toFileIdentifier(new FileMetadata(null, "file.si")));
+        // empty string → no prefix
+        assertEquals("file.si", compositeStoreDirectory.toFileIdentifier(new FileMetadata("", "file.si")));
+    }
+
+    public void testToFileIdentifier_nonDefaultFormats_addPrefix() {
+        // Non-default formats always get "format/" prefix
+        assertEquals("parquet/data.parquet", compositeStoreDirectory.toFileIdentifier(new FileMetadata("parquet", "data.parquet")));
+        assertEquals("arrow/data.arrow", compositeStoreDirectory.toFileIdentifier(new FileMetadata("arrow", "data.arrow")));
+        assertEquals("orc/data.orc", compositeStoreDirectory.toFileIdentifier(new FileMetadata("orc", "data.orc")));
+        assertEquals("custom/my.file", compositeStoreDirectory.toFileIdentifier(new FileMetadata("custom", "my.file")));
+    }
+
+    // --- listAll includes files from all formats with correct identifiers ---
+
+    public void testListAll_returnsCorrectIdentifiers() throws IOException {
+        try (IndexOutput out = compositeStoreDirectory.createOutput("_0.si", IOContext.DEFAULT)) {
+            out.writeString("lucene");
+        }
+        try (IndexOutput out = compositeStoreDirectory.createOutput("parquet/data.parquet", IOContext.DEFAULT)) {
+            out.writeString("parquet");
+        }
+
+        String[] files = compositeStoreDirectory.listAll();
+        List<String> fileList = Arrays.asList(files);
+
+        // Lucene files should appear as plain names (no prefix)
+        assertTrue("Lucene file listed as plain name", fileList.contains("_0.si"));
+        assertFalse("Lucene file should NOT have lucene/ prefix", fileList.contains("lucene/_0.si"));
+
+        // Non-lucene files should appear with "format/" prefix
+        assertTrue("Parquet file listed with prefix", fileList.contains("parquet/data.parquet"));
+    }
+
+    // --- getDataFormat comprehensive ---
+
+    public void testGetDataFormat_comprehensive() {
+        // Plain filenames → "lucene"
+        assertEquals("lucene", compositeStoreDirectory.getDataFormat("_0.si"));
+        assertEquals("lucene", compositeStoreDirectory.getDataFormat("_0.cfs"));
+        assertEquals("lucene", compositeStoreDirectory.getDataFormat("_0.cfe"));
+        assertEquals("lucene", compositeStoreDirectory.getDataFormat("segments_1"));
+        assertEquals("lucene", compositeStoreDirectory.getDataFormat("write.lock"));
+
+        // Prefixed filenames → format name
+        assertEquals("parquet", compositeStoreDirectory.getDataFormat("parquet/data.parquet"));
+        assertEquals("arrow", compositeStoreDirectory.getDataFormat("arrow/data.arrow"));
+        assertEquals("orc", compositeStoreDirectory.getDataFormat("orc/data.orc"));
+        assertEquals("custom", compositeStoreDirectory.getDataFormat("custom/myfile.dat"));
     }
 }
