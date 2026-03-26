@@ -47,15 +47,11 @@ public class UploadedSegmentMetadata {
 
     @Override
     public String toString() {
-        return String.join(
-            SEPARATOR,
-            originalFilename,
-            uploadedFilename,
-            checksum,
-            String.valueOf(length),
-            String.valueOf(writtenByMajor),
-            dataFormat
-        );
+        String base = String.join(SEPARATOR, originalFilename, uploadedFilename, checksum, String.valueOf(length), String.valueOf(writtenByMajor));
+        if ("lucene".equals(dataFormat)) {
+            return base;
+        }
+        return base + SEPARATOR + dataFormat;
     }
 
     public String getChecksum() {
@@ -104,9 +100,7 @@ public class UploadedSegmentMetadata {
 
         // Set writtenByMajor if present (only valid for lucene format)
         // ToDo: need to add check for non-optimized index here.
-        if (values.length >= 5) {
-            metadata.setWrittenByMajor(Integer.parseInt(values[4]));
-        }
+        metadata.setWrittenByMajor(Integer.parseInt(values[4]));
 
         return metadata;
     }

@@ -332,11 +332,10 @@ public sealed class RemoteSegmentStoreDirectory extends FilterDirectory implemen
      */
     @Override
     public void deleteFile(String name) throws IOException {
-        String fileName = new FileMetadata(name).serialize();
-        String remoteFilename = getExistingRemoteFilename(fileName);
+        String remoteFilename = getExistingRemoteFilename(name);
         if (remoteFilename != null) {
             remoteDataDirectory.deleteFile(remoteFilename);
-            segmentsUploadedToRemoteStore.remove(fileName);
+            segmentsUploadedToRemoteStore.remove(name);
         }
     }
 
@@ -549,7 +548,7 @@ public sealed class RemoteSegmentStoreDirectory extends FilterDirectory implemen
             checksum,
             from.fileLength(src)
         );
-        segmentsUploadedToRemoteStore.put(new FileMetadata(src).serialize(), segmentMetadata);
+        segmentsUploadedToRemoteStore.put(src, segmentMetadata);
     }
 
     /**
@@ -631,13 +630,12 @@ public sealed class RemoteSegmentStoreDirectory extends FilterDirectory implemen
                     Map<String, Integer> segmentToLuceneVersion = getSegmentToLuceneVersion(segmentFiles, segmentInfosSnapshot);
                     Map<String, String> uploadedSegments = new HashMap<>();
                     for (String file : segmentFiles) {
-                        String normalizedFile = new FileMetadata(file).serialize();
-                        if (segmentsUploadedToRemoteStore.containsKey(normalizedFile)) {
-                            org.opensearch.index.store.UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(normalizedFile);
+                        if (segmentsUploadedToRemoteStore.containsKey(file)) {
+                            org.opensearch.index.store.UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(file);
                             metadata.setWrittenByMajor(segmentToLuceneVersion.get(metadata.getOriginalFilename()));
-                            uploadedSegments.put(normalizedFile, metadata.toString());
+                            uploadedSegments.put(file, metadata.toString());
                         } else {
-                            throw new NoSuchFileException(normalizedFile);
+                            throw new NoSuchFileException(file);
                         }
                     }
 
@@ -729,11 +727,10 @@ public sealed class RemoteSegmentStoreDirectory extends FilterDirectory implemen
     }
 
     public String getExistingRemoteFilename(String localFilename) {
-        String localFileMetadata = new FileMetadata(localFilename).toString();
-        if (segmentsUploadedToRemoteStore.containsKey(localFileMetadata)) {
-            return segmentsUploadedToRemoteStore.get(localFileMetadata).getUploadedFilename();
-        } else if (isMergedSegmentPendingDownload(localFilename.toString())) {
-            return pendingDownloadMergedSegments.get(localFilename.toString());
+        if (segmentsUploadedToRemoteStore.containsKey(localFilename)) {
+            return segmentsUploadedToRemoteStore.get(localFilename).getUploadedFilename();
+        } else if (isMergedSegmentPendingDownload(localFilename)) {
+            return pendingDownloadMergedSegments.get(localFilename);
         }
         return null;
     }
@@ -899,30 +896,42 @@ public sealed class RemoteSegmentStoreDirectory extends FilterDirectory implemen
         for (String metadataFile : metadataFilesToBeDeleted) {
             Map<String, org.opensearch.index.store.UploadedSegmentMetadata> staleSegmentFilesMetadataMap = readMetadataFile(metadataFile)
                 .getMetadata();
-            AtomicBoolean deletionSuccessful = new AtomicBoolean(true);
-            staleSegmentFilesMetadataMap.entrySet()
+
+            // Build reverse map: remote filename -> cache key
+            Map<String, String> remoteToLocalKeyMap = new HashMap<>();
+            staleSegmentFilesMetadataMap.forEach(
+                (key, value) -> remoteToLocalKeyMap.put(value.getUploadedFilename(), key)
+            );
+
+            // Collect all files to delete for this metadata file
+            List<String> filesToDelete = remoteToLocalKeyMap.keySet()
                 .stream()
-                .filter(e -> activeSegmentRemoteFilenames.contains(e.getValue().getUploadedFilename()) == false)
-                .filter(e -> deletedSegmentFiles.contains(e.getValue().getUploadedFilename()) == false)
-                .forEach(entry -> {
-                    String file = entry.getValue().getUploadedFilename();
-                    try {
-                        remoteDataDirectory.deleteFile(entry.getValue());
-                        deletedSegmentFiles.add(file);
-                        if (!activeSegmentFilesMetadataMap.containsKey(entry.getKey())) {
-                            removeFileFromSegmentsUploadedToRemoteStore(entry.getValue());
-                        }
-                    } catch (NoSuchFileException e) {
-                        logger.info("Segment file {} corresponding to metadata file {} does not exist in remote", file, metadataFile);
-                    } catch (IOException e) {
-                        deletionSuccessful.set(false);
-                        logger.warn(
-                            "Exception while deleting segment file {} corresponding to metadata file {}. Deletion will be re-tried",
-                            file,
-                            metadataFile
-                        );
+                .filter(file -> activeSegmentRemoteFilenames.contains(file) == false)
+                .filter(file -> deletedSegmentFiles.contains(file) == false)
+                .collect(Collectors.toList());
+
+            AtomicBoolean deletionSuccessful = new AtomicBoolean(true);
+            try {
+                // Batch delete all stale segment files
+                remoteDataDirectory.deleteFiles(filesToDelete);
+                deletedSegmentFiles.addAll(filesToDelete);
+                // Update cache after successful batch deletion
+                for (String file : filesToDelete) {
+                    String cacheKey = remoteToLocalKeyMap.get(file);
+                    if (activeSegmentFilesMetadataMap.containsKey(cacheKey) == false) {
+                        segmentsUploadedToRemoteStore.remove(cacheKey);
                     }
-                });
+                }
+            } catch (IOException e) {
+                deletionSuccessful.set(false);
+                logger.warn(
+                    () -> new ParameterizedMessage(
+                        "Exception while deleting segment files corresponding to metadata file {}. Deletion will be re-tried",
+                        metadataFile
+                    ),
+                    e
+                );
+            }
             if (deletionSuccessful.get()) {
                 logger.debug("Deleting stale metadata file {} from remote segment store", metadataFile);
                 remoteMetadataDirectory.deleteFile(metadataFile);

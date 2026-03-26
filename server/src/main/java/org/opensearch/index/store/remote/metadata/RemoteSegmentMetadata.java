@@ -69,7 +69,7 @@ public class RemoteSegmentMetadata {
      * @return {@code metadata}
      */
     public Map<String, UploadedSegmentMetadata> getMetadata() {
-        return this.metadata.entrySet().stream().collect(Collectors.toMap(entry -> entry.getKey().serialize(), Map.Entry::getValue));
+        return this.metadata.entrySet().stream().collect(Collectors.toMap(entry -> entry.getKey().file(), Map.Entry::getValue));
     }
 
     /**
