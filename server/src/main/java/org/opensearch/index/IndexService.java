@@ -1334,11 +1334,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     private CompositeStoreDirectory createCompositeStoreDirectory(ShardId shardId, ShardPath shardPath) throws IOException {
         if (compositeStoreDirectoryFactory != null) {
             logger.debug("Using CompositeStoreDirectoryFactory to create directory for shard path: {}", shardPath);
-            return compositeStoreDirectoryFactory.newCompositeStoreDirectory(
-                indexSettings,
-                shardId,
-                shardPath
-            );
+            return compositeStoreDirectoryFactory.newCompositeStoreDirectory(indexSettings, shardId, shardPath);
         }
 
         logger.debug("No CompositeStoreDirectoryFactory available, Store will handle internal creation for: {}", shardPath);

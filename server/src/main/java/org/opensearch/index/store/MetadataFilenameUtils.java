@@ -23,12 +23,7 @@ public class MetadataFilenameUtils {
     public static final String METADATA_PREFIX = "metadata";
 
     static String getMetadataFilePrefixForCommit(long primaryTerm, long generation) {
-        return String.join(
-            SEPARATOR,
-            METADATA_PREFIX,
-            RemoteStoreUtils.invertLong(primaryTerm),
-            RemoteStoreUtils.invertLong(generation)
-        );
+        return String.join(SEPARATOR, METADATA_PREFIX, RemoteStoreUtils.invertLong(primaryTerm), RemoteStoreUtils.invertLong(generation));
     }
 
     // Visible for testing

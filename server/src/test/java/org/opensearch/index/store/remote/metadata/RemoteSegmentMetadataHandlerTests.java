@@ -20,9 +20,9 @@ import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.index.engine.NRTReplicationEngineFactory;
-import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.shard.IndexShardTestCase;
+import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.Store;
 import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 import org.opensearch.indices.replication.common.ReplicationType;
@@ -132,7 +132,6 @@ public class RemoteSegmentMetadataHandlerTests extends IndexShardTestCase {
         assertEquals(replicationCheckpoint.getPrimaryTerm(), metadata.getPrimaryTerm());
         assertArrayEquals(segmentInfosBytes, metadata.getSegmentInfosBytes());
     }
-
 
     private Map<String, String> getDummyData() {
         Map<String, String> expectedOutput = new HashMap<>();

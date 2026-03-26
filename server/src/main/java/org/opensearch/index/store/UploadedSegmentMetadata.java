@@ -47,7 +47,8 @@ public class UploadedSegmentMetadata {
 
     @Override
     public String toString() {
-        return String.join(SEPARATOR,
+        return String.join(
+            SEPARATOR,
             originalFilename,
             uploadedFilename,
             checksum,
@@ -57,11 +58,25 @@ public class UploadedSegmentMetadata {
         );
     }
 
-    public String getChecksum() { return this.checksum; }
-    public long getLength() { return this.length; }
-    public String getOriginalFilename() { return originalFilename; }
-    public String getUploadedFilename() { return uploadedFilename; }
-    public String getDataFormat() { return dataFormat; }
+    public String getChecksum() {
+        return this.checksum;
+    }
+
+    public long getLength() {
+        return this.length;
+    }
+
+    public String getOriginalFilename() {
+        return originalFilename;
+    }
+
+    public String getUploadedFilename() {
+        return uploadedFilename;
+    }
+
+    public String getDataFormat() {
+        return dataFormat;
+    }
 
     public void setWrittenByMajor(int writtenByMajor) {
         if (writtenByMajor <= Version.LATEST.major && writtenByMajor >= Version.MIN_SUPPORTED_MAJOR) {

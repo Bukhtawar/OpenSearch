@@ -78,9 +78,8 @@ import java.util.stream.Collectors;
  * @opensearch.api
  */
 @PublicApi(since = "2.3.0")
-public sealed class RemoteSegmentStoreDirectory extends FilterDirectory
-    implements RemoteStoreCommitLevelLockManager
-    permits CompositeRemoteSegmentStoreDirectory {
+public sealed class RemoteSegmentStoreDirectory extends FilterDirectory implements RemoteStoreCommitLevelLockManager permits
+    CompositeRemoteSegmentStoreDirectory {
 
     /**
      * Each segment file is uploaded with unique suffix.
@@ -589,7 +588,14 @@ public sealed class RemoteSegmentStoreDirectory extends FilterDirectory
         if (!(catalogSnapshot instanceof SegmentInfosCatalogSnapshot)) {
             throw new IllegalArgumentException("CatalogSnapshot is not a SegmentInfosCatalogSnapshot: " + catalogSnapshot);
         }
-        uploadMetadata(segmentFiles, ((SegmentInfosCatalogSnapshot) catalogSnapshot).getSegmentInfos(), storeDirectory, translogGeneration, replicationCheckpoint, nodeId);
+        uploadMetadata(
+            segmentFiles,
+            ((SegmentInfosCatalogSnapshot) catalogSnapshot).getSegmentInfos(),
+            storeDirectory,
+            translogGeneration,
+            replicationCheckpoint,
+            nodeId
+        );
     }
 
     /**
@@ -627,9 +633,7 @@ public sealed class RemoteSegmentStoreDirectory extends FilterDirectory
                     for (String file : segmentFiles) {
                         String normalizedFile = new FileMetadata(file).serialize();
                         if (segmentsUploadedToRemoteStore.containsKey(normalizedFile)) {
-                            org.opensearch.index.store.UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(
-                                normalizedFile
-                            );
+                            org.opensearch.index.store.UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(normalizedFile);
                             metadata.setWrittenByMajor(segmentToLuceneVersion.get(metadata.getOriginalFilename()));
                             uploadedSegments.put(normalizedFile, metadata.toString());
                         } else {
@@ -646,12 +650,16 @@ public sealed class RemoteSegmentStoreDirectory extends FilterDirectory
                     metadataStreamWrapper.writeStream(
                         indexOutput,
                         new RemoteSegmentMetadata(
-                            RemoteSegmentMetadata.fromMapOfStrings(uploadedSegments).entrySet().stream().collect(
-                                Collectors.toMap(
-                                    entry -> new FileMetadata(entry.getKey()),  // Keys are already serialized, don't add :::lucene again
-                                    Map.Entry::getValue
-                                )
-                            ),
+                            RemoteSegmentMetadata.fromMapOfStrings(uploadedSegments)
+                                .entrySet()
+                                .stream()
+                                .collect(
+                                    Collectors.toMap(
+                                        entry -> new FileMetadata(entry.getKey()),  // Keys are already serialized, don't add :::lucene
+                                                                                    // again
+                                        Map.Entry::getValue
+                                    )
+                                ),
                             segmentInfoSnapshotByteArray,
                             replicationCheckpoint
                         )
@@ -880,7 +888,8 @@ public sealed class RemoteSegmentStoreDirectory extends FilterDirectory
         );
 
         for (String metadataFile : metadataFilesToFilterActiveSegments) {
-            Map<String, org.opensearch.index.store.UploadedSegmentMetadata> segmentMetadataMap = readMetadataFile(metadataFile).getMetadata();
+            Map<String, org.opensearch.index.store.UploadedSegmentMetadata> segmentMetadataMap = readMetadataFile(metadataFile)
+                .getMetadata();
             activeSegmentFilesMetadataMap.putAll(segmentMetadataMap);
             activeSegmentRemoteFilenames.addAll(
                 segmentMetadataMap.values().stream().map(metadata -> metadata.getUploadedFilename()).collect(Collectors.toSet())
@@ -891,7 +900,8 @@ public sealed class RemoteSegmentStoreDirectory extends FilterDirectory
             Map<String, org.opensearch.index.store.UploadedSegmentMetadata> staleSegmentFilesMetadataMap = readMetadataFile(metadataFile)
                 .getMetadata();
             AtomicBoolean deletionSuccessful = new AtomicBoolean(true);
-            staleSegmentFilesMetadataMap.entrySet().stream()
+            staleSegmentFilesMetadataMap.entrySet()
+                .stream()
                 .filter(e -> activeSegmentRemoteFilenames.contains(e.getValue().getUploadedFilename()) == false)
                 .filter(e -> deletedSegmentFiles.contains(e.getValue().getUploadedFilename()) == false)
                 .forEach(entry -> {

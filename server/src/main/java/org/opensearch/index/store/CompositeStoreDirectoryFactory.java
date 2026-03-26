@@ -12,7 +12,6 @@ import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.shard.ShardPath;
-import org.opensearch.plugins.PluginsService;
 
 import java.io.IOException;
 
@@ -42,9 +41,6 @@ public interface CompositeStoreDirectoryFactory {
      * @return a new CompositeStoreDirectory instance supporting all discovered formats
      * @throws IOException if directory creation fails or resources cannot be allocated
      */
-    CompositeStoreDirectory newCompositeStoreDirectory(
-        IndexSettings indexSettings,
-        ShardId shardId,
-        ShardPath shardPath
-    ) throws IOException;
+    CompositeStoreDirectory newCompositeStoreDirectory(IndexSettings indexSettings, ShardId shardId, ShardPath shardPath)
+        throws IOException;
 }

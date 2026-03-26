@@ -15,7 +15,6 @@ import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.shard.ShardPath;
-import org.opensearch.plugins.PluginsService;
 
 import java.io.IOException;
 import java.util.Locale;
@@ -41,39 +40,34 @@ public class DefaultCompositeStoreDirectoryFactory implements CompositeStoreDire
      * @throws IOException if directory creation fails
      */
     @Override
-    public CompositeStoreDirectory newCompositeStoreDirectory(
-        IndexSettings indexSettings,
-        ShardId shardId, ShardPath shardPath
-    ) throws IOException {
+    public CompositeStoreDirectory newCompositeStoreDirectory(IndexSettings indexSettings, ShardId shardId, ShardPath shardPath)
+        throws IOException {
 
         if (logger.isDebugEnabled()) {
-            logger.debug("Creating CompositeStoreDirectory for shard: {} at path: {}",
-                shardPath.getShardId(), shardPath.getDataPath());
+            logger.debug("Creating CompositeStoreDirectory for shard: {} at path: {}", shardPath.getShardId(), shardPath.getDataPath());
         }
 
         try {
             // Create FSDirectory on the shard's index/ directory as the delegate
             FSDirectory delegate = FSDirectory.open(shardPath.resolveIndex());
 
-            CompositeStoreDirectory compositeDirectory = new CompositeStoreDirectory(
-                delegate,
-                shardPath
-            );
+            CompositeStoreDirectory compositeDirectory = new CompositeStoreDirectory(delegate, shardPath);
 
             if (logger.isDebugEnabled()) {
-                logger.debug("Successfully created CompositeStoreDirectory for shard: {}",
-                    shardPath.getShardId()
-                );
+                logger.debug("Successfully created CompositeStoreDirectory for shard: {}", shardPath.getShardId());
             }
 
             return compositeDirectory;
 
         } catch (Exception e) {
-            logger.error("Failed to create CompositeStoreDirectory for shard: {}",
-                shardPath.getShardId(), e);
+            logger.error("Failed to create CompositeStoreDirectory for shard: {}", shardPath.getShardId(), e);
             throw new IOException(
-                String.format(Locale.ROOT, "Failed to create CompositeStoreDirectory for shard %s: %s",
-                    shardPath.getShardId(), e.getMessage()),
+                String.format(
+                    Locale.ROOT,
+                    "Failed to create CompositeStoreDirectory for shard %s: %s",
+                    shardPath.getShardId(),
+                    e.getMessage()
+                ),
                 e
             );
         }

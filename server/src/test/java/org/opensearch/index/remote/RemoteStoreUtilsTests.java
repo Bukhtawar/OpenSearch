@@ -87,31 +87,10 @@ public class RemoteStoreUtilsTests extends OpenSearchTestCase {
         BASE64_CHARSET_IDX_MAP = Collections.unmodifiableMap(charToIndexMap);
     }
 
-    private final String metadataFilename = MetadataFilenameUtils.getMetadataFilename(
-        12,
-        23,
-        34,
-        1,
-        1,
-        "node-1"
-    );
+    private final String metadataFilename = MetadataFilenameUtils.getMetadataFilename(12, 23, 34, 1, 1, "node-1");
 
-    private final String metadataFilenameDup = MetadataFilenameUtils.getMetadataFilename(
-        12,
-        23,
-        34,
-        2,
-        1,
-        "node-2"
-    );
-    private final String metadataFilename2 = MetadataFilenameUtils.getMetadataFilename(
-        12,
-        13,
-        34,
-        1,
-        1,
-        "node-1"
-    );
+    private final String metadataFilenameDup = MetadataFilenameUtils.getMetadataFilename(12, 23, 34, 2, 1, "node-2");
+    private final String metadataFilename2 = MetadataFilenameUtils.getMetadataFilename(12, 13, 34, 1, 1, "node-1");
 
     private final String oldMetadataFilename = getOldSegmentMetadataFilename(12, 23, 34, 1, 1);
 

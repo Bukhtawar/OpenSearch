@@ -39,7 +39,6 @@ import static org.mockito.Mockito.when;
 
 public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCase {
 
-
     private CompositeRemoteDirectory compositeRemoteDirectory;
     private RemoteDirectory remoteMetadataDirectory;
     private RemoteStoreMetadataLockManager mdLockManager;
@@ -62,10 +61,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         when(threadPool.executor(ThreadPool.Names.SAME)).thenReturn(executorService);
 
         // Return empty metadata files so init() doesn't fail
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
-            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.METADATA_PREFIX,
+                CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+            )
+        ).thenReturn(Collections.emptyList());
 
         directory = new CompositeRemoteSegmentStoreDirectory(
             compositeRemoteDirectory,
@@ -82,10 +83,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
     // ═══════════════════════════════════════════════════════════════
 
     public void testInit_noMetadataFile() throws IOException {
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
-            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.METADATA_PREFIX,
+                CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+            )
+        ).thenReturn(Collections.emptyList());
 
         directory.init();
 
@@ -102,8 +105,9 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         org.apache.lucene.store.Directory regularDirectory = mock(org.apache.lucene.store.Directory.class);
         ActionListener<Void> listener = mock(ActionListener.class);
 
-        expectThrows(IllegalArgumentException.class, () ->
-            directory.copyFrom(regularDirectory, "_0.si", IOContext.DEFAULT, listener, false)
+        expectThrows(
+            IllegalArgumentException.class,
+            () -> directory.copyFrom(regularDirectory, "_0.si", IOContext.DEFAULT, listener, false)
         );
     }
 
@@ -112,18 +116,30 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         FileMetadata fileMetadata = new FileMetadata("lucene", "_0.si");
 
         // Mock the compositeRemoteDirectory to indicate async upload succeeded
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDirectory), any(FileMetadata.class), any(String.class),
-            eq(IOContext.DEFAULT), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenReturn(true);
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDirectory),
+                any(FileMetadata.class),
+                any(String.class),
+                eq(IOContext.DEFAULT),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenReturn(true);
 
         ActionListener<Void> listener = mock(ActionListener.class);
 
         directory.copyFrom(storeDirectory, fileMetadata, IOContext.DEFAULT, listener, false);
 
         verify(compositeRemoteDirectory).copyFrom(
-            eq(storeDirectory), any(FileMetadata.class), any(String.class),
-            eq(IOContext.DEFAULT), any(Runnable.class), any(ActionListener.class), eq(false)
+            eq(storeDirectory),
+            any(FileMetadata.class),
+            any(String.class),
+            eq(IOContext.DEFAULT),
+            any(Runnable.class),
+            any(ActionListener.class),
+            eq(false)
         );
     }
 
@@ -132,10 +148,17 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         FileMetadata fileMetadata = new FileMetadata("lucene", "_0.si");
 
         // Mock: async upload returns false (not supported)
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDirectory), any(FileMetadata.class), any(String.class),
-            eq(IOContext.DEFAULT), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenReturn(false);
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDirectory),
+                any(FileMetadata.class),
+                any(String.class),
+                eq(IOContext.DEFAULT),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenReturn(false);
 
         // Mock the sync copyFrom path
         when(storeDirectory.getChecksumOfLocalFile(any(FileMetadata.class))).thenReturn(12345L);
@@ -158,10 +181,17 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
         FileMetadata fm = new FileMetadata("lucene", "_0.si");
 
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDir), any(FileMetadata.class), any(String.class),
-            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenAnswer(invocation -> {
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDir),
+                any(FileMetadata.class),
+                any(String.class),
+                any(IOContext.class),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenAnswer(invocation -> {
             Runnable postUploadRunner = invocation.getArgument(4);
             postUploadRunner.run();
             ActionListener<Void> listener = invocation.getArgument(5);
@@ -237,10 +267,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         FileMetadata fm = new FileMetadata("lucene", "_pending.si");
         pendingSegments.put(fm, "_pending.si__remote_uuid");
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
-            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.METADATA_PREFIX,
+                CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+            )
+        ).thenReturn(Collections.emptyList());
 
         CompositeRemoteSegmentStoreDirectory dirWithPending = new CompositeRemoteSegmentStoreDirectory(
             compositeRemoteDirectory,
@@ -264,10 +296,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         FileMetadata fm = new FileMetadata("lucene", "_merged.si");
         pendingSegments.put(fm, "_merged.si__uuid");
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
-            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.METADATA_PREFIX,
+                CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+            )
+        ).thenReturn(Collections.emptyList());
 
         CompositeRemoteSegmentStoreDirectory dirWithPending = new CompositeRemoteSegmentStoreDirectory(
             compositeRemoteDirectory,
@@ -289,10 +323,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         pendingSegments.put(fm1, "_1.si__uuid");
         pendingSegments.put(fm2, "_2.si__uuid");
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
-            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.METADATA_PREFIX,
+                CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+            )
+        ).thenReturn(Collections.emptyList());
 
         CompositeRemoteSegmentStoreDirectory dirWithPending = new CompositeRemoteSegmentStoreDirectory(
             compositeRemoteDirectory,
@@ -347,10 +383,8 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
     }
 
     public void testDeleteStaleSegmentsAsync_setsCanDeleteToFalse() throws Exception {
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
-            Integer.MAX_VALUE
-        )).thenReturn(Collections.emptyList());
+        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(MetadataFilenameUtils.METADATA_PREFIX, Integer.MAX_VALUE))
+            .thenReturn(Collections.emptyList());
 
         directory.deleteStaleSegmentsAsync(5);
 
@@ -402,10 +436,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
     // ═══════════════════════════════════════════════════════════════
 
     public void testConstructor_nullPendingSegments() throws IOException {
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
-            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.METADATA_PREFIX,
+                CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+            )
+        ).thenReturn(Collections.emptyList());
 
         // Should not throw even with null pendingDownloadMergedSegments
         CompositeRemoteSegmentStoreDirectory dir = new CompositeRemoteSegmentStoreDirectory(
@@ -423,10 +459,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         Map<FileMetadata, String> pendingSegments = new ConcurrentHashMap<>();
         pendingSegments.put(new FileMetadata("lucene", "_0.si"), "_0.si__uuid");
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
-            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.METADATA_PREFIX,
+                CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+            )
+        ).thenReturn(Collections.emptyList());
 
         CompositeRemoteSegmentStoreDirectory dir = new CompositeRemoteSegmentStoreDirectory(
             compositeRemoteDirectory,
@@ -448,10 +486,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         long generation = 5;
         String acquirerId = "test-acquirer";
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
-            1
-        )).thenReturn(List.of("metadata__1__5__abc"));
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
+                1
+            )
+        ).thenReturn(List.of("metadata__1__5__abc"));
 
         directory.acquireLock(primaryTerm, generation, acquirerId);
         verify(mdLockManager).acquire(any());
@@ -462,10 +502,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         long generation = 5;
         String acquirerId = "test-acquirer";
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
-            1
-        )).thenReturn(List.of("metadata__1__5__abc"));
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
+                1
+            )
+        ).thenReturn(List.of("metadata__1__5__abc"));
 
         directory.releaseLock(primaryTerm, generation, acquirerId);
         verify(mdLockManager).release(any());
@@ -475,10 +517,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         long primaryTerm = 1;
         long generation = 5;
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
-            1
-        )).thenReturn(List.of("metadata__1__5__abc"));
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
+                1
+            )
+        ).thenReturn(List.of("metadata__1__5__abc"));
 
         directory.isLockAcquired(primaryTerm, generation);
         verify(mdLockManager).isAcquired(any());
@@ -488,14 +532,14 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         long primaryTerm = 2;
         long generation = 3;
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
-            1
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
+                1
+            )
+        ).thenReturn(Collections.emptyList());
 
-        expectThrows(NoSuchFileException.class, () ->
-            directory.acquireLock(primaryTerm, generation, "test-acquirer")
-        );
+        expectThrows(NoSuchFileException.class, () -> directory.acquireLock(primaryTerm, generation, "test-acquirer"));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -507,10 +551,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         long generation = 3;
         String expectedFile = "metadata__2__3__pqr";
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
-            1
-        )).thenReturn(List.of(expectedFile));
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
+                1
+            )
+        ).thenReturn(List.of(expectedFile));
 
         String result = directory.getMetadataFileForCommit(primaryTerm, generation);
         assertEquals(expectedFile, result);
@@ -520,10 +566,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         long primaryTerm = 2;
         long generation = 3;
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
-            1
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
+                1
+            )
+        ).thenReturn(Collections.emptyList());
 
         expectThrows(NoSuchFileException.class, () -> directory.getMetadataFileForCommit(primaryTerm, generation));
     }
@@ -535,15 +583,9 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
     public void testUploadMetadata_nonCompositeStoreDirectory_throws() {
         org.apache.lucene.store.Directory regularDirectory = mock(org.apache.lucene.store.Directory.class);
 
-        expectThrows(IllegalArgumentException.class, () ->
-            directory.uploadMetadata(
-                List.of("_0.si"),
-                (CatalogSnapshot) null,
-                regularDirectory,
-                34L,
-                null,
-                "node-1"
-            )
+        expectThrows(
+            IllegalArgumentException.class,
+            () -> directory.uploadMetadata(List.of("_0.si"), (CatalogSnapshot) null, regularDirectory, 34L, null, "node-1")
         );
     }
 
@@ -557,10 +599,17 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         FileMetadata fm = new FileMetadata("lucene", "_remove_test.si");
 
         // Mock async upload to succeed and populate cache
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDir), any(FileMetadata.class), any(String.class),
-            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenAnswer(invocation -> {
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDir),
+                any(FileMetadata.class),
+                any(String.class),
+                any(IOContext.class),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenAnswer(invocation -> {
             Runnable postUploadRunner = invocation.getArgument(4);
             postUploadRunner.run();
             ActionListener<Void> listener = invocation.getArgument(5);
@@ -591,9 +640,7 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
 
     public void testCopyFrom_deprecated_throws() {
         org.apache.lucene.store.Directory dir = mock(org.apache.lucene.store.Directory.class);
-        expectThrows(UnsupportedOperationException.class, () ->
-            directory.copyFrom(dir, "_0.si", "_0.si", IOContext.DEFAULT)
-        );
+        expectThrows(UnsupportedOperationException.class, () -> directory.copyFrom(dir, "_0.si", "_0.si", IOContext.DEFAULT));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -605,10 +652,17 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
         FileMetadata fm = new FileMetadata("lucene", "_cached.si");
 
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDir), any(FileMetadata.class), any(String.class),
-            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenAnswer(invocation -> {
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDir),
+                any(FileMetadata.class),
+                any(String.class),
+                any(IOContext.class),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenAnswer(invocation -> {
             Runnable postUploadRunner = invocation.getArgument(4);
             postUploadRunner.run();
             ActionListener<Void> listener = invocation.getArgument(5);
@@ -635,10 +689,17 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
         FileMetadata fm = new FileMetadata("parquet", "_data.parquet");
 
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDir), any(FileMetadata.class), any(String.class),
-            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenAnswer(invocation -> {
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDir),
+                any(FileMetadata.class),
+                any(String.class),
+                any(IOContext.class),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenAnswer(invocation -> {
             Runnable postUploadRunner = invocation.getArgument(4);
             postUploadRunner.run();
             ActionListener<Void> listener = invocation.getArgument(5);
@@ -667,16 +728,28 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         ActionListener<Void> listener = mock(ActionListener.class);
 
         // Should dispatch through to the FileMetadata-based path
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDirectory), any(FileMetadata.class), any(String.class),
-            eq(IOContext.DEFAULT), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenReturn(true);
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDirectory),
+                any(FileMetadata.class),
+                any(String.class),
+                eq(IOContext.DEFAULT),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenReturn(true);
 
         directory.copyFrom(storeDirectory, "_0.si", IOContext.DEFAULT, listener, false);
 
         verify(compositeRemoteDirectory).copyFrom(
-            eq(storeDirectory), any(FileMetadata.class), any(String.class),
-            eq(IOContext.DEFAULT), any(Runnable.class), any(ActionListener.class), eq(false)
+            eq(storeDirectory),
+            any(FileMetadata.class),
+            any(String.class),
+            eq(IOContext.DEFAULT),
+            any(Runnable.class),
+            any(ActionListener.class),
+            eq(false)
         );
     }
 
@@ -688,10 +761,17 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
         FileMetadata fm = new FileMetadata("lucene", "_cached_remote.si");
 
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDir), any(FileMetadata.class), any(String.class),
-            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenAnswer(invocation -> {
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDir),
+                any(FileMetadata.class),
+                any(String.class),
+                any(IOContext.class),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenAnswer(invocation -> {
             Runnable postUploadRunner = invocation.getArgument(4);
             postUploadRunner.run();
             ActionListener<Void> listener = invocation.getArgument(5);
@@ -718,10 +798,17 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
         FileMetadata fm = new FileMetadata("lucene", "_seg_cache.si");
 
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDir), any(FileMetadata.class), any(String.class),
-            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenAnswer(invocation -> {
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDir),
+                any(FileMetadata.class),
+                any(String.class),
+                any(IOContext.class),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenAnswer(invocation -> {
             Runnable postUploadRunner = invocation.getArgument(4);
             postUploadRunner.run();
             ActionListener<Void> listener = invocation.getArgument(5);
@@ -751,10 +838,17 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
         FileMetadata fm = new FileMetadata("lucene", "_fail_upload.si");
 
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDir), any(FileMetadata.class), any(String.class),
-            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenThrow(new RuntimeException("Upload failed"));
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDir),
+                any(FileMetadata.class),
+                any(String.class),
+                any(IOContext.class),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenThrow(new RuntimeException("Upload failed"));
 
         ActionListener<Void> listener = mock(ActionListener.class);
         directory.copyFrom(fm, storeDir, IOContext.DEFAULT, listener, false);
@@ -789,10 +883,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         FileMetadata fm = new FileMetadata("lucene", "_stay.si");
         pendingSegments.put(fm, "_stay.si__uuid");
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
-            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.METADATA_PREFIX,
+                CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+            )
+        ).thenReturn(Collections.emptyList());
 
         CompositeRemoteSegmentStoreDirectory dirWithPending = new CompositeRemoteSegmentStoreDirectory(
             compositeRemoteDirectory,
@@ -815,10 +911,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         pendingSegments.put(fm1, "_a.si__uuid");
         pendingSegments.put(fm2, "_b.si__uuid");
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
-            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.METADATA_PREFIX,
+                CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+            )
+        ).thenReturn(Collections.emptyList());
 
         CompositeRemoteSegmentStoreDirectory dirWithPending = new CompositeRemoteSegmentStoreDirectory(
             compositeRemoteDirectory,
@@ -896,10 +994,17 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
         FileMetadata fm = new FileMetadata("lucene", "_overwrite.si");
 
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDir), any(FileMetadata.class), any(String.class),
-            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenAnswer(invocation -> {
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDir),
+                any(FileMetadata.class),
+                any(String.class),
+                any(IOContext.class),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenAnswer(invocation -> {
             Runnable postUploadRunner = invocation.getArgument(4);
             postUploadRunner.run();
             ActionListener<Void> listener = invocation.getArgument(5);
@@ -938,10 +1043,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         FileMetadata fm = new FileMetadata("parquet", "_data.parquet");
         pendingSegments.put(fm, "_data.parquet__remote_uuid");
 
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
-            CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
-        )).thenReturn(Collections.emptyList());
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                MetadataFilenameUtils.METADATA_PREFIX,
+                CompositeRemoteSegmentStoreDirectory.METADATA_FILES_TO_FETCH
+            )
+        ).thenReturn(Collections.emptyList());
 
         CompositeRemoteSegmentStoreDirectory dirWithPending = new CompositeRemoteSegmentStoreDirectory(
             compositeRemoteDirectory,
@@ -968,10 +1075,17 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         CompositeStoreDirectory storeDir = mock(CompositeStoreDirectory.class);
         FileMetadata fm = new FileMetadata("parquet", "_remove_parquet.parquet");
 
-        when(compositeRemoteDirectory.copyFrom(
-            eq(storeDir), any(FileMetadata.class), any(String.class),
-            any(IOContext.class), any(Runnable.class), any(ActionListener.class), eq(false)
-        )).thenAnswer(invocation -> {
+        when(
+            compositeRemoteDirectory.copyFrom(
+                eq(storeDir),
+                any(FileMetadata.class),
+                any(String.class),
+                any(IOContext.class),
+                any(Runnable.class),
+                any(ActionListener.class),
+                eq(false)
+            )
+        ).thenAnswer(invocation -> {
             Runnable postUploadRunner = invocation.getArgument(4);
             postUploadRunner.run();
             ActionListener<Void> listener = invocation.getArgument(5);
@@ -988,7 +1102,12 @@ public class CompositeRemoteSegmentStoreDirectoryTests extends OpenSearchTestCas
         assertTrue(directory.containsFile(fm, "88888"));
 
         UploadedSegmentMetadata metadata = new UploadedSegmentMetadata(
-            "_remove_parquet.parquet", "_remove_parquet.parquet__uuid", "88888", 500, "parquet");
+            "_remove_parquet.parquet",
+            "_remove_parquet.parquet__uuid",
+            "88888",
+            500,
+            "parquet"
+        );
         directory.removeFileFromSegmentsUploadedToRemoteStore(metadata);
 
         assertFalse(directory.containsFile(fm, "88888"));

@@ -15,7 +15,6 @@ import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
-import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.index.shard.ShardPath;
 
 import java.io.IOException;
@@ -139,4 +138,3 @@ public class SubdirectoryAwareDirectory extends FilterDirectory {
         }
     }
 }
-

@@ -31,11 +31,11 @@ import org.opensearch.index.engine.InternalEngineFactory;
 import org.opensearch.index.engine.NRTReplicationEngineFactory;
 import org.opensearch.index.remote.RemoteSegmentTransferTracker;
 import org.opensearch.index.remote.RemoteStoreStatsTrackerFactory;
+import org.opensearch.index.store.MetadataFilenameUtils;
 import org.opensearch.index.store.RemoteDirectory;
 import org.opensearch.index.store.RemoteSegmentStoreDirectory;
-import org.opensearch.index.store.MetadataFilenameUtils;
-import org.opensearch.index.store.UploadedSegmentMetadata;
 import org.opensearch.index.store.Store;
+import org.opensearch.index.store.UploadedSegmentMetadata;
 import org.opensearch.index.store.lockmanager.RemoteStoreLockManager;
 import org.opensearch.indices.DefaultRemoteStoreSettings;
 import org.opensearch.indices.RemoteStoreSettings;
@@ -866,8 +866,7 @@ public class RemoteStoreRefreshListenerTests extends IndexShardTestCase {
     }
 
     private void verifyUploadedSegments(RemoteSegmentStoreDirectory remoteSegmentStoreDirectory) throws IOException {
-        Map<String, UploadedSegmentMetadata> uploadedSegments = remoteSegmentStoreDirectory
-            .getSegmentsUploadedToRemoteStore();
+        Map<String, UploadedSegmentMetadata> uploadedSegments = remoteSegmentStoreDirectory.getSegmentsUploadedToRemoteStore();
         String segmentsNFilename = null;
         try (GatedCloseable<SegmentInfos> segmentInfosGatedCloseable = indexShard.getSegmentInfosSnapshot()) {
             SegmentInfos segmentInfos = segmentInfosGatedCloseable.get();

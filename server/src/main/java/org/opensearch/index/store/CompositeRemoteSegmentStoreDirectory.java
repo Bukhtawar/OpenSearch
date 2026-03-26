@@ -17,8 +17,8 @@ import org.apache.lucene.index.SegmentInfo;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.store.ByteBuffersDataOutput;
 import org.apache.lucene.store.ByteBuffersIndexOutput;
-import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.Version;
@@ -26,7 +26,6 @@ import org.opensearch.common.Nullable;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.common.annotation.InternalApi;
-import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.core.action.ActionListener;
@@ -43,20 +42,20 @@ import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadataHandlerFa
 import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 import org.opensearch.threadpool.ThreadPool;
 
-import java.nio.file.Path;
-import java.util.Locale;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -144,8 +143,9 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
         this.mdLockManager = mdLockManager;
         this.threadPool = threadPool;
         this.metadataFilePinnedTimestampMap = new HashMap<>();
-        this.pendingDownloadMergedSegments = pendingDownloadMergedSegments != null ?
-            new ConcurrentHashMap<>(pendingDownloadMergedSegments) : new ConcurrentHashMap<>();
+        this.pendingDownloadMergedSegments = pendingDownloadMergedSegments != null
+            ? new ConcurrentHashMap<>(pendingDownloadMergedSegments)
+            : new ConcurrentHashMap<>();
         init();
     }
 
@@ -164,8 +164,9 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
         this.mdLockManager = mdLockManager;
         this.threadPool = threadPool;
         this.metadataFilePinnedTimestampMap = new HashMap<>();
-        this.pendingDownloadMergedSegments = pendingDownloadMergedSegments != null ?
-            new ConcurrentHashMap<>(pendingDownloadMergedSegments) : new ConcurrentHashMap<>();
+        this.pendingDownloadMergedSegments = pendingDownloadMergedSegments != null
+            ? new ConcurrentHashMap<>(pendingDownloadMergedSegments)
+            : new ConcurrentHashMap<>();
         init();
     }
 
@@ -274,9 +275,11 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
     /**
      * Gets metadata files to filter active segments during stale cleanup
      */
-    Set<String> getMetadataFilesToFilterActiveSegments(int lastNMetadataFilesToKeep,
-                                                      List<String> sortedMetadataFiles,
-                                                      Set<String> lockedMetadataFiles) {
+    Set<String> getMetadataFilesToFilterActiveSegments(
+        int lastNMetadataFilesToKeep,
+        List<String> sortedMetadataFiles,
+        Set<String> lockedMetadataFiles
+    ) {
         final Set<String> metadataFilesToFilterActiveSegments = new HashSet<>();
         for (int idx = lastNMetadataFilesToKeep; idx < sortedMetadataFiles.size(); idx++) {
             if (!lockedMetadataFiles.contains(sortedMetadataFiles.get(idx))) {
@@ -313,7 +316,13 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
      * @param context  IOContext to be used to open IndexInput of file during remote upload
      * @param listener Listener to handle upload callback events
      */
-    public void copyFrom(CompositeStoreDirectory from, FileMetadata src, IOContext context, ActionListener<Void> listener, boolean lowPriorityUpload) {
+    public void copyFrom(
+        CompositeStoreDirectory from,
+        FileMetadata src,
+        IOContext context,
+        ActionListener<Void> listener,
+        boolean lowPriorityUpload
+    ) {
         try {
             final String remoteFileName = getNewRemoteSegmentFilename(src.file());
             boolean uploaded = false;
@@ -350,8 +359,15 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
         return Long.toString(from.getChecksumOfLocalFile(src));
     }
 
-    private void postUpload(CompositeStoreDirectory from, FileMetadata fileMetadata, String remoteFilename, String checksum) throws IOException {
-        org.opensearch.index.store.UploadedSegmentMetadata segmentMetadata = new org.opensearch.index.store.UploadedSegmentMetadata(fileMetadata.file(), remoteFilename, checksum, from.fileLength(fileMetadata), fileMetadata.dataFormat());
+    private void postUpload(CompositeStoreDirectory from, FileMetadata fileMetadata, String remoteFilename, String checksum)
+        throws IOException {
+        org.opensearch.index.store.UploadedSegmentMetadata segmentMetadata = new org.opensearch.index.store.UploadedSegmentMetadata(
+            fileMetadata.file(),
+            remoteFilename,
+            checksum,
+            from.fileLength(fileMetadata),
+            fileMetadata.dataFormat()
+        );
         segmentsUploadedToRemoteStore.put(fileMetadata, segmentMetadata);
     }
 
@@ -361,15 +377,24 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
      * Enhanced copyFrom method accepting FileMetadata for format-aware uploads.
      * Always uses CompositeRemoteDirectory - no null checks needed.
      */
-    public void copyFrom(FileMetadata fileMetadata, CompositeStoreDirectory from,
-                        IOContext context, ActionListener<Void> listener, boolean lowPriorityUpload) {
+    public void copyFrom(
+        FileMetadata fileMetadata,
+        CompositeStoreDirectory from,
+        IOContext context,
+        ActionListener<Void> listener,
+        boolean lowPriorityUpload
+    ) {
 
         String fileName = fileMetadata.file();
         String localName = Path.of(fileName).getFileName().toString();
         String remoteFileName = getNewRemoteSegmentFilename(localName);
 
-        logger.debug("FileMetadata-based upload initiated: file={}, format={}, remoteFileName={}",
-                    fileName, fileMetadata.dataFormat(), remoteFileName);
+        logger.debug(
+            "FileMetadata-based upload initiated: file={}, format={}, remoteFileName={}",
+            fileName,
+            fileMetadata.dataFormat(),
+            remoteFileName
+        );
 
         try {
             // Create postUploadRunner for cache updates using CompositeStoreDirectory FileMetadata methods
@@ -379,33 +404,62 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
                     long fileLength = from.fileLength(fileMetadata);
 
                     org.opensearch.index.store.UploadedSegmentMetadata metadata = new org.opensearch.index.store.UploadedSegmentMetadata(
-                        fileName, remoteFileName, checksum, fileLength, fileMetadata.dataFormat());
+                        fileName,
+                        remoteFileName,
+                        checksum,
+                        fileLength,
+                        fileMetadata.dataFormat()
+                    );
                     segmentsUploadedToRemoteStore.put(fileMetadata, metadata);
 
-                    logger.debug("Cache updated after upload: file={}, format={}, checksum={}, length={}",
-                                fileName, fileMetadata.dataFormat(), checksum, fileLength);
+                    logger.debug(
+                        "Cache updated after upload: file={}, format={}, checksum={}, length={}",
+                        fileName,
+                        fileMetadata.dataFormat(),
+                        checksum,
+                        fileLength
+                    );
                 } catch (IOException e) {
-                    logger.error("Post-upload cache update failed: file={}, format={}, error={}",
-                                fileName, fileMetadata.dataFormat(), e.getMessage(), e);
+                    logger.error(
+                        "Post-upload cache update failed: file={}, format={}, error={}",
+                        fileName,
+                        fileMetadata.dataFormat(),
+                        e.getMessage(),
+                        e
+                    );
                     throw new RuntimeException("Post-upload processing failed", e);
                 }
             };
 
             // Call CompositeRemoteDirectory - always available, no null checks
             boolean uploaded = compositeRemoteDirectory.copyFrom(
-                from, fileMetadata, remoteFileName, context, postUploadRunner, listener, lowPriorityUpload);
+                from,
+                fileMetadata,
+                remoteFileName,
+                context,
+                postUploadRunner,
+                listener,
+                lowPriorityUpload
+            );
 
             if (!uploaded) {
-                logger.warn("Upload not supported by BlobContainer for file={}, format={}",
-                           fileName, fileMetadata.dataFormat());
+                logger.warn("Upload not supported by BlobContainer for file={}, format={}", fileName, fileMetadata.dataFormat());
                 copyFrom(from, fileMetadata, remoteFileName, context);
                 listener.onResponse(null);
             }
         } catch (Exception e) {
-            logger.error("FileMetadata-based upload failed: file={}, format={}, error={}",
-                        fileName, fileMetadata.dataFormat(), e.getMessage(), e);
-            listener.onFailure(new SegmentUploadFailedException(
-                String.format(Locale.ROOT, "Failed to upload file %s with format %s", fileName, fileMetadata.dataFormat())));
+            logger.error(
+                "FileMetadata-based upload failed: file={}, format={}, error={}",
+                fileName,
+                fileMetadata.dataFormat(),
+                e.getMessage(),
+                e
+            );
+            listener.onFailure(
+                new SegmentUploadFailedException(
+                    String.format(Locale.ROOT, "Failed to upload file %s with format %s", fileName, fileMetadata.dataFormat())
+                )
+            );
         }
     }
 
@@ -451,7 +505,8 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
     @Deprecated
     public void copyFrom(Directory from, String src, String dest, IOContext context) throws IOException {
         throw new UnsupportedOperationException(
-            "Synchronous copyFrom is deprecated. Use copyFrom(FileMetadata, CompositeStoreDirectory, ...) instead");
+            "Synchronous copyFrom is deprecated. Use copyFrom(FileMetadata, CompositeStoreDirectory, ...) instead"
+        );
     }
 
     public boolean containsFile(String localFilename, String checksum) {
@@ -483,16 +538,21 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
     }
 
     public Map<String, org.opensearch.index.store.UploadedSegmentMetadata> getSegmentsUploadedToRemoteStore() {
-        return Collections.unmodifiableMap(this.segmentsUploadedToRemoteStore).entrySet().stream().collect(
-            Collectors.toMap(
-                entry -> entry.getKey().serialize(),
-                Map.Entry::getValue
-            )
-        );
+        return Collections.unmodifiableMap(this.segmentsUploadedToRemoteStore)
+            .entrySet()
+            .stream()
+            .collect(Collectors.toMap(entry -> entry.getKey().serialize(), Map.Entry::getValue));
     }
 
     @Override
-    public void uploadMetadata(Collection<String> segmentFiles, CatalogSnapshot catalogSnapshot, Directory storeDirectory, long translogGeneration, ReplicationCheckpoint replicationCheckpoint, String nodeId) throws IOException {
+    public void uploadMetadata(
+        Collection<String> segmentFiles,
+        CatalogSnapshot catalogSnapshot,
+        Directory storeDirectory,
+        long translogGeneration,
+        ReplicationCheckpoint replicationCheckpoint,
+        String nodeId
+    ) throws IOException {
         if (!(storeDirectory instanceof CompositeStoreDirectory)) {
             throw new IllegalArgumentException("storeDirectory must be a CompositeStoreDirectory");
         }
@@ -506,17 +566,23 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
         );
     }
 
-    private void uploadMetadataInternal(Collection<FileMetadata> fileMetadataCollection,
-                               CatalogSnapshot catalogSnapshot,
-                               CompositeStoreDirectory storeDirectory,
-                               long translogGeneration,
-                               ReplicationCheckpoint replicationCheckpoint,
-                               String nodeId) throws IOException {
+    private void uploadMetadataInternal(
+        Collection<FileMetadata> fileMetadataCollection,
+        CatalogSnapshot catalogSnapshot,
+        CompositeStoreDirectory storeDirectory,
+        long translogGeneration,
+        ReplicationCheckpoint replicationCheckpoint,
+        String nodeId
+    ) throws IOException {
         synchronized (this) {
             String metadataFilename = MetadataFilenameUtils.getMetadataFilename(
-                replicationCheckpoint.getPrimaryTerm(), catalogSnapshot.getGeneration(),
-                translogGeneration, metadataUploadCounter.incrementAndGet(),
-                RemoteSegmentMetadata.CURRENT_VERSION, nodeId);
+                replicationCheckpoint.getPrimaryTerm(),
+                catalogSnapshot.getGeneration(),
+                translogGeneration,
+                metadataUploadCounter.incrementAndGet(),
+                RemoteSegmentMetadata.CURRENT_VERSION,
+                nodeId
+            );
 
             // Use "metadata" format instead of "TempMetadata" - temp metadata files use the same directory as metadata files
             FileMetadata fileMetadata = new FileMetadata("metadata", metadataFilename);
@@ -533,7 +599,7 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
                             org.opensearch.index.store.UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(file);
                             if (segmentToLuceneVersion.get(metadata.getOriginalFilename()) == null) {
                                 // Todo
-                                 // metadata.setWrittenByMajor(10);
+                                // metadata.setWrittenByMajor(10);
                             } else {
                                 metadata.setWrittenByMajor(segmentToLuceneVersion.get(metadata.getOriginalFilename()));
                             }
@@ -554,9 +620,14 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
                     );
                     byte[] segmentInfoSnapshotByteArray = byteBuffersIndexOutput.toArrayCopy();
 
-                    metadataStreamWrapper.writeStream(indexOutput, new RemoteSegmentMetadata(
-                        RemoteSegmentMetadata.fromMapOfFileMetadata(uploadedSegments),
-                        segmentInfoSnapshotByteArray, replicationCheckpoint));
+                    metadataStreamWrapper.writeStream(
+                        indexOutput,
+                        new RemoteSegmentMetadata(
+                            RemoteSegmentMetadata.fromMapOfFileMetadata(uploadedSegments),
+                            segmentInfoSnapshotByteArray,
+                            replicationCheckpoint
+                        )
+                    );
                 }
 
                 storeDirectory.sync(Collections.singleton(fileMetadata.serialize()));
@@ -612,7 +683,9 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
 
     public void close() throws IOException {
         deleteStaleSegmentsAsync(0, ActionListener.wrap(r -> {
-            try { deleteIfEmpty(); } catch (IOException ex) {
+            try {
+                deleteIfEmpty();
+            } catch (IOException ex) {
                 logger.error("Failed to delete empty directory on close", ex);
             }
         }, e -> logger.error("Failed to cleanup remote directory", e)));
@@ -620,14 +693,15 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
 
     private boolean deleteIfEmpty() throws IOException {
         Collection<String> metadataFiles = remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX, 1);
+            MetadataFilenameUtils.METADATA_PREFIX,
+            1
+        );
         if (metadataFiles.size() != 0) {
             logger.info("Remote directory still has files, not deleting the path");
             return false;
         }
         return delete();
     }
-
 
     @Override
     public void acquireLock(long primaryTerm, long generation, String acquirerId) throws IOException {
@@ -649,14 +723,24 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
 
     String getMetadataFileForCommit(long primaryTerm, long generation) throws IOException {
         List<String> metadataFiles = remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation), 1);
+            MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
+            1
+        );
 
         if (metadataFiles.isEmpty()) {
-            throw new NoSuchFileException("Metadata file is not present for given primary term " + primaryTerm + " and generation " + generation);
+            throw new NoSuchFileException(
+                "Metadata file is not present for given primary term " + primaryTerm + " and generation " + generation
+            );
         }
         if (metadataFiles.size() != 1) {
-            throw new IllegalStateException("there should be only one metadata file for given primary term " + primaryTerm +
-                "and generation " + generation + " but found " + metadataFiles.size());
+            throw new IllegalStateException(
+                "there should be only one metadata file for given primary term "
+                    + primaryTerm
+                    + "and generation "
+                    + generation
+                    + " but found "
+                    + metadataFiles.size()
+            );
         }
         return metadataFiles.get(0);
     }

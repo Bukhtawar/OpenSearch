@@ -15,34 +15,33 @@ import org.apache.lucene.store.IndexOutput;
 import org.opensearch.common.annotation.InternalApi;
 import org.opensearch.common.blobstore.AsyncMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.BlobContainer;
+import org.opensearch.common.blobstore.BlobMetadata;
 import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.BlobStore;
-import org.opensearch.common.blobstore.BlobMetadata;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
+import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.index.engine.MergedSegmentWarmer;
-import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.CompositeStoreDirectory;
-import org.opensearch.index.store.UploadedSegmentMetadata;
-import org.opensearch.index.store.RemoteIndexOutput;
-import org.opensearch.index.store.RemoteIndexInput;
+import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.RemoteDirectory;
+import org.opensearch.index.store.RemoteIndexInput;
+import org.opensearch.index.store.RemoteIndexOutput;
+import org.opensearch.index.store.UploadedSegmentMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadataHandlerFactory;
-import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.plugins.PluginsService;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Locale;
 import java.nio.file.NoSuchFileException;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
-
 
 /**
  * CompositeRemoteDirectory with direct BlobContainer access per format.
@@ -103,12 +102,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
             lowPriorityUploadRateLimiter,
             downloadRateLimiter,
             lowPriorityDownloadRateLimiter,
-            pendingDownloadMergedSegments.entrySet().stream().collect(
-                Collectors.toMap(
-                    e -> e.getKey().serialize(),
-                    Map.Entry::getValue
-                )
-            )
+            pendingDownloadMergedSegments.entrySet().stream().collect(Collectors.toMap(e -> e.getKey().serialize(), Map.Entry::getValue))
         );
         this.formatBlobContainers = new ConcurrentHashMap<>();
         this.blobStore = blobStore;
@@ -119,10 +113,9 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         this.pendingDownloadMergedSegments = pendingDownloadMergedSegments;
         this.logger = logger;
 
-        //TODO: need to initialize blobstores
+        // TODO: need to initialize blobstores
 
-        logger.debug("Created CompositeRemoteDirectory with {} format BlobContainers",
-            formatBlobContainers.size());
+        logger.debug("Created CompositeRemoteDirectory with {} format BlobContainers", formatBlobContainers.size());
     }
 
     /**
@@ -144,11 +137,9 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         });
     }
 
-    public void copyFrom(CompositeStoreDirectory from, FileMetadata src, String dest, IOContext context)
-        throws IOException {
+    public void copyFrom(CompositeStoreDirectory from, FileMetadata src, String dest, IOContext context) throws IOException {
         boolean success = false;
-        try (IndexInput is = from.openInput(src, IOContext.READONCE);
-             IndexOutput os = createOutput(dest, src.dataFormat(), context)) {
+        try (IndexInput is = from.openInput(src, IOContext.READONCE); IndexOutput os = createOutput(dest, src.dataFormat(), context)) {
             os.copyBytes(is, is.length());
             success = true;
         } finally {
@@ -175,8 +166,12 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
             BlobContainer blobContainer = getBlobContainerForFormat(fileMetadata.dataFormat());
 
             if (blobContainer instanceof AsyncMultiStreamBlobContainer) {
-                logger.debug("Starting format-aware upload: file={}, format={}, container={}",
-                           fileName, fileMetadata.dataFormat(), blobContainer.path());
+                logger.debug(
+                    "Starting format-aware upload: file={}, format={}, container={}",
+                    fileName,
+                    fileMetadata.dataFormat(),
+                    blobContainer.path()
+                );
                 uploadBlob(from, fileMetadata, remoteFileName, context, postUploadRunner, listener, lowPriorityUpload);
                 return true;
             }
@@ -200,7 +195,17 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         ActionListener<Void> listener,
         boolean lowPriorityUpload
     ) throws Exception {
-        uploadBlob(from, src.file(), remoteFileName, ioContext, postUploadRunner, listener, lowPriorityUpload, null, getBlobContainer(src.dataFormat()));
+        uploadBlob(
+            from,
+            src.file(),
+            remoteFileName,
+            ioContext,
+            postUploadRunner,
+            listener,
+            lowPriorityUpload,
+            null,
+            getBlobContainer(src.dataFormat())
+        );
     }
 
     private BlobContainer getBlobContainer(String df) {
@@ -212,7 +217,10 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
     }
 
     public void deleteFile(UploadedSegmentMetadata uploadedSegmentMetadata) throws IOException {
-        FileMetadata fileMetadata = new FileMetadata(uploadedSegmentMetadata.getDataFormat(), uploadedSegmentMetadata.getUploadedFilename());
+        FileMetadata fileMetadata = new FileMetadata(
+            uploadedSegmentMetadata.getDataFormat(),
+            uploadedSegmentMetadata.getUploadedFilename()
+        );
         BlobContainer blobContainer = getBlobContainer(fileMetadata.dataFormat());
         blobContainer.deleteBlobsIgnoringIfNotExists(Collections.singletonList(fileMetadata.file()));
     }
@@ -230,13 +238,21 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
 
         if (blobContainer == null) {
             throw new NoSuchFileException(
-                String.format(Locale.ROOT, "File %s not found in any containers for format %s", fileMetadata.file(), fileMetadata.dataFormat())
+                String.format(
+                    Locale.ROOT,
+                    "File %s not found in any containers for format %s",
+                    fileMetadata.file(),
+                    fileMetadata.dataFormat()
+                )
             );
         }
 
         try {
             List<BlobMetadata> metadata = blobContainer.listBlobsByPrefixInSortedOrder(
-                fileMetadata.file(), 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC);
+                fileMetadata.file(),
+                1,
+                BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC
+            );
 
             if (metadata.size() == 1 && metadata.get(0).name().equals(fileMetadata.file())) {
                 return metadata.get(0).length();
@@ -249,7 +265,8 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
             throw e;
         } catch (IOException e) {
             throw new IOException(
-                String.format(Locale.ROOT, "Error getting length for file %s in format %s", fileMetadata.file(), fileMetadata.dataFormat()), e
+                String.format(Locale.ROOT, "Error getting length for file %s in format %s", fileMetadata.file(), fileMetadata.dataFormat()),
+                e
             );
         }
     }
@@ -264,19 +281,14 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         try {
             BlobContainer blobContainer = formatBlobContainers.get(df);
 
-            if (blobContainer!=null) {
+            if (blobContainer != null) {
                 logger.debug("File {} already exists, using existing container", remoteFileName);
                 return new RemoteIndexOutput(remoteFileName, blobContainer);
             }
 
-            throw new IOException(
-                String.format(Locale.ROOT, "Failed to create output for file %s in format %s", remoteFileName, df)
-            );
+            throw new IOException(String.format(Locale.ROOT, "Failed to create output for file %s in format %s", remoteFileName, df));
         } catch (Exception e) {
-            throw new IOException(
-                String.format(Locale.ROOT, "Failed to create output for file %s in format %s", remoteFileName, df),
-                e
-            );
+            throw new IOException(String.format(Locale.ROOT, "Failed to create output for file %s in format %s", remoteFileName, df), e);
         }
     }
 
@@ -291,8 +303,15 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         InputStream inputStream = null;
         try {
             BlobContainer blobContainer = getBlobContainer(fileMetadata.dataFormat());
-            if (blobContainer==null) {
-                throw new IOException(String.format(Locale.ROOT, "Failed to find blobContainer for file %s in format %s", fileMetadata.file(), fileMetadata.dataFormat()));
+            if (blobContainer == null) {
+                throw new IOException(
+                    String.format(
+                        Locale.ROOT,
+                        "Failed to find blobContainer for file %s in format %s",
+                        fileMetadata.file(),
+                        fileMetadata.dataFormat()
+                    )
+                );
             }
 
             inputStream = blobContainer.readBlob(fileMetadata.file());
@@ -328,10 +347,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
 
     @Override
     public String toString() {
-        return "CompositeRemoteDirectory{" +
-               "formats=" + formatBlobContainers.keySet() +
-               ", basePath=" + baseBlobPath +
-               '}';
+        return "CompositeRemoteDirectory{" + "formats=" + formatBlobContainers.keySet() + ", basePath=" + baseBlobPath + '}';
     }
 
     private boolean isMergedSegment(String remoteFilename) {

@@ -378,10 +378,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
         FileMetadata src = new FileMetadata("parquet", "data.parquet");
         FileMetadata dest = new FileMetadata("arrow", "data.arrow");
 
-        IllegalArgumentException ex = expectThrows(
-            IllegalArgumentException.class,
-            () -> compositeStoreDirectory.rename(src, dest)
-        );
+        IllegalArgumentException ex = expectThrows(IllegalArgumentException.class, () -> compositeStoreDirectory.rename(src, dest));
         assertTrue(ex.getMessage().contains("Cannot rename across formats"));
     }
 
@@ -622,16 +619,12 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
     // ═══════════════════════════════════════════════════════════════
 
     public void testDeleteFile_nonExistent_throws() {
-        expectThrows(IOException.class, () ->
-            compositeStoreDirectory.deleteFile("_nonexistent.si")
-        );
+        expectThrows(IOException.class, () -> compositeStoreDirectory.deleteFile("_nonexistent.si"));
     }
 
     public void testDeleteFile_fileMetadata_nonExistent_throws() {
         FileMetadata fm = new FileMetadata("parquet", "nonexistent.parquet");
-        expectThrows(IOException.class, () ->
-            compositeStoreDirectory.deleteFile(fm)
-        );
+        expectThrows(IOException.class, () -> compositeStoreDirectory.deleteFile(fm));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -789,10 +782,8 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
         try (IndexOutput out = compositeStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
             out.writeString("parquet data");
         }
-        assertTrue("Parquet file should be in parquet subdir",
-            Files.exists(shardDataPath.resolve("parquet").resolve("_0_1.parquet")));
-        assertFalse("Parquet file should NOT be in index dir",
-            Files.exists(indexPath.resolve("_0_1.parquet")));
+        assertTrue("Parquet file should be in parquet subdir", Files.exists(shardDataPath.resolve("parquet").resolve("_0_1.parquet")));
+        assertFalse("Parquet file should NOT be in index dir", Files.exists(indexPath.resolve("_0_1.parquet")));
     }
 
     public void testPathMapping_parquetFile_fromIdentifier() {
@@ -811,10 +802,8 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
         try (IndexOutput out = compositeStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
             out.writeString("arrow data");
         }
-        assertTrue("Arrow file should be in arrow subdir",
-            Files.exists(shardDataPath.resolve("arrow").resolve("data.arrow")));
-        assertFalse("Arrow file should NOT be in index dir",
-            Files.exists(indexPath.resolve("data.arrow")));
+        assertTrue("Arrow file should be in arrow subdir", Files.exists(shardDataPath.resolve("arrow").resolve("data.arrow")));
+        assertFalse("Arrow file should NOT be in index dir", Files.exists(indexPath.resolve("data.arrow")));
     }
 
     // --- Custom format: "custom/" prefix, stored in <shard>/custom/ ---
@@ -827,8 +816,7 @@ public class CompositeStoreDirectoryTests extends OpenSearchTestCase {
         try (IndexOutput out = compositeStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
             out.writeString("custom data");
         }
-        assertTrue("Custom file should be in custom subdir",
-            Files.exists(shardDataPath.resolve("custom").resolve("myfile.dat")));
+        assertTrue("Custom file should be in custom subdir", Files.exists(shardDataPath.resolve("custom").resolve("myfile.dat")));
     }
 
     // --- resolveFileName: serialized FileMetadata (with :::) → "/" identifier ---

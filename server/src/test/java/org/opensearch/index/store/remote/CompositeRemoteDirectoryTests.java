@@ -12,7 +12,6 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.store.IndexOutput;
 import org.opensearch.common.blobstore.AsyncMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.BlobMetadata;
@@ -20,8 +19,8 @@ import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.BlobStore;
 import org.opensearch.common.blobstore.support.PlainBlobMetadata;
 import org.opensearch.core.action.ActionListener;
-import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.CompositeStoreDirectory;
+import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.RemoteIndexOutput;
 import org.opensearch.index.store.UploadedSegmentMetadata;
 import org.opensearch.test.OpenSearchTestCase;
@@ -33,15 +32,12 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.NoSuchFileException;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.UnaryOperator;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -133,8 +129,13 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         ActionListener<Void> listener = mock(ActionListener.class);
 
         boolean result = compositeRemoteDirectory.copyFrom(
-            storeDirectory, fileMetadata, "_0.si__uuid", IOContext.DEFAULT,
-            () -> {}, listener, false
+            storeDirectory,
+            fileMetadata,
+            "_0.si__uuid",
+            IOContext.DEFAULT,
+            () -> {},
+            listener,
+            false
         );
 
         assertTrue("Should return true when container is AsyncMultiStreamBlobContainer", result);
@@ -151,8 +152,13 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         ActionListener<Void> listener = mock(ActionListener.class);
 
         boolean result = compositeRemoteDirectory.copyFrom(
-            storeDirectory, fileMetadata, "data.parquet__uuid", IOContext.DEFAULT,
-            () -> {}, listener, false
+            storeDirectory,
+            fileMetadata,
+            "data.parquet__uuid",
+            IOContext.DEFAULT,
+            () -> {},
+            listener,
+            false
         );
 
         assertFalse("Should return false when container is not AsyncMultiStreamBlobContainer", result);
@@ -167,8 +173,9 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         when(blobStore.blobContainer(baseBlobPath.add("lucene"))).thenReturn(container);
 
         BlobMetadata blobMetadata = new PlainBlobMetadata("_0.si", 1024);
-        when(container.listBlobsByPrefixInSortedOrder("_0.si", 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC))
-            .thenReturn(List.of(blobMetadata));
+        when(container.listBlobsByPrefixInSortedOrder("_0.si", 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC)).thenReturn(
+            List.of(blobMetadata)
+        );
 
         compositeRemoteDirectory.getBlobContainerForFormat("lucene");
 
@@ -186,8 +193,9 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
     public void testFileLength_fileNotFound_throws() throws IOException {
         BlobContainer container = mock(BlobContainer.class);
         when(blobStore.blobContainer(baseBlobPath.add("lucene"))).thenReturn(container);
-        when(container.listBlobsByPrefixInSortedOrder("_missing.si", 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC))
-            .thenReturn(Collections.emptyList());
+        when(container.listBlobsByPrefixInSortedOrder("_missing.si", 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC)).thenReturn(
+            Collections.emptyList()
+        );
 
         compositeRemoteDirectory.getBlobContainerForFormat("lucene");
 
@@ -211,18 +219,15 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
 
     public void testCreateOutput_containerMissing_throws() {
         // Don't register format "unknown"
-        expectThrows(IOException.class, () ->
-            compositeRemoteDirectory.createOutput("remote_file.dat", "unknown", IOContext.DEFAULT));
+        expectThrows(IOException.class, () -> compositeRemoteDirectory.createOutput("remote_file.dat", "unknown", IOContext.DEFAULT));
     }
 
     public void testCreateOutput_nullFilename_throws() {
-        expectThrows(IllegalArgumentException.class, () ->
-            compositeRemoteDirectory.createOutput(null, "lucene", IOContext.DEFAULT));
+        expectThrows(IllegalArgumentException.class, () -> compositeRemoteDirectory.createOutput(null, "lucene", IOContext.DEFAULT));
     }
 
     public void testCreateOutput_emptyFilename_throws() {
-        expectThrows(IllegalArgumentException.class, () ->
-            compositeRemoteDirectory.createOutput("", "lucene", IOContext.DEFAULT));
+        expectThrows(IllegalArgumentException.class, () -> compositeRemoteDirectory.createOutput("", "lucene", IOContext.DEFAULT));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -252,14 +257,12 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
 
     public void testOpenInput_nullFile_throws() {
         FileMetadata fm = new FileMetadata("lucene", null);
-        expectThrows(IllegalArgumentException.class, () ->
-            compositeRemoteDirectory.openInput(fm, 100, IOContext.DEFAULT));
+        expectThrows(IllegalArgumentException.class, () -> compositeRemoteDirectory.openInput(fm, 100, IOContext.DEFAULT));
     }
 
     public void testOpenInput_emptyFile_throws() {
         FileMetadata fm = new FileMetadata("lucene", "");
-        expectThrows(IllegalArgumentException.class, () ->
-            compositeRemoteDirectory.openInput(fm, 100, IOContext.DEFAULT));
+        expectThrows(IllegalArgumentException.class, () -> compositeRemoteDirectory.openInput(fm, 100, IOContext.DEFAULT));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -357,10 +360,15 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         pendingSegments.put(fm, "_1.si__uuid");
 
         CompositeRemoteDirectory dir = new CompositeRemoteDirectory(
-            blobStore, baseBlobPath,
-            UnaryOperator.identity(), UnaryOperator.identity(),
-            UnaryOperator.identity(), UnaryOperator.identity(),
-            pendingSegments, logger, null
+            blobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            pendingSegments,
+            logger,
+            null
         );
 
         assertTrue(dir.pendingDownloadMergedSegments.containsKey(fm));
@@ -373,10 +381,15 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
 
     public void testConstructor_emptyPendingSegments() {
         CompositeRemoteDirectory dir = new CompositeRemoteDirectory(
-            blobStore, baseBlobPath,
-            UnaryOperator.identity(), UnaryOperator.identity(),
-            UnaryOperator.identity(), UnaryOperator.identity(),
-            new ConcurrentHashMap<>(), logger, null
+            blobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new ConcurrentHashMap<>(),
+            logger,
+            null
         );
         assertNotNull(dir);
         assertTrue(dir.pendingDownloadMergedSegments.isEmpty());
@@ -388,10 +401,15 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         pendingSegments.put(new FileMetadata("parquet", "_1.parquet"), "_1.parquet__uuid2");
 
         CompositeRemoteDirectory dir = new CompositeRemoteDirectory(
-            blobStore, baseBlobPath,
-            UnaryOperator.identity(), UnaryOperator.identity(),
-            UnaryOperator.identity(), UnaryOperator.identity(),
-            pendingSegments, logger, null
+            blobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            pendingSegments,
+            logger,
+            null
         );
 
         assertEquals(2, dir.pendingDownloadMergedSegments.size());
@@ -431,8 +449,9 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
 
         // Return metadata with a different name than requested
         BlobMetadata wrongBlob = new PlainBlobMetadata("_different.si", 512);
-        when(container.listBlobsByPrefixInSortedOrder("_0.si", 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC))
-            .thenReturn(List.of(wrongBlob));
+        when(container.listBlobsByPrefixInSortedOrder("_0.si", 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC)).thenReturn(
+            List.of(wrongBlob)
+        );
 
         compositeRemoteDirectory.getBlobContainerForFormat("lucene");
 
@@ -444,8 +463,9 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobContainer container = mock(BlobContainer.class);
         when(blobStore.blobContainer(baseBlobPath.add("lucene"))).thenReturn(container);
 
-        when(container.listBlobsByPrefixInSortedOrder("_0.si", 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC))
-            .thenThrow(new IOException("Network error"));
+        when(container.listBlobsByPrefixInSortedOrder("_0.si", 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC)).thenThrow(
+            new IOException("Network error")
+        );
 
         compositeRemoteDirectory.getBlobContainerForFormat("lucene");
 
@@ -459,8 +479,9 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         when(blobStore.blobContainer(baseBlobPath.add("parquet"))).thenReturn(container);
 
         BlobMetadata blobMetadata = new PlainBlobMetadata("data.parquet", 2048);
-        when(container.listBlobsByPrefixInSortedOrder("data.parquet", 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC))
-            .thenReturn(List.of(blobMetadata));
+        when(container.listBlobsByPrefixInSortedOrder("data.parquet", 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC)).thenReturn(
+            List.of(blobMetadata)
+        );
 
         compositeRemoteDirectory.getBlobContainerForFormat("parquet");
 
@@ -495,7 +516,15 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         ActionListener<Void> listener = mock(ActionListener.class);
 
         // Non-async container should return false, not call onFailure
-        boolean result = compositeRemoteDirectory.copyFrom(storeDirectory, fm, "_fail.si__uuid", IOContext.DEFAULT, () -> {}, listener, false);
+        boolean result = compositeRemoteDirectory.copyFrom(
+            storeDirectory,
+            fm,
+            "_fail.si__uuid",
+            IOContext.DEFAULT,
+            () -> {},
+            listener,
+            false
+        );
         assertFalse("Non-async container should return false", result);
         verify(listener, never()).onFailure(any());
     }
@@ -622,8 +651,9 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         // openInput throws to simulate failure
         when(storeDirectory.openInput(src, IOContext.READONCE)).thenThrow(new IOException("read failed"));
 
-        expectThrows(IOException.class, () ->
-            compositeRemoteDirectory.copyFrom(storeDirectory, src, "_fail_copy.si__uuid", IOContext.DEFAULT)
+        expectThrows(
+            IOException.class,
+            () -> compositeRemoteDirectory.copyFrom(storeDirectory, src, "_fail_copy.si__uuid", IOContext.DEFAULT)
         );
 
         // On failure, the source file should be deleted
@@ -702,10 +732,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         ActionListener<Void> listener = mock(ActionListener.class);
 
         // Test with lowPriorityUpload = true
-        boolean result = compositeRemoteDirectory.copyFrom(
-            storeDirectory, fm, "_0.si__uuid", IOContext.DEFAULT,
-            () -> {}, listener, true
-        );
+        boolean result = compositeRemoteDirectory.copyFrom(storeDirectory, fm, "_0.si__uuid", IOContext.DEFAULT, () -> {}, listener, true);
 
         assertTrue("Low priority upload should also return true for async container", result);
     }

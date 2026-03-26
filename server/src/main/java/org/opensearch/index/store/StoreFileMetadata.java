@@ -168,7 +168,17 @@ public class StoreFileMetadata implements Writeable {
 
     @Override
     public String toString() {
-        return "name [" + name + "], length [" + length + "], checksum [" + checksum + "], writtenBy [" + writtenBy + "], dataFormat [" + dataFormat + "]";
+        return "name ["
+            + name
+            + "], length ["
+            + length
+            + "], checksum ["
+            + checksum
+            + "], writtenBy ["
+            + writtenBy
+            + "], dataFormat ["
+            + dataFormat
+            + "]";
     }
 
     /**

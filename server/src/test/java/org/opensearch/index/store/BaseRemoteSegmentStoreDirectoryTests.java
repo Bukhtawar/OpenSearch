@@ -46,14 +46,7 @@ public class BaseRemoteSegmentStoreDirectoryTests extends IndexShardTestCase {
 
     protected String metadataFilename = MetadataFilenameUtils.getMetadataFilename(12, 23, 34, 1, 1, "node-1");
 
-    protected String metadataFilenameDup = MetadataFilenameUtils.getMetadataFilename(
-        12,
-        23,
-        34,
-        2,
-        1,
-        "node-2"
-    );
+    protected String metadataFilenameDup = MetadataFilenameUtils.getMetadataFilename(12, 23, 34, 2, 1, "node-2");
     protected String metadataFilename2 = MetadataFilenameUtils.getMetadataFilename(12, 13, 34, 1, 1, "node-1");
     protected String metadataFilename3 = MetadataFilenameUtils.getMetadataFilename(10, 38, 34, 1, 1, "node-1");
     protected String metadataFilename4 = MetadataFilenameUtils.getMetadataFilename(10, 36, 34, 1, 1, "node-1");
@@ -96,18 +89,10 @@ public class BaseRemoteSegmentStoreDirectoryTests extends IndexShardTestCase {
         metadataFiles.add(metadataFilename2);
         metadataFiles.add(metadataFilename3);
 
-        when(
-            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-                MetadataFilenameUtils.METADATA_PREFIX,
-                METADATA_FILES_TO_FETCH
-            )
-        ).thenReturn(List.of(metadataFilename));
-        when(
-            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-                MetadataFilenameUtils.METADATA_PREFIX,
-                Integer.MAX_VALUE
-            )
-        ).thenReturn(metadataFiles);
+        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(MetadataFilenameUtils.METADATA_PREFIX, METADATA_FILES_TO_FETCH))
+            .thenReturn(List.of(metadataFilename));
+        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(MetadataFilenameUtils.METADATA_PREFIX, Integer.MAX_VALUE))
+            .thenReturn(metadataFiles);
 
         Map<String, Map<String, String>> metadataFilenameContentMapping = Map.of(
             metadataFilename,
