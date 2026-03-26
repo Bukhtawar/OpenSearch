@@ -91,6 +91,11 @@ public class CompositeStoreDirectory extends Store.StoreDirectory {
         logger.debug("Created CompositeStoreDirectory for shard {}", shardPath.getShardId());
     }
 
+    @Override
+    public void close() {
+        // No-op: lifecycle is managed by Store.closeInternal() via IOUtils.close()
+    }
+
     private String resolveFileName(String fileName) {
         if (fileName.contains(FileMetadata.DELIMITER)) {
             FileMetadata fm = new FileMetadata(fileName);

@@ -24,6 +24,7 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.Version;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.UUIDs;
+import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.common.annotation.InternalApi;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
@@ -69,7 +70,7 @@ import static org.opensearch.index.engine.exec.CatalogSnapshot.CATALOG_SNAPSHOT_
  *
  * @opensearch.api
  */
-@PublicApi(since = "2.3.0")
+@ExperimentalApi
 public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentStoreDirectory {
 
     /**
@@ -98,7 +99,7 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
      * This map acts as a cache layer for uploaded segment filenames which helps avoid calling listAll() each time.
      * It is important to initialize this map on creation of CompositeRemoteSegmentStoreDirectory and update it on each upload and delete.
      */
-    private Map<FileMetadata, UploadedSegmentMetadata> segmentsUploadedToRemoteStore;
+    private Map<FileMetadata, org.opensearch.index.store.UploadedSegmentMetadata> segmentsUploadedToRemoteStore;
 
     private static final VersionedCodecStreamWrapper<RemoteSegmentMetadata> metadataStreamWrapper = new VersionedCodecStreamWrapper<>(
         new RemoteSegmentMetadataHandlerFactory(),
@@ -350,7 +351,7 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
     }
 
     private void postUpload(CompositeStoreDirectory from, FileMetadata fileMetadata, String remoteFilename, String checksum) throws IOException {
-        UploadedSegmentMetadata segmentMetadata = new UploadedSegmentMetadata(fileMetadata.file(), remoteFilename, checksum, from.fileLength(fileMetadata), fileMetadata.dataFormat());
+        org.opensearch.index.store.UploadedSegmentMetadata segmentMetadata = new org.opensearch.index.store.UploadedSegmentMetadata(fileMetadata.file(), remoteFilename, checksum, from.fileLength(fileMetadata), fileMetadata.dataFormat());
         segmentsUploadedToRemoteStore.put(fileMetadata, segmentMetadata);
     }
 
@@ -377,7 +378,7 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
                     String checksum = from.calculateUploadChecksum(fileMetadata);
                     long fileLength = from.fileLength(fileMetadata);
 
-                    UploadedSegmentMetadata metadata = new UploadedSegmentMetadata(
+                    org.opensearch.index.store.UploadedSegmentMetadata metadata = new org.opensearch.index.store.UploadedSegmentMetadata(
                         fileName, remoteFileName, checksum, fileLength, fileMetadata.dataFormat());
                     segmentsUploadedToRemoteStore.put(fileMetadata, metadata);
 
@@ -419,7 +420,7 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
      */
     public long fileLength(FileMetadata fileMetadata) throws IOException {
         // Primary: Check uploaded segments cache
-        UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(fileMetadata);
+        org.opensearch.index.store.UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(fileMetadata);
         if (metadata != null) {
             return metadata.getLength();
         }
@@ -481,7 +482,7 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
         return localFilename.split("\\.");
     }
 
-    public Map<String, UploadedSegmentMetadata> getSegmentsUploadedToRemoteStore() {
+    public Map<String, org.opensearch.index.store.UploadedSegmentMetadata> getSegmentsUploadedToRemoteStore() {
         return Collections.unmodifiableMap(this.segmentsUploadedToRemoteStore).entrySet().stream().collect(
             Collectors.toMap(
                 entry -> entry.getKey().serialize(),
@@ -529,7 +530,7 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
 
                     for (FileMetadata file : fileMetadataCollection) {
                         if (segmentsUploadedToRemoteStore.containsKey(file)) {
-                            UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(file);
+                            org.opensearch.index.store.UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(file);
                             if (segmentToLuceneVersion.get(metadata.getOriginalFilename()) == null) {
                                 // Todo
                                  // metadata.setWrittenByMajor(10);
@@ -571,7 +572,7 @@ public final class CompositeRemoteSegmentStoreDirectory extends RemoteSegmentSto
     }
 
     @Override
-    protected void removeFileFromSegmentsUploadedToRemoteStore(UploadedSegmentMetadata segmentMetadata) {
+    protected void removeFileFromSegmentsUploadedToRemoteStore(org.opensearch.index.store.UploadedSegmentMetadata segmentMetadata) {
         segmentsUploadedToRemoteStore.remove(new FileMetadata(segmentMetadata.getDataFormat(), segmentMetadata.getOriginalFilename()));
     }
 

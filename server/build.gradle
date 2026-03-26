@@ -514,8 +514,6 @@ tasks.register("japicmp", me.champeau.gradle.japicmp.JapicmpTask) {
     // See please https://github.com/siom79/japicmp/issues/201
     compatibilityChangeExcludes = [ "METHOD_ABSTRACT_NOW_DEFAULT", "METHOD_ADDED_TO_INTERFACE" ]
     classExcludes = [
-        'org.opensearch.index.store.RemoteSegmentStoreDirectory$MetadataFilenameUtils',
-        'org.opensearch.index.store.RemoteSegmentStoreDirectory$UploadedSegmentMetadata',
         'org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata',
         'org.opensearch.index.store.RemoteSegmentStoreDirectory'
     ]

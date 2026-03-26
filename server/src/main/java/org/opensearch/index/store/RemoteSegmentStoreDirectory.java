@@ -78,7 +78,9 @@ import java.util.stream.Collectors;
  * @opensearch.api
  */
 @PublicApi(since = "2.3.0")
-public class RemoteSegmentStoreDirectory extends FilterDirectory implements RemoteStoreCommitLevelLockManager {
+public sealed class RemoteSegmentStoreDirectory extends FilterDirectory
+    implements RemoteStoreCommitLevelLockManager
+    permits CompositeRemoteSegmentStoreDirectory {
 
     /**
      * Each segment file is uploaded with unique suffix.
@@ -112,7 +114,7 @@ public class RemoteSegmentStoreDirectory extends FilterDirectory implements Remo
      * This map acts as a cache layer for uploaded segment filenames which helps avoid calling listAll() each time.
      * It is important to initialize this map on creation of RemoteSegmentStoreDirectory and update it on each upload and delete.
      */
-    private Map<String, UploadedSegmentMetadata> segmentsUploadedToRemoteStore;
+    private Map<String, org.opensearch.index.store.UploadedSegmentMetadata> segmentsUploadedToRemoteStore;
 
     private static final VersionedCodecStreamWrapper<RemoteSegmentMetadata> metadataStreamWrapper = new VersionedCodecStreamWrapper<>(
         new RemoteSegmentMetadataHandlerFactory(),
@@ -542,7 +544,12 @@ public class RemoteSegmentStoreDirectory extends FilterDirectory implements Remo
     }
 
     private void postUpload(Directory from, String src, String remoteFilename, String checksum) throws IOException {
-        UploadedSegmentMetadata segmentMetadata = new UploadedSegmentMetadata(src, remoteFilename, checksum, from.fileLength(src));
+        org.opensearch.index.store.UploadedSegmentMetadata segmentMetadata = new org.opensearch.index.store.UploadedSegmentMetadata(
+            src,
+            remoteFilename,
+            checksum,
+            from.fileLength(src)
+        );
         segmentsUploadedToRemoteStore.put(new FileMetadata(src).serialize(), segmentMetadata);
     }
 
@@ -620,7 +627,9 @@ public class RemoteSegmentStoreDirectory extends FilterDirectory implements Remo
                     for (String file : segmentFiles) {
                         String normalizedFile = new FileMetadata(file).serialize();
                         if (segmentsUploadedToRemoteStore.containsKey(normalizedFile)) {
-                            UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(normalizedFile);
+                            org.opensearch.index.store.UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(
+                                normalizedFile
+                            );
                             metadata.setWrittenByMajor(segmentToLuceneVersion.get(metadata.getOriginalFilename()));
                             uploadedSegments.put(normalizedFile, metadata.toString());
                         } else {
@@ -730,7 +739,7 @@ public class RemoteSegmentStoreDirectory extends FilterDirectory implements Remo
     }
 
     // Visible for testing
-    public Map<String, UploadedSegmentMetadata> getSegmentsUploadedToRemoteStore() {
+    public Map<String, org.opensearch.index.store.UploadedSegmentMetadata> getSegmentsUploadedToRemoteStore() {
         return Collections.unmodifiableMap(this.segmentsUploadedToRemoteStore);
     }
 
@@ -861,7 +870,7 @@ public class RemoteSegmentStoreDirectory extends FilterDirectory implements Remo
             metadataFilesToBeDeleted
         );
 
-        Map<String, UploadedSegmentMetadata> activeSegmentFilesMetadataMap = new HashMap<>();
+        Map<String, org.opensearch.index.store.UploadedSegmentMetadata> activeSegmentFilesMetadataMap = new HashMap<>();
         Set<String> activeSegmentRemoteFilenames = new HashSet<>();
 
         final Set<String> metadataFilesToFilterActiveSegments = getMetadataFilesToFilterActiveSegments(
@@ -871,7 +880,7 @@ public class RemoteSegmentStoreDirectory extends FilterDirectory implements Remo
         );
 
         for (String metadataFile : metadataFilesToFilterActiveSegments) {
-            Map<String, UploadedSegmentMetadata> segmentMetadataMap = readMetadataFile(metadataFile).getMetadata();
+            Map<String, org.opensearch.index.store.UploadedSegmentMetadata> segmentMetadataMap = readMetadataFile(metadataFile).getMetadata();
             activeSegmentFilesMetadataMap.putAll(segmentMetadataMap);
             activeSegmentRemoteFilenames.addAll(
                 segmentMetadataMap.values().stream().map(metadata -> metadata.getUploadedFilename()).collect(Collectors.toSet())
@@ -879,7 +888,8 @@ public class RemoteSegmentStoreDirectory extends FilterDirectory implements Remo
         }
         Set<String> deletedSegmentFiles = new HashSet<>();
         for (String metadataFile : metadataFilesToBeDeleted) {
-            Map<String, UploadedSegmentMetadata> staleSegmentFilesMetadataMap = readMetadataFile(metadataFile).getMetadata();
+            Map<String, org.opensearch.index.store.UploadedSegmentMetadata> staleSegmentFilesMetadataMap = readMetadataFile(metadataFile)
+                .getMetadata();
             AtomicBoolean deletionSuccessful = new AtomicBoolean(true);
             staleSegmentFilesMetadataMap.entrySet().stream()
                 .filter(e -> activeSegmentRemoteFilenames.contains(e.getValue().getUploadedFilename()) == false)
@@ -911,7 +921,7 @@ public class RemoteSegmentStoreDirectory extends FilterDirectory implements Remo
         logger.debug("deletedSegmentFiles={}", deletedSegmentFiles);
     }
 
-    protected void removeFileFromSegmentsUploadedToRemoteStore(UploadedSegmentMetadata segmentMetadata) {
+    protected void removeFileFromSegmentsUploadedToRemoteStore(org.opensearch.index.store.UploadedSegmentMetadata segmentMetadata) {
         segmentsUploadedToRemoteStore.remove(segmentMetadata.getOriginalFilename());
     }
 
@@ -1036,5 +1046,120 @@ public class RemoteSegmentStoreDirectory extends FilterDirectory implements Remo
      */
     public boolean isMergedSegmentPendingDownload(String localFilename) {
         return pendingDownloadMergedSegments != null && pendingDownloadMergedSegments.containsKey(localFilename);
+    }
+
+    /**
+     * @deprecated Use {@link org.opensearch.index.store.UploadedSegmentMetadata} instead.
+     * @opensearch.api
+     */
+    @Deprecated
+    @PublicApi(since = "2.3.0")
+    public static class UploadedSegmentMetadata extends org.opensearch.index.store.UploadedSegmentMetadata {
+        public UploadedSegmentMetadata(String originalFilename, String uploadedFilename, String checksum, long length) {
+            super(originalFilename, uploadedFilename, checksum, length);
+        }
+
+        public UploadedSegmentMetadata(String originalFilename, String uploadedFilename, String checksum, long length, String dataFormat) {
+            super(originalFilename, uploadedFilename, checksum, length, dataFormat);
+        }
+
+        @Override
+        public String toString() {
+            return super.toString();
+        }
+
+        @Override
+        public String getChecksum() {
+            return super.getChecksum();
+        }
+
+        @Override
+        public long getLength() {
+            return super.getLength();
+        }
+
+        @Override
+        public String getOriginalFilename() {
+            return super.getOriginalFilename();
+        }
+
+        @Override
+        public String getUploadedFilename() {
+            return super.getUploadedFilename();
+        }
+
+        @Override
+        public void setWrittenByMajor(int writtenByMajor) {
+            super.setWrittenByMajor(writtenByMajor);
+        }
+
+        public static UploadedSegmentMetadata fromString(String uploadedFilename) {
+            org.opensearch.index.store.UploadedSegmentMetadata base = org.opensearch.index.store.UploadedSegmentMetadata.fromString(
+                uploadedFilename
+            );
+            UploadedSegmentMetadata metadata = new UploadedSegmentMetadata(
+                base.getOriginalFilename(),
+                base.getUploadedFilename(),
+                base.getChecksum(),
+                base.getLength(),
+                base.getDataFormat()
+            );
+            return metadata;
+        }
+    }
+
+    /**
+     * @deprecated Use {@link org.opensearch.index.store.MetadataFilenameUtils} instead.
+     */
+    @Deprecated
+    public static class MetadataFilenameUtils extends org.opensearch.index.store.MetadataFilenameUtils {
+        public static final String SEPARATOR = org.opensearch.index.store.MetadataFilenameUtils.SEPARATOR;
+        public static final String METADATA_PREFIX = org.opensearch.index.store.MetadataFilenameUtils.METADATA_PREFIX;
+
+        public static String getMetadataFilename(
+            long primaryTerm,
+            long generation,
+            long translogGeneration,
+            long uploadCounter,
+            int metadataVersion,
+            String nodeId,
+            long creationTimestamp
+        ) {
+            return org.opensearch.index.store.MetadataFilenameUtils.getMetadataFilename(
+                primaryTerm,
+                generation,
+                translogGeneration,
+                uploadCounter,
+                metadataVersion,
+                nodeId,
+                creationTimestamp
+            );
+        }
+
+        public static String getMetadataFilename(
+            long primaryTerm,
+            long generation,
+            long translogGeneration,
+            long uploadCounter,
+            int metadataVersion,
+            String nodeId
+        ) {
+            return org.opensearch.index.store.MetadataFilenameUtils.getMetadataFilename(
+                primaryTerm,
+                generation,
+                translogGeneration,
+                uploadCounter,
+                metadataVersion,
+                nodeId
+            );
+        }
+
+        public static long getTimestamp(String filename) {
+            return org.opensearch.index.store.MetadataFilenameUtils.getTimestamp(filename);
+        }
+
+        public static Tuple<String, String> getNodeIdByPrimaryTermAndGen(String filename) {
+            return org.opensearch.index.store.MetadataFilenameUtils.getNodeIdByPrimaryTermAndGen(filename);
+        }
     }
 }
