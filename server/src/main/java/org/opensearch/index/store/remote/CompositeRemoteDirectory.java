@@ -152,7 +152,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         }
         // Check plugin-registered containers first, then lazily create
         return formatBlobContainers.computeIfAbsent(format, f -> {
-            BlobPath formatPath = baseBlobPath.add(f.toLowerCase());
+            BlobPath formatPath = baseBlobPath.add(f.toLowerCase(java.util.Locale.ROOT));
             BlobContainer container = blobStore.blobContainer(formatPath);
             logger.debug("Created new BlobContainer for format {} at path: {}", f, formatPath);
             return container;
@@ -351,7 +351,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
 
         if (container == null) {
             throw new NoSuchFileException(
-                String.format("No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file())
+                String.format(java.util.Locale.ROOT, "No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file())
             );
         }
 
@@ -429,7 +429,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
 
         if (container == null) {
             throw new NoSuchFileException(
-                String.format("No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file())
+                String.format(java.util.Locale.ROOT, "No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file())
             );
         }
 
@@ -451,7 +451,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
 
         if (container == null) {
-            throw new IOException(String.format("No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file()));
+            throw new IOException(String.format(java.util.Locale.ROOT, "No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file()));
         }
 
         InputStream inputStream = null;
@@ -478,7 +478,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
     public RemoteIndexOutput createOutput(String remoteFileName, String dataFormat, IOContext context) throws IOException {
         BlobContainer container = getBlobContainerForFormat(dataFormat);
         if (container == null) {
-            throw new IOException(String.format("No container for format %s, file %s", dataFormat, remoteFileName));
+            throw new IOException(String.format(java.util.Locale.ROOT, "No container for format %s, file %s", dataFormat, remoteFileName));
         }
         return new RemoteIndexOutput(remoteFileName, container);
     }
