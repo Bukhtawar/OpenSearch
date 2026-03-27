@@ -176,7 +176,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     );
 
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
-    private final CompositeStoreDirectory compositeStoreDirectory;
+    private CompositeStoreDirectory compositeStoreDirectory;
     private final StoreDirectory directory;
     private final ReentrantReadWriteLock metadataLock = new ReentrantReadWriteLock();
     private final ShardLock shardLock;
@@ -266,6 +266,20 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         assert onClose != null;
         assert shardLock != null;
         assert shardLock.getShardId().equals(shardId);
+    }
+
+    /**
+     * Sets the CompositeStoreDirectory for this store after construction.
+     * This allows the store factory to create the Store instance first,
+     * and then have the CompositeStoreDirectory set by the caller.
+     *
+     * @param compositeStoreDirectory the CompositeStoreDirectory to set, or null
+     */
+    public void setCompositeStoreDirectory(CompositeStoreDirectory compositeStoreDirectory) {
+        this.compositeStoreDirectory = compositeStoreDirectory;
+        if (compositeStoreDirectory != null) {
+            logger.debug("CompositeStoreDirectory set for shard {}", shardId());
+        }
     }
 
     public Directory directory() {

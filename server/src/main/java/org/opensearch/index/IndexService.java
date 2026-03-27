@@ -776,17 +776,19 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             } else {
                 directory = directoryFactory.newDirectory(this.indexSettings, path);
             }
-            CompositeStoreDirectory compositeStoreDir = createCompositeStoreDirectory(shardId, path);
-            store = new Store(
+            store = storeFactory.newStore(
                 shardId,
                 this.indexSettings,
                 directory,
                 lock,
                 new StoreCloseListener(shardId, () -> eventListener.onStoreClosed(shardId)),
                 path,
-                directoryFactory,
-                compositeStoreDir
+                directoryFactory
             );
+            CompositeStoreDirectory compositeStoreDir = createCompositeStoreDirectory(shardId, path);
+            if (compositeStoreDir != null) {
+                store.setCompositeStoreDirectory(compositeStoreDir);
+            }
             eventListener.onStoreCreated(shardId);
             indexShard = new IndexShard(
                 routing,
