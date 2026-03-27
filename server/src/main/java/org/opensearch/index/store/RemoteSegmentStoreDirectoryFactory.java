@@ -82,27 +82,16 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
     public Directory newDirectory(IndexSettings indexSettings, ShardPath path) throws IOException {
         String repositoryName = indexSettings.getRemoteStoreRepository();
         String indexUUID = indexSettings.getIndex().getUUID();
-
-        // Check if this is an optimized index to determine directory type
-        if (indexSettings.isOptimizedIndex()) {
-            return newCompositeDirectory(
-                repositoryName,
-                indexUUID,
-                path.getShardId(),
-                indexSettings.getRemoteStorePathStrategy(),
-                RemoteStoreUtils.isServerSideEncryptionEnabledIndex(indexSettings.getIndexMetadata())
-            );
-        } else {
-            return newDirectory(
-                repositoryName,
-                indexUUID,
-                path.getShardId(),
-                indexSettings.getRemoteStorePathStrategy(),
-                null,
-                RemoteStoreUtils.isServerSideEncryptionEnabledIndex(indexSettings.getIndexMetadata()),
-                indexSettings.isWarmIndex()
-            );
-        }
+        return newDirectory(
+            repositoryName,
+            indexUUID,
+            path.getShardId(),
+            indexSettings.getRemoteStorePathStrategy(),
+            null,
+            RemoteStoreUtils.isServerSideEncryptionEnabledIndex(indexSettings.getIndexMetadata()),
+            indexSettings.isWarmIndex(),
+            indexSettings.isOptimizedIndex()
+        );
     }
 
     public Directory newDirectory(String repositoryName, String indexUUID, ShardId shardId, RemoteStorePathStrategy pathStrategy)
@@ -128,7 +117,7 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
         String indexFixedPrefix,
         boolean isServerSideEncryptionEnabled
     ) throws IOException {
-        return newDirectory(repositoryName, indexUUID, shardId, pathStrategy, indexFixedPrefix, isServerSideEncryptionEnabled, false);
+        return newDirectory(repositoryName, indexUUID, shardId, pathStrategy, indexFixedPrefix, isServerSideEncryptionEnabled, false, false);
     }
 
     public Directory newDirectory(
@@ -138,7 +127,8 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
         RemoteStorePathStrategy pathStrategy,
         String indexFixedPrefix,
         boolean isServerSideEncryptionEnabled,
-        boolean isWarmIndex
+        boolean isWarmIndex,
+        boolean isOptimizedIndex
     ) throws IOException {
         assert Objects.nonNull(pathStrategy);
         // We should be not calling close for repository.
@@ -162,16 +152,27 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
 
             // Derive the path for data directory of SEGMENTS
             BlobPath dataPath = pathStrategy.generatePath(dataPathInput);
-            RemoteDirectory dataDirectory = new RemoteDirectory(
+            RemoteDirectory dataDirectory = isOptimizedIndex
+                ? new CompositeRemoteDirectory(
+                blobStoreRepository.blobStore(isServerSideEncryptionEnabled),
+                dataPath,
+                blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
+                blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
+                blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
+                blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
+                pendingDownloadMergedSegments,
+                LogManager.getLogger("index.store.remote.composite." + shardId),
+                pluginsService
+            )
+                : new RemoteDirectory(
                 blobStoreRepository.blobStore(isServerSideEncryptionEnabled).blobContainer(dataPath),
                 blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
                 blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
-                isWarmIndex
-                    ? blobStoreRepository::maybeRateLimitRemoteDownloadTransfersForWarm
-                    : blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
+                blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
                 blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
                 pendingDownloadMergedSegments
             );
+
 
             RemoteStorePathStrategy.ShardDataPathInput mdPathInput = RemoteStorePathStrategy.ShardDataPathInput.builder()
                 .basePath(repositoryBasePath)
@@ -201,99 +202,6 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
 
             return new RemoteSegmentStoreDirectory(
                 dataDirectory,
-                metadataDirectory,
-                mdLockManager,
-                threadPool,
-                shardId,
-                pendingDownloadMergedSegments
-            );
-        } catch (RepositoryMissingException e) {
-            throw new IllegalArgumentException("Repository should be created before creating index with remote_store enabled setting", e);
-        }
-    }
-
-    /**
-     * Creates a CompositeRemoteSegmentStoreDirectory for optimized indices.
-     * This method is called when indexSettings.isOptimizedIndex() returns true.
-     */
-    private Directory newCompositeDirectory(
-        String repositoryName,
-        String indexUUID,
-        ShardId shardId,
-        RemoteStorePathStrategy pathStrategy,
-        boolean isServerSideEncryptionEnabled
-    ) throws IOException {
-        return newCompositeDirectory(repositoryName, indexUUID, shardId, pathStrategy, null, isServerSideEncryptionEnabled);
-    }
-
-    private Directory newCompositeDirectory(
-        String repositoryName,
-        String indexUUID,
-        ShardId shardId,
-        RemoteStorePathStrategy pathStrategy,
-        String indexFixedPrefix,
-        boolean isServerSideEncryptionEnabled
-    ) throws IOException {
-        assert Objects.nonNull(pathStrategy);
-        try (Repository repository = repositoriesService.get().repository(repositoryName)) {
-
-            assert repository instanceof BlobStoreRepository : "repository should be instance of BlobStoreRepository";
-            BlobStoreRepository blobStoreRepository = ((BlobStoreRepository) repository);
-            BlobPath repositoryBasePath = blobStoreRepository.basePath();
-            String shardIdStr = String.valueOf(shardId.id());
-            Map<FileMetadata, String> pendingDownloadMergedSegments = new ConcurrentHashMap<>();
-
-            RemoteStorePathStrategy.ShardDataPathInput dataPathInput = RemoteStorePathStrategy.ShardDataPathInput.builder()
-                .basePath(repositoryBasePath)
-                .indexUUID(indexUUID)
-                .shardId(shardIdStr)
-                .dataCategory(SEGMENTS)
-                .dataType(DATA)
-                .fixedPrefix(segmentsPathFixedPrefix)
-                .indexFixedPrefix(indexFixedPrefix)
-                .build();
-
-            BlobPath dataPath = pathStrategy.generatePath(dataPathInput);
-
-            CompositeRemoteDirectory compositeDataDirectory = new CompositeRemoteDirectory(
-                blobStoreRepository.blobStore(isServerSideEncryptionEnabled),
-                dataPath,
-                blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
-                blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
-                blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
-                blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
-                pendingDownloadMergedSegments,
-                LogManager.getLogger("index.store.remote.composite." + shardId),
-                pluginsService
-            );
-
-            RemoteStorePathStrategy.ShardDataPathInput mdPathInput = RemoteStorePathStrategy.ShardDataPathInput.builder()
-                .basePath(repositoryBasePath)
-                .indexUUID(indexUUID)
-                .shardId(shardIdStr)
-                .dataCategory(SEGMENTS)
-                .dataType(METADATA)
-                .fixedPrefix(segmentsPathFixedPrefix)
-                .indexFixedPrefix(indexFixedPrefix)
-                .build();
-
-            BlobPath mdPath = pathStrategy.generatePath(mdPathInput);
-            RemoteDirectory metadataDirectory = new RemoteDirectory(
-                blobStoreRepository.blobStore(isServerSideEncryptionEnabled).blobContainer(mdPath)
-            );
-
-            RemoteStoreLockManager mdLockManager = RemoteStoreLockManagerFactory.newLockManager(
-                repositoriesService.get(),
-                repositoryName,
-                indexUUID,
-                shardIdStr,
-                pathStrategy,
-                segmentsPathFixedPrefix,
-                indexFixedPrefix
-            );
-
-            return new CompositeRemoteSegmentStoreDirectory(
-                compositeDataDirectory,
                 metadataDirectory,
                 mdLockManager,
                 threadPool,

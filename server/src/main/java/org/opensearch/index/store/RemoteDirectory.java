@@ -60,7 +60,7 @@ import static org.opensearch.common.blobstore.transfer.RemoteTransferContainer.c
  *
  * @opensearch.internal
  */
-public class RemoteDirectory extends Directory {
+public abstract class RemoteDirectory extends Directory {
 
     protected final BlobContainer blobContainer;
     private static final Logger logger = LogManager.getLogger(RemoteDirectory.class);
@@ -185,7 +185,7 @@ public class RemoteDirectory extends Directory {
         blobContainer.deleteBlobsIgnoringIfNotExists(Collections.singletonList(name));
     }
 
-    public void deleteFile(UploadedSegmentMetadata uploadedSegmentMetadata) throws IOException {
+    public void deleteFile(RemoteSegmentStoreDirectory.UploadedSegmentMetadata uploadedSegmentMetadata) throws IOException {
         deleteFile(uploadedSegmentMetadata.getUploadedFilename());
     }
 
