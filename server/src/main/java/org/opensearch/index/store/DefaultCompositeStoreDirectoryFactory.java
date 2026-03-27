@@ -60,7 +60,13 @@ public class DefaultCompositeStoreDirectoryFactory implements CompositeStoreDire
             return compositeDirectory;
 
         } catch (Exception e) {
-            logger.error("Failed to create CompositeStoreDirectory for shard: {}", shardPath.getShardId(), e);
+            logger.error(
+                () -> new org.apache.logging.log4j.message.ParameterizedMessage(
+                    "Failed to create CompositeStoreDirectory for shard: {}",
+                    shardPath.getShardId()
+                ),
+                e
+            );
             throw new IOException(
                 String.format(
                     Locale.ROOT,

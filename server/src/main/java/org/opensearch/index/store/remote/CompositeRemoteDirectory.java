@@ -279,7 +279,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
             logger.warn("BlobContainer for format {} does not support async multi-stream upload", fileMetadata.dataFormat());
             return false;
         } catch (Exception e) {
-            logger.error("Failed format-aware upload: src={}, error={}", src, e.getMessage(), e);
+            logger.error(() -> new ParameterizedMessage("Failed format-aware upload: src={}, error={}", src, e.getMessage()), e);
             listener.onFailure(e);
             return true; // Handled (even though failed)
         }
@@ -329,10 +329,12 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
                 }
             }
             logger.error(
-                "Exception reading blob: file={}, format={}, uploaded={}",
-                fileMetadata.file(),
-                fileMetadata.dataFormat(),
-                metadata.getUploadedFilename(),
+                () -> new ParameterizedMessage(
+                    "Exception reading blob: file={}, format={}, uploaded={}",
+                    fileMetadata.file(),
+                    fileMetadata.dataFormat(),
+                    metadata.getUploadedFilename()
+                ),
                 e
             );
             throw e;
@@ -451,7 +453,9 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
 
         if (container == null) {
-            throw new IOException(String.format(java.util.Locale.ROOT, "No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file()));
+            throw new IOException(
+                String.format(java.util.Locale.ROOT, "No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file())
+            );
         }
 
         InputStream inputStream = null;
@@ -467,7 +471,14 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
                     e.addSuppressed(closeEx);
                 }
             }
-            logger.error("Exception reading blob: file={}, format={}", fileMetadata.file(), fileMetadata.dataFormat(), e);
+            logger.error(
+                () -> new ParameterizedMessage(
+                    "Exception reading blob: file={}, format={}",
+                    fileMetadata.file(),
+                    fileMetadata.dataFormat()
+                ),
+                e
+            );
             throw e;
         }
     }
