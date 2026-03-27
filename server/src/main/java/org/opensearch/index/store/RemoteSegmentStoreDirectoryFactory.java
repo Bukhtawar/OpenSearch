@@ -117,7 +117,16 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
         String indexFixedPrefix,
         boolean isServerSideEncryptionEnabled
     ) throws IOException {
-        return newDirectory(repositoryName, indexUUID, shardId, pathStrategy, indexFixedPrefix, isServerSideEncryptionEnabled, false, false);
+        return newDirectory(
+            repositoryName,
+            indexUUID,
+            shardId,
+            pathStrategy,
+            indexFixedPrefix,
+            isServerSideEncryptionEnabled,
+            false,
+            false
+        );
     }
 
     public Directory newDirectory(
@@ -154,25 +163,24 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
             BlobPath dataPath = pathStrategy.generatePath(dataPathInput);
             RemoteDirectory dataDirectory = isOptimizedIndex
                 ? new CompositeRemoteDirectory(
-                blobStoreRepository.blobStore(isServerSideEncryptionEnabled),
-                dataPath,
-                blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
-                blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
-                blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
-                blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
-                pendingDownloadMergedSegments,
-                LogManager.getLogger("index.store.remote.composite." + shardId),
-                pluginsService
-            )
+                    blobStoreRepository.blobStore(isServerSideEncryptionEnabled),
+                    dataPath,
+                    blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
+                    blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
+                    blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
+                    blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
+                    pendingDownloadMergedSegments,
+                    LogManager.getLogger("index.store.remote.composite." + shardId),
+                    pluginsService
+                )
                 : new RemoteDirectory(
-                blobStoreRepository.blobStore(isServerSideEncryptionEnabled).blobContainer(dataPath),
-                blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
-                blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
-                blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
-                blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
-                pendingDownloadMergedSegments
-            );
-
+                    blobStoreRepository.blobStore(isServerSideEncryptionEnabled).blobContainer(dataPath),
+                    blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
+                    blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
+                    blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
+                    blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
+                    pendingDownloadMergedSegments
+                );
 
             RemoteStorePathStrategy.ShardDataPathInput mdPathInput = RemoteStorePathStrategy.ShardDataPathInput.builder()
                 .basePath(repositoryBasePath)

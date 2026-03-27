@@ -379,9 +379,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             // Restore ":::" in originalFilename
             values[0] = values[0].replace("\0", FileMetadata.DELIMITER);
 
-            UploadedSegmentMetadata metadata = new UploadedSegmentMetadata(
-                values[0], values[1], values[2], Long.parseLong(values[3])
-            );
+            UploadedSegmentMetadata metadata = new UploadedSegmentMetadata(values[0], values[1], values[2], Long.parseLong(values[3]));
             if (values.length < 5) {
                 staticLogger.error("Lucene version is missing for UploadedSegmentMetadata: " + values[0]);
             } else {
@@ -907,7 +905,8 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
 
                     // Serialize the SegmentInfos bytes for the metadata file
                     byte[] segmentInfoSnapshotByteArray = serializeCatalogSnapshotToSegmentInfosBytes(
-                        catalogSnapshot, replicationCheckpoint
+                        catalogSnapshot,
+                        replicationCheckpoint
                     );
 
                     metadataStreamWrapper.writeStream(
@@ -934,10 +933,8 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      * For CompositeEngineCatalogSnapshot: creates a synthetic SegmentInfos with the CatalogSnapshot
      * serialized into userData, so it can be reconstructed on recovery.
      */
-    private byte[] serializeCatalogSnapshotToSegmentInfosBytes(
-        CatalogSnapshot catalogSnapshot,
-        ReplicationCheckpoint replicationCheckpoint
-    ) throws IOException {
+    private byte[] serializeCatalogSnapshotToSegmentInfosBytes(CatalogSnapshot catalogSnapshot, ReplicationCheckpoint replicationCheckpoint)
+        throws IOException {
         SegmentInfos segmentInfosToSerialize;
 
         if (catalogSnapshot instanceof SegmentInfosCatalogSnapshot) {
@@ -952,9 +949,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         }
 
         ByteBuffersDataOutput byteBuffersIndexOutput = new ByteBuffersDataOutput();
-        segmentInfosToSerialize.write(
-            new ByteBuffersIndexOutput(byteBuffersIndexOutput, "Snapshot of SegmentInfos", "SegmentInfos")
-        );
+        segmentInfosToSerialize.write(new ByteBuffersIndexOutput(byteBuffersIndexOutput, "Snapshot of SegmentInfos", "SegmentInfos"));
         return byteBuffersIndexOutput.toArrayCopy();
     }
 

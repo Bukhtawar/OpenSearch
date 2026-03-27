@@ -33,10 +33,12 @@ import java.util.stream.Collectors;
 
 import org.mockito.Mockito;
 
-import static org.mockito.ArgumentMatchers.*;
 import static org.opensearch.indices.RemoteStoreSettings.CLUSTER_REMOTE_STORE_PINNED_TIMESTAMP_ENABLED;
 import static org.hamcrest.CoreMatchers.is;
+import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.anyString;
+import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;

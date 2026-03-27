@@ -212,7 +212,10 @@ public class RemoteStoreRefreshListenerTests extends IndexShardTestCase {
             }
             throw new IOException();
         }).when(remoteMetadataDirectory)
-            .listFilesByPrefixInLexicographicOrder(RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX, METADATA_FILES_TO_FETCH);
+            .listFilesByPrefixInLexicographicOrder(
+                RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX,
+                METADATA_FILES_TO_FETCH
+            );
 
         SegmentInfos segmentInfos;
         try (Store indexShardStore = indexShard.store()) {
@@ -864,7 +867,8 @@ public class RemoteStoreRefreshListenerTests extends IndexShardTestCase {
     }
 
     private void verifyUploadedSegments(RemoteSegmentStoreDirectory remoteSegmentStoreDirectory) throws IOException {
-        Map<String, RemoteSegmentStoreDirectory.UploadedSegmentMetadata> uploadedSegments = remoteSegmentStoreDirectory.getSegmentsUploadedToRemoteStore();
+        Map<String, RemoteSegmentStoreDirectory.UploadedSegmentMetadata> uploadedSegments = remoteSegmentStoreDirectory
+            .getSegmentsUploadedToRemoteStore();
         String segmentsNFilename = null;
         try (GatedCloseable<SegmentInfos> segmentInfosGatedCloseable = indexShard.getSegmentInfosSnapshot()) {
             SegmentInfos segmentInfos = segmentInfosGatedCloseable.get();

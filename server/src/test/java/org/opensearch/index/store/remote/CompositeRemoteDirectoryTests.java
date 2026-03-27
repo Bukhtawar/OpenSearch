@@ -230,9 +230,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
     // ═══════════════════════════════════════════════════════════════
 
     public void testOpenInput_WithUploadedSegmentMetadata_Lucene() throws IOException {
-        UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString(
-            "_0.cfs::_0.cfs__UUID1::checksum123::100::10"
-        );
+        UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString("_0.cfs::_0.cfs__UUID1::checksum123::100::10");
 
         byte[] content = new byte[100];
         when(baseBlobContainer.readBlob("_0.cfs__UUID1")).thenReturn(new ByteArrayInputStream(content));
@@ -271,9 +269,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         when(baseBlobContainer.readBlob("_0.cfs__UUID1")).thenReturn(mockStream);
         when(mockStream.read(any(), anyInt(), anyInt())).thenThrow(new IOException("read error"));
 
-        UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString(
-            "_0.cfs::_0.cfs__UUID1::checksum123::100::10"
-        );
+        UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString("_0.cfs::_0.cfs__UUID1::checksum123::100::10");
 
         // The openInput should succeed (it just wraps the stream), but we verify the pattern
         IndexInput input = directory.openInput(metadata, 100, IOContext.DEFAULT);
@@ -287,8 +283,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
 
     public void testFileLength_LuceneFile() throws IOException {
         List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.cfs", 1234));
-        when(baseBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.cfs"), eq(1), any()))
-            .thenReturn(blobList);
+        when(baseBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.cfs"), eq(1), any())).thenReturn(blobList);
 
         long length = directory.fileLength("_0.cfs");
         assertEquals(1234, length);
@@ -299,16 +294,14 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         directory.getBlobContainerForFormat("parquet");
 
         List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.parquet", 5678));
-        when(parquetBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.parquet"), eq(1), any()))
-            .thenReturn(blobList);
+        when(parquetBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.parquet"), eq(1), any())).thenReturn(blobList);
 
         long length = directory.fileLength("_0.parquet:::parquet");
         assertEquals(5678, length);
     }
 
     public void testFileLength_FileNotFound() throws IOException {
-        when(baseBlobContainer.listBlobsByPrefixInSortedOrder(eq("nonexistent"), eq(1), any()))
-            .thenReturn(Collections.emptyList());
+        when(baseBlobContainer.listBlobsByPrefixInSortedOrder(eq("nonexistent"), eq(1), any())).thenReturn(Collections.emptyList());
 
         expectThrows(NoSuchFileException.class, () -> directory.fileLength("nonexistent"));
     }

@@ -18,7 +18,6 @@ import org.apache.lucene.store.IndexOutput;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.cluster.metadata.CryptoMetadata;
 import org.opensearch.common.annotation.InternalApi;
-import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.blobstore.AsyncMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.BlobMetadata;
@@ -32,7 +31,12 @@ import org.opensearch.common.blobstore.transfer.stream.OffsetRangeIndexInputStre
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.unit.ByteSizeUnit;
-import org.opensearch.index.store.*;
+import org.opensearch.index.store.CompositeStoreDirectory;
+import org.opensearch.index.store.FileMetadata;
+import org.opensearch.index.store.RemoteDirectory;
+import org.opensearch.index.store.RemoteIndexInput;
+import org.opensearch.index.store.RemoteIndexOutput;
+import org.opensearch.index.store.RemoteSegmentStoreDirectory;
 import org.opensearch.plugins.PluginsService;
 
 import java.io.IOException;
@@ -233,8 +237,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
         // Read from local directory (CompositeStoreDirectory handles ":::format" in src)
         // Write to format-specific BlobContainer (lucene→base, parquet→parquet sub-path, etc.)
-        try (IndexInput is = from.openInput(src, context);
-             IndexOutput os = new RemoteIndexOutput(dest, container)) {
+        try (IndexInput is = from.openInput(src, context); IndexOutput os = new RemoteIndexOutput(dest, container)) {
             os.copyBytes(is, is.length());
         }
     }
@@ -373,10 +376,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
      */
     public void copyFrom(CompositeStoreDirectory from, FileMetadata src, String dest, IOContext context) throws IOException {
         boolean success = false;
-        try (
-            IndexInput is = from.openInput(src, IOContext.READONCE);
-            IndexOutput os = createOutput(dest, src.dataFormat(), context)
-        ) {
+        try (IndexInput is = from.openInput(src, IOContext.READONCE); IndexOutput os = createOutput(dest, src.dataFormat(), context)) {
             os.copyBytes(is, is.length());
             success = true;
         } finally {
@@ -402,7 +402,16 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
             BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
 
             if (container instanceof AsyncMultiStreamBlobContainer) {
-                uploadBlobFromComposite(from, fileMetadata, remoteFileName, container, context, postUploadRunner, listener, lowPriorityUpload);
+                uploadBlobFromComposite(
+                    from,
+                    fileMetadata,
+                    remoteFileName,
+                    container,
+                    context,
+                    postUploadRunner,
+                    listener,
+                    lowPriorityUpload
+                );
                 return true;
             }
             return false;
@@ -442,9 +451,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
 
         if (container == null) {
-            throw new IOException(
-                String.format("No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file())
-            );
+            throw new IOException(String.format("No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file()));
         }
 
         InputStream inputStream = null;
@@ -529,7 +536,9 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
             lowPriorityUpload = lowPriorityUpload || contentLength > ByteSizeUnit.GB.toBytes(15);
 
             RemoteTransferContainer.OffsetRangeInputStreamSupplier supplier = lowPriorityUpload
-                ? (size, position) -> lowPriorityUploadRateLimiter.apply(new OffsetRangeIndexInputStream(indexInput.clone(), size, position))
+                ? (size, position) -> lowPriorityUploadRateLimiter.apply(
+                    new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
+                )
                 : (size, position) -> uploadRateLimiter.apply(new OffsetRangeIndexInputStream(indexInput.clone(), size, position));
 
             RemoteTransferContainer remoteTransferContainer = new RemoteTransferContainer(
@@ -584,7 +593,9 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
             lowPriorityUpload = lowPriorityUpload || contentLength > ByteSizeUnit.GB.toBytes(15);
 
             RemoteTransferContainer.OffsetRangeInputStreamSupplier supplier = lowPriorityUpload
-                ? (size, position) -> lowPriorityUploadRateLimiter.apply(new OffsetRangeIndexInputStream(indexInput.clone(), size, position))
+                ? (size, position) -> lowPriorityUploadRateLimiter.apply(
+                    new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
+                )
                 : (size, position) -> uploadRateLimiter.apply(new OffsetRangeIndexInputStream(indexInput.clone(), size, position));
 
             RemoteTransferContainer remoteTransferContainer = new RemoteTransferContainer(
