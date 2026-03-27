@@ -260,7 +260,10 @@ public class RemoteSegmentStoreDirectoryTests extends BaseRemoteSegmentStoreDire
         remoteSegmentStoreDirectory.init();
 
         IndexInput indexInput = mock(IndexInput.class);
+        // Mock both String-based and UploadedSegmentMetadata-based openInput
         when(remoteDataDirectory.openInput(startsWith("_0.si"), anyLong(), eq(IOContext.DEFAULT))).thenReturn(indexInput);
+        when(remoteDataDirectory.openInput(any(RemoteSegmentStoreDirectory.UploadedSegmentMetadata.class), anyLong(), eq(IOContext.DEFAULT)))
+            .thenReturn(indexInput);
 
         assertEquals(indexInput, remoteSegmentStoreDirectory.openInput("_0.si", IOContext.DEFAULT));
     }
@@ -273,7 +276,10 @@ public class RemoteSegmentStoreDirectoryTests extends BaseRemoteSegmentStoreDire
         populateMetadata();
         remoteSegmentStoreDirectory.init();
 
+        // Mock both String-based and UploadedSegmentMetadata-based openInput to throw
         when(remoteDataDirectory.openInput(startsWith("_0.si"), anyLong(), eq(IOContext.DEFAULT))).thenThrow(new IOException("Error"));
+        when(remoteDataDirectory.openInput(any(RemoteSegmentStoreDirectory.UploadedSegmentMetadata.class), anyLong(), eq(IOContext.DEFAULT)))
+            .thenThrow(new IOException("Error"));
 
         assertThrows(IOException.class, () -> remoteSegmentStoreDirectory.openInput("_0.si", IOContext.DEFAULT));
     }

@@ -272,7 +272,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
                     remoteFileName,
                     container.path()
                 );
-                uploadBlob(from, src, remoteFileName, container, context, postUploadRunner, listener, lowPriorityUpload);
+                uploadBlob(from, src, remoteFileName, container, context, postUploadRunner, listener, lowPriorityUpload, cryptoMetadata);
                 return true;
             }
 
@@ -524,9 +524,16 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         IOContext ioContext,
         Runnable postUploadRunner,
         ActionListener<Void> listener,
-        boolean lowPriorityUpload
+        boolean lowPriorityUpload,
+        CryptoMetadata cryptoMetadata
     ) throws Exception {
         assert ioContext != IOContext.READONCE : "Remote upload will fail with IoContext.READONCE";
+        long expectedChecksum;
+        if (from instanceof CompositeStoreDirectory) {
+            expectedChecksum = ((CompositeStoreDirectory) from).calculateChecksum(new FileMetadata(src));
+        } else {
+            expectedChecksum = calculateChecksumOfChecksum(from, src);
+        }
         IndexInput indexInput = from.openInput(src, ioContext);
         try {
             long contentLength = indexInput.length();
@@ -548,7 +555,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
                 true,
                 lowPriorityUpload ? WritePriority.LOW : WritePriority.NORMAL,
                 supplier,
-                0L, // checksum — not computed here for format-aware upload
+                expectedChecksum,
                 remoteIntegrityEnabled
             );
 

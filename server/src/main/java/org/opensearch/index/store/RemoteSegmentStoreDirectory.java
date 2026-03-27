@@ -382,9 +382,10 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             UploadedSegmentMetadata metadata = new UploadedSegmentMetadata(values[0], values[1], values[2], Long.parseLong(values[3]));
             if (values.length < 5) {
                 staticLogger.error("Lucene version is missing for UploadedSegmentMetadata: " + values[0]);
-            } else {
-                metadata.setWrittenByMajor(Integer.parseInt(values[4]));
+                // Throw to maintain backward compatibility — callers expect this to fail for incomplete metadata
+                throw new ArrayIndexOutOfBoundsException("Missing writtenByMajor in UploadedSegmentMetadata: " + str);
             }
+            metadata.setWrittenByMajor(Integer.parseInt(values[4]));
             return metadata;
         }
 
