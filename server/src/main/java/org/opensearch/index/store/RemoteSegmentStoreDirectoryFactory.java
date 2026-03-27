@@ -117,6 +117,18 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
         String indexFixedPrefix,
         boolean isServerSideEncryptionEnabled
     ) throws IOException {
+        return newDirectory(repositoryName, indexUUID, shardId, pathStrategy, indexFixedPrefix, isServerSideEncryptionEnabled, false);
+    }
+
+    public Directory newDirectory(
+        String repositoryName,
+        String indexUUID,
+        ShardId shardId,
+        RemoteStorePathStrategy pathStrategy,
+        String indexFixedPrefix,
+        boolean isServerSideEncryptionEnabled,
+        boolean isWarmIndex
+    ) throws IOException {
         return newDirectory(
             repositoryName,
             indexUUID,
@@ -124,7 +136,7 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
             pathStrategy,
             indexFixedPrefix,
             isServerSideEncryptionEnabled,
-            false,
+            isWarmIndex,
             false
         );
     }
