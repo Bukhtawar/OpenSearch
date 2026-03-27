@@ -60,7 +60,7 @@ import static org.opensearch.common.blobstore.transfer.RemoteTransferContainer.c
  *
  * @opensearch.internal
  */
-public abstract class RemoteDirectory extends Directory {
+public class RemoteDirectory extends Directory {
 
     protected final BlobContainer blobContainer;
     private static final Logger logger = LogManager.getLogger(RemoteDirectory.class);
@@ -75,7 +75,7 @@ public abstract class RemoteDirectory extends Directory {
      * Map containing the mapping of segment files that are pending download as part of the pre-copy (warm) phase of
      * {@link org.opensearch.index.engine.MergedSegmentWarmer}. The key is the local filename and value is the remote filename.
      */
-    final Map<String, String> pendingDownloadMergedSegments;
+    protected final Map<String, String> pendingDownloadMergedSegments;
 
     /**
      * Number of bytes in the segment file to store checksum
@@ -281,6 +281,23 @@ public abstract class RemoteDirectory extends Directory {
             logger.error("Exception while reading blob for file: " + name + " for path " + blobContainer.path());
             throw e;
         }
+    }
+
+    /**
+     * Opens a stream for reading an existing file using UploadedSegmentMetadata.
+     * Default implementation delegates to openInput(String, long, IOContext) using the uploaded filename.
+     * CompositeRemoteDirectory overrides this for format-aware routing, extracting the data format
+     * from originalFilename to determine which BlobContainer to read from.
+     *
+     * @param metadata   the uploaded segment metadata containing original and uploaded filenames
+     * @param fileLength the length of the file
+     * @param context    desired {@link IOContext} context
+     * @return the {@link IndexInput} for reading the file
+     * @throws IOException in case of I/O error
+     */
+    public IndexInput openInput(RemoteSegmentStoreDirectory.UploadedSegmentMetadata metadata, long fileLength, IOContext context)
+        throws IOException {
+        return openInput(metadata.getUploadedFilename(), fileLength, context);
     }
 
     /**

@@ -31,11 +31,9 @@ import org.opensearch.index.engine.InternalEngineFactory;
 import org.opensearch.index.engine.NRTReplicationEngineFactory;
 import org.opensearch.index.remote.RemoteSegmentTransferTracker;
 import org.opensearch.index.remote.RemoteStoreStatsTrackerFactory;
-import org.opensearch.index.store.MetadataFilenameUtils;
 import org.opensearch.index.store.RemoteDirectory;
 import org.opensearch.index.store.RemoteSegmentStoreDirectory;
 import org.opensearch.index.store.Store;
-import org.opensearch.index.store.UploadedSegmentMetadata;
 import org.opensearch.index.store.lockmanager.RemoteStoreLockManager;
 import org.opensearch.indices.DefaultRemoteStoreSettings;
 import org.opensearch.indices.RemoteStoreSettings;
@@ -214,7 +212,7 @@ public class RemoteStoreRefreshListenerTests extends IndexShardTestCase {
             }
             throw new IOException();
         }).when(remoteMetadataDirectory)
-            .listFilesByPrefixInLexicographicOrder(MetadataFilenameUtils.METADATA_PREFIX, METADATA_FILES_TO_FETCH);
+            .listFilesByPrefixInLexicographicOrder(RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX, METADATA_FILES_TO_FETCH);
 
         SegmentInfos segmentInfos;
         try (Store indexShardStore = indexShard.store()) {
@@ -249,7 +247,7 @@ public class RemoteStoreRefreshListenerTests extends IndexShardTestCase {
         // listFilesByPrefixInLexicographicOrder has been called twice.
         verify(remoteMetadataDirectory, times(1)).getBlobStream(any());
         verify(remoteMetadataDirectory, times(2)).listFilesByPrefixInLexicographicOrder(
-            MetadataFilenameUtils.METADATA_PREFIX,
+            RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX,
             METADATA_FILES_TO_FETCH
         );
     }
@@ -866,7 +864,7 @@ public class RemoteStoreRefreshListenerTests extends IndexShardTestCase {
     }
 
     private void verifyUploadedSegments(RemoteSegmentStoreDirectory remoteSegmentStoreDirectory) throws IOException {
-        Map<String, UploadedSegmentMetadata> uploadedSegments = remoteSegmentStoreDirectory.getSegmentsUploadedToRemoteStore();
+        Map<String, RemoteSegmentStoreDirectory.UploadedSegmentMetadata> uploadedSegments = remoteSegmentStoreDirectory.getSegmentsUploadedToRemoteStore();
         String segmentsNFilename = null;
         try (GatedCloseable<SegmentInfos> segmentInfosGatedCloseable = indexShard.getSegmentInfosSnapshot()) {
             SegmentInfos segmentInfos = segmentInfosGatedCloseable.get();

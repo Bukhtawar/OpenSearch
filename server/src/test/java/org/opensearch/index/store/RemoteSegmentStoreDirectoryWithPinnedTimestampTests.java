@@ -33,11 +33,9 @@ import java.util.stream.Collectors;
 
 import org.mockito.Mockito;
 
+import static org.mockito.ArgumentMatchers.*;
 import static org.opensearch.indices.RemoteStoreSettings.CLUSTER_REMOTE_STORE_PINNED_TIMESTAMP_ENABLED;
 import static org.hamcrest.CoreMatchers.is;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
@@ -95,20 +93,79 @@ public class RemoteSegmentStoreDirectoryWithPinnedTimestampTests extends RemoteS
     }
 
     private void metadataWithOlderTimestamp() {
-        metadataFilename = MetadataFilenameUtils.getMetadataFilename(12, 23, 34, 1, 1, "node-1", System.currentTimeMillis() - 300000);
-        metadataFilename2 = MetadataFilenameUtils.getMetadataFilename(12, 13, 34, 1, 1, "node-1", System.currentTimeMillis() - 400000);
-        metadataFilename3 = MetadataFilenameUtils.getMetadataFilename(10, 38, 34, 1, 1, "node-1", System.currentTimeMillis() - 500000);
-        metadataFilename4 = MetadataFilenameUtils.getMetadataFilename(10, 36, 34, 1, 1, "node-1", System.currentTimeMillis() - 600000);
+        metadataFilename = RemoteSegmentStoreDirectory.MetadataFilenameUtils.getMetadataFilename(
+            12,
+            23,
+            34,
+            1,
+            1,
+            "node-1",
+            System.currentTimeMillis() - 300000
+        );
+        metadataFilename2 = RemoteSegmentStoreDirectory.MetadataFilenameUtils.getMetadataFilename(
+            12,
+            13,
+            34,
+            1,
+            1,
+            "node-1",
+            System.currentTimeMillis() - 400000
+        );
+        metadataFilename3 = RemoteSegmentStoreDirectory.MetadataFilenameUtils.getMetadataFilename(
+            10,
+            38,
+            34,
+            1,
+            1,
+            "node-1",
+            System.currentTimeMillis() - 500000
+        );
+        metadataFilename4 = RemoteSegmentStoreDirectory.MetadataFilenameUtils.getMetadataFilename(
+            10,
+            36,
+            34,
+            1,
+            1,
+            "node-1",
+            System.currentTimeMillis() - 600000
+        );
     }
 
     public void testDeleteStaleCommitsNoPinnedTimestampMdFilesLatest() throws Exception {
-        metadataFilename = MetadataFilenameUtils.getMetadataFilename(12, 23, 34, 1, 1, "node-1", System.currentTimeMillis());
-        metadataFilename2 = MetadataFilenameUtils.getMetadataFilename(12, 13, 34, 1, 1, "node-1", System.currentTimeMillis());
-        metadataFilename3 = MetadataFilenameUtils.getMetadataFilename(10, 38, 34, 1, 1, "node-1", System.currentTimeMillis());
-
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(eq(MetadataFilenameUtils.METADATA_PREFIX), anyInt())).thenReturn(
-            List.of(metadataFilename, metadataFilename2, metadataFilename3)
+        metadataFilename = RemoteSegmentStoreDirectory.MetadataFilenameUtils.getMetadataFilename(
+            12,
+            23,
+            34,
+            1,
+            1,
+            "node-1",
+            System.currentTimeMillis()
         );
+        metadataFilename2 = RemoteSegmentStoreDirectory.MetadataFilenameUtils.getMetadataFilename(
+            12,
+            13,
+            34,
+            1,
+            1,
+            "node-1",
+            System.currentTimeMillis()
+        );
+        metadataFilename3 = RemoteSegmentStoreDirectory.MetadataFilenameUtils.getMetadataFilename(
+            10,
+            38,
+            34,
+            1,
+            1,
+            "node-1",
+            System.currentTimeMillis()
+        );
+
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                eq(RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX),
+                anyInt()
+            )
+        ).thenReturn(List.of(metadataFilename, metadataFilename2, metadataFilename3));
 
         populateMetadata();
         remoteSegmentStoreDirectory.init();
@@ -125,11 +182,15 @@ public class RemoteSegmentStoreDirectoryWithPinnedTimestampTests extends RemoteS
     }
 
     public void testDeleteStaleCommitsPinnedTimestampMdFile() throws Exception {
-        when(remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(eq(MetadataFilenameUtils.METADATA_PREFIX), anyInt())).thenReturn(
-            List.of(metadataFilename, metadataFilename2, metadataFilename3)
-        );
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                eq(RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX),
+                anyInt()
+            )
+        ).thenReturn(List.of(metadataFilename, metadataFilename2, metadataFilename3));
 
-        long pinnedTimestampMatchingMetadataFilename2 = MetadataFilenameUtils.getTimestamp(metadataFilename2) + 10;
+        long pinnedTimestampMatchingMetadataFilename2 = RemoteSegmentStoreDirectory.MetadataFilenameUtils.getTimestamp(metadataFilename2)
+            + 10;
         String blobName = "snapshot1__" + pinnedTimestampMatchingMetadataFilename2;
         when(blobContainer.listBlobs()).thenReturn(Map.of(blobName, new PlainBlobMetadata(blobName, 100)));
 
@@ -137,7 +198,7 @@ public class RemoteSegmentStoreDirectoryWithPinnedTimestampTests extends RemoteS
         final Set<String> filesToBeDeleted = metadataFilenameContentMapping.get(metadataFilename3)
             .values()
             .stream()
-            .map(metadata -> metadata.split(UploadedSegmentMetadata.SEPARATOR)[1])
+            .map(metadata -> metadata.split(RemoteSegmentStoreDirectory.UploadedSegmentMetadata.SEPARATOR)[1])
             .collect(Collectors.toSet());
 
         updatePinnedTimstampTask.run();
@@ -150,7 +211,9 @@ public class RemoteSegmentStoreDirectoryWithPinnedTimestampTests extends RemoteS
 
         // Verify batch deletion was called with the list of files (order-independent)
         assertBusy(() -> {
-            verify(remoteDataDirectory).deleteFiles(argThat(files -> files != null && new HashSet<>(files).equals(filesToBeDeleted)));
+            verify(remoteDataDirectory).deleteFiles(
+                org.mockito.ArgumentMatchers.argThat(files -> files != null && new HashSet<>(files).equals(filesToBeDeleted))
+            );
         });
 
         assertBusy(() -> assertThat(remoteSegmentStoreDirectory.canDeleteStaleCommits.get(), is(true)));
@@ -166,7 +229,7 @@ public class RemoteSegmentStoreDirectoryWithPinnedTimestampTests extends RemoteS
         Set<String> expectedFilesToDelete = metadataFilenameContentMapping.get(metadataFilename2)
             .values()
             .stream()
-            .map(metadata -> metadata.split(UploadedSegmentMetadata.SEPARATOR)[1])
+            .map(metadata -> metadata.split(RemoteSegmentStoreDirectory.UploadedSegmentMetadata.SEPARATOR)[1])
             .collect(Collectors.toSet());
 
         // Execute deletion

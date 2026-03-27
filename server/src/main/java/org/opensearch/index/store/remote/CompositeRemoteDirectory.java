@@ -16,6 +16,8 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.ExceptionsHelper;
+import org.opensearch.cluster.metadata.CryptoMetadata;
+import org.opensearch.common.annotation.InternalApi;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.blobstore.AsyncMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.BlobContainer;
@@ -61,7 +63,7 @@ import java.util.function.UnaryOperator;
  *
  * @opensearch.api
  */
-@PublicApi(since = "3.0.0")
+@InternalApi
 public class CompositeRemoteDirectory extends RemoteDirectory {
 
     private static final String DEFAULT_FORMAT = "lucene";
@@ -114,22 +116,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         // Initialize format-specific BlobContainers from plugins
         if (pluginsService != null) {
             try {
-                pluginsService.filterPlugins(DataSourcePlugin.class).forEach(plugin -> {
-                    try {
-                        formatBlobContainers.put(
-                            plugin.getDataFormat().name(),
-                            plugin.createBlobContainer(blobStore, baseBlobPath)
-                        );
-                    } catch (IOException e) {
-                        logger.error(
-                            "Failed to create blob container for dataformat {} at base path {}",
-                            plugin.getDataFormat().name(),
-                            baseBlobPath,
-                            e
-                        );
-                        throw new RuntimeException(e);
-                    }
-                });
+                // Todo Initialize blobstore once plugin classes are created.
             } catch (NullPointerException e) {
                 // No plugins available — this is fine
             }
@@ -267,7 +254,8 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         IOContext context,
         Runnable postUploadRunner,
         ActionListener<Void> listener,
-        boolean lowPriorityUpload
+        boolean lowPriorityUpload,
+        CryptoMetadata cryptoMetadata
     ) {
         try {
             FileMetadata fileMetadata = new FileMetadata(src);

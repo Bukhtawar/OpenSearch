@@ -22,7 +22,6 @@ import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.index.engine.NRTReplicationEngineFactory;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.shard.IndexShardTestCase;
-import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.Store;
 import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 import org.opensearch.indices.replication.common.ReplicationType;
@@ -108,16 +107,12 @@ public class RemoteSegmentMetadataHandlerTests extends IndexShardTestCase {
         OutputStreamIndexOutput indexOutput = new OutputStreamIndexOutput("dummy bytes", "dummy stream", output, 4096);
 
         Map<String, String> expectedOutput = getDummyData();
-        Map<FileMetadata, String> fileMetadataMap = new java.util.HashMap<>();
-        for (Map.Entry<String, String> entry : expectedOutput.entrySet()) {
-            fileMetadataMap.put(new FileMetadata("lucene", entry.getKey()), entry.getValue());
-        }
         ByteBuffersIndexOutput segmentInfosOutput = new ByteBuffersIndexOutput(new ByteBuffersDataOutput(), "test", "resource");
         segmentInfos.write(segmentInfosOutput);
         byte[] segmentInfosBytes = segmentInfosOutput.toArrayCopy();
 
         RemoteSegmentMetadata remoteSegmentMetadata = new RemoteSegmentMetadata(
-            RemoteSegmentMetadata.fromMapOfFileMetadata(fileMetadataMap),
+            RemoteSegmentMetadata.fromMapOfStrings(expectedOutput),
             segmentInfosBytes,
             indexShard.getLatestReplicationCheckpoint()
         );
