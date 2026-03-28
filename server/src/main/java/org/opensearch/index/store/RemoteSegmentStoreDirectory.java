@@ -1004,46 +1004,24 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     }
 
     /**
-     * ToDo: Implement proper checksum routing logic per format.
-     * Gets the checksum of a local file, using format-appropriate strategy.
+     * Gets the checksum of a local file by delegating to the local directory's
+     * format-aware checksum calculation.
      *
-     * For Lucene files: uses CodecUtil.retrieveChecksum() which reads the codec footer (fast, O(1)).
-     * For non-Lucene files (parquet, arrow, etc.): uses CRC32 over the full file contents (generic, O(n)).
+     * <ul>
+     *   <li>If the local directory is a {@link CompositeStoreDirectory}, it uses
+     *       {@code calculateUploadChecksum()} which routes via the registry.</li>
+     *   <li>Otherwise, falls back to Lucene's {@code CodecUtil.retrieveChecksum()} for
+     *       backward compatibility with non-composite directories.</li>
+     * </ul>
      *
-     * The format is determined by parsing the file name — if it contains the ":::" delimiter,
-     * the format is extracted and checked. Non-"lucene" formats use the generic checksum.
      */
     private String getChecksumOfLocalFile(Directory directory, String file) throws IOException {
-        // Check if this is a non-Lucene format file
-        if (file.contains(FileMetadata.DELIMITER)) {
-            FileMetadata fm = new FileMetadata(file);
-            if (!"lucene".equals(fm.dataFormat())) {
-                // Non-Lucene files don't have Lucene codec footers — use CRC32
-                return Long.toString(calculateGenericChecksum(directory, file));
-            }
+        if (directory instanceof CompositeStoreDirectory) {
+            return ((CompositeStoreDirectory) directory).calculateUploadChecksum(file);
         }
-        // Lucene files: use standard CodecUtil.retrieveChecksum
+        // Fallback for non-optimized indices (backward compatibility)
         try (IndexInput indexInput = directory.openInput(file, IOContext.READONCE)) {
             return Long.toString(CodecUtil.retrieveChecksum(indexInput));
-        }
-    }
-
-    /**
-     * Calculates a generic CRC32 checksum over the entire file contents.
-     * Used for non-Lucene file formats (Parquet, Arrow, etc.) that do not embed a Lucene codec footer.
-     */
-    private long calculateGenericChecksum(Directory directory, String file) throws IOException {
-        try (IndexInput input = directory.openInput(file, IOContext.READONCE)) {
-            java.util.zip.CRC32 crc32 = new java.util.zip.CRC32();
-            byte[] buffer = new byte[8192];
-            long remaining = input.length();
-            while (remaining > 0) {
-                int toRead = (int) Math.min(buffer.length, remaining);
-                input.readBytes(buffer, 0, toRead);
-                crc32.update(buffer, 0, toRead);
-                remaining -= toRead;
-            }
-            return crc32.getValue();
         }
     }
 

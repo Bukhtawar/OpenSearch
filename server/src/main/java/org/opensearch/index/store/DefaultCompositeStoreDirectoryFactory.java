@@ -15,6 +15,7 @@ import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.checksum.ChecksumHandlerRegistry;
 
 import java.io.IOException;
 import java.util.Locale;
@@ -48,13 +49,25 @@ public class DefaultCompositeStoreDirectoryFactory implements CompositeStoreDire
         }
 
         try {
+            // Build ChecksumHandlerRegistry with built-in handlers
+            // TODO: When DataSourcePlugin is implemented, collect plugin-provided checksum handlers here:
+            // var dataSourcePlugins = pluginsService.filterPlugins(DataSourcePlugin.class);
+            // for (DataSourcePlugin plugin : dataSourcePlugins) {
+            // checksumRegistry.registerHandler(plugin.getChecksumHandler());
+            // }
+            ChecksumHandlerRegistry checksumRegistry = new ChecksumHandlerRegistry();
+
             // Create FSDirectory on the shard's index/ directory as the delegate
             FSDirectory delegate = FSDirectory.open(shardPath.resolveIndex());
 
-            CompositeStoreDirectory compositeDirectory = new CompositeStoreDirectory(delegate, shardPath);
+            CompositeStoreDirectory compositeDirectory = new CompositeStoreDirectory(delegate, shardPath, checksumRegistry);
 
             if (logger.isDebugEnabled()) {
-                logger.debug("Successfully created CompositeStoreDirectory for shard: {}", shardPath.getShardId());
+                logger.debug(
+                    "Successfully created CompositeStoreDirectory for shard: {} with checksum handlers: {}",
+                    shardPath.getShardId(),
+                    checksumRegistry.getRegisteredFormats()
+                );
             }
 
             return compositeDirectory;
