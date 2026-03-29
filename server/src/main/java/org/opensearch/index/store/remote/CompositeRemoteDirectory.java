@@ -208,8 +208,10 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         }
         // Delete from base container (handles lucene/metadata blobs)
         super.deleteFiles(names);
-        // Also attempt deletion from all format-specific containers
-        // (blob names are unique, so only the correct container will find the blob)
+
+        // Broadcast delete to every format-specific container. This is intentionally speculative:
+        // blob names are UUID-suffixed and globally unique, so at most one container holds each
+        // blob.
         for (BlobContainer container : formatBlobContainers.values()) {
             container.deleteBlobsIgnoringIfNotExists(names);
         }
