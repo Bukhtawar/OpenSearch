@@ -842,7 +842,8 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
 
     /**
      * Upload metadata file using CatalogSnapshot.
-     * Handles both SegmentInfosCatalogSnapshot (non-optimized) and CompositeEngineCatalogSnapshot (optimized).
+     * Uses polymorphic dispatch to CatalogSnapshot subclasses for Lucene version resolution
+     * and serialization, eliminating instanceof checks.
      *
      * @param segmentFiles         segment files that are part of the shard at the time of the latest refresh
      * @param catalogSnapshot      CatalogSnapshot containing segment metadata (either SegmentInfos-backed or Composite)
@@ -873,42 +874,21 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
                 try (IndexOutput indexOutput = storeDirectory.createOutput(metadataFilename, IOContext.DEFAULT)) {
                     Map<String, String> uploadedSegments = new HashMap<>();
 
-                    if (catalogSnapshot instanceof SegmentInfosCatalogSnapshot) {
-                        // Non-optimized path: extract Lucene versions from SegmentInfos
-                        SegmentInfos segmentInfos = ((SegmentInfosCatalogSnapshot) catalogSnapshot).getSegmentInfos();
-                        Map<String, Integer> segmentToLuceneVersion = getSegmentToLuceneVersion(segmentFiles, segmentInfos);
-                        for (String file : segmentFiles) {
-                            if (segmentsUploadedToRemoteStore.containsKey(file)) {
-                                UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(file);
-                                Integer luceneVersion = segmentToLuceneVersion.get(metadata.originalFilename);
-                                if (luceneVersion != null) {
-                                    metadata.setWrittenByMajor(luceneVersion);
-                                } else {
-                                    metadata.setWrittenByMajor(Version.LATEST.major);
-                                }
-                                uploadedSegments.put(file, metadata.toString());
-                            } else {
-                                throw new NoSuchFileException(file);
-                            }
-                        }
-                    } else {
-                        // Optimized (Composite) path: use Version.LATEST for all files
-                        for (String file : segmentFiles) {
-                            if (segmentsUploadedToRemoteStore.containsKey(file)) {
-                                UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(file);
-                                metadata.setWrittenByMajor(Version.LATEST.major);
-                                uploadedSegments.put(file, metadata.toString());
-                            } else {
-                                throw new NoSuchFileException(file);
-                            }
+                    // Polymorphic dispatch — no instanceof checks needed.
+                    // Each CatalogSnapshot subclass knows how to resolve Lucene versions for its files.
+                    for (String file : segmentFiles) {
+                        if (segmentsUploadedToRemoteStore.containsKey(file)) {
+                            UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(file);
+                            metadata.setWrittenByMajor(catalogSnapshot.getLuceneVersionForFile(metadata.originalFilename));
+                            uploadedSegments.put(file, metadata.toString());
+                        } else {
+                            throw new NoSuchFileException(file);
                         }
                     }
 
-                    // Serialize the SegmentInfos bytes for the metadata file
-                    byte[] segmentInfoSnapshotByteArray = serializeCatalogSnapshotToSegmentInfosBytes(
-                        catalogSnapshot,
-                        replicationCheckpoint
-                    );
+                    // Polymorphic dispatch — each CatalogSnapshot subclass knows how to serialize itself
+                    // to SegmentInfos bytes for the remote metadata file.
+                    byte[] segmentInfoSnapshotByteArray = catalogSnapshot.serializeToSegmentInfosBytes(replicationCheckpoint);
 
                     metadataStreamWrapper.writeStream(
                         indexOutput,
@@ -927,32 +907,12 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         }
     }
 
-    /**
-     * Serializes a CatalogSnapshot into SegmentInfos bytes for the remote metadata file.
-     *
-     * For SegmentInfosCatalogSnapshot: writes the actual SegmentInfos.
-     * For CompositeEngineCatalogSnapshot: creates a synthetic SegmentInfos with the CatalogSnapshot
-     * serialized into userData, so it can be reconstructed on recovery.
-     */
-    private byte[] serializeCatalogSnapshotToSegmentInfosBytes(CatalogSnapshot catalogSnapshot, ReplicationCheckpoint replicationCheckpoint)
-        throws IOException {
-        SegmentInfos segmentInfosToSerialize;
-
-        if (catalogSnapshot instanceof SegmentInfosCatalogSnapshot) {
-            segmentInfosToSerialize = ((SegmentInfosCatalogSnapshot) catalogSnapshot).getSegmentInfos();
-        } else {
-            // Composite/optimized: create synthetic SegmentInfos with CatalogSnapshot embedded in userData
-            segmentInfosToSerialize = new SegmentInfos(Version.LATEST.major);
-            Map<String, String> userData = new HashMap<>(catalogSnapshot.getUserData());
-            userData.put(CatalogSnapshot.CATALOG_SNAPSHOT_KEY, catalogSnapshot.serializeToString());
-            segmentInfosToSerialize.setUserData(userData, false);
-            segmentInfosToSerialize.setNextWriteGeneration(replicationCheckpoint.getSegmentsGen());
-        }
-
-        ByteBuffersDataOutput byteBuffersIndexOutput = new ByteBuffersDataOutput();
-        segmentInfosToSerialize.write(new ByteBuffersIndexOutput(byteBuffersIndexOutput, "Snapshot of SegmentInfos", "SegmentInfos"));
-        return byteBuffersIndexOutput.toArrayCopy();
-    }
+    // TODO: When RemoteStoreRefreshListener is migrated to use CatalogSnapshot-based uploadMetadata,
+    // the instanceof check for SegmentInfosCatalogSnapshot.setUserData() will no longer be needed
+    // since setUserData() is now properly implemented in SegmentInfosCatalogSnapshot.
+    // Also, the old uploadMetadata(SegmentInfos, ...) overload above can be removed at that point
+    // and getSegmentToLuceneVersion() can be deleted since it's encapsulated in
+    // SegmentInfosCatalogSnapshot.getLuceneVersionForFile().
 
     /**
      * Parses the provided SegmentInfos to retrieve a mapping of the provided segment files to

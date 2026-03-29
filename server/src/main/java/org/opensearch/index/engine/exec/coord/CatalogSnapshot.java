@@ -16,6 +16,7 @@ import org.opensearch.core.common.io.stream.Writeable;
 import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
+import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -204,4 +205,29 @@ public abstract class CatalogSnapshot implements Writeable, Cloneable {
     public abstract CatalogSnapshot clone();
 
     public abstract Object getReader(DataFormat dataFormat);
+
+    /**
+     * Returns the Lucene major version that wrote the given segment file.
+     * Each CatalogSnapshot subclass knows how to resolve this:
+     *
+     * TODO: When CompositeEngineCatalogSnapshot is added, implement this method
+     *       returning Version.LATEST.major for all files.
+     *
+     * @param file the segment file name
+     * @return the Lucene major version
+     */
+    public abstract int getLuceneVersionForFile(String file);
+
+    /**
+     * Serializes this CatalogSnapshot into SegmentInfos bytes for the remote metadata file.
+     * Each subclass knows its own serialization format:
+     *
+     * TODO: When CompositeEngineCatalogSnapshot is added, implement this method
+     *       creating synthetic SegmentInfos with CatalogSnapshot serialized into userData.
+     *
+     * @param replicationCheckpoint the replication checkpoint
+     * @return serialized bytes
+     * @throws IOException in case of I/O error
+     */
+    public abstract byte[] serializeToSegmentInfosBytes(ReplicationCheckpoint replicationCheckpoint) throws IOException;
 }

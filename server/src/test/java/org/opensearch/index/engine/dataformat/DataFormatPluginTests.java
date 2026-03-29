@@ -30,6 +30,7 @@ import org.opensearch.index.engine.exec.coord.DataformatAwareCatalogSnapshot;
 import org.opensearch.index.mapper.MappedFieldType;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.io.IOException;
