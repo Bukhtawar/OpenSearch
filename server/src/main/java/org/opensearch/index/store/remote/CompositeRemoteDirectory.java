@@ -118,13 +118,15 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         this.logger = logger;
 
         // Initialize format-specific BlobContainers from plugins
-        if (pluginsService != null) {
-            try {
-                // Todo Initialize blobstore once plugin classes are created.
-            } catch (NullPointerException e) {
-                // No plugins available — this is fine
-            }
-        }
+        // TODO: Initialize blobstore once plugin classes are created.
+        // When DataSourcePlugin integration is added, iterate over plugins with explicit null checks:
+        // List<DataSourcePlugin> plugins = pluginsService.filterPlugins(DataSourcePlugin.class);
+        // for (DataSourcePlugin plugin : plugins) {
+        // if (plugin != null && plugin.getDataFormat() != null) {
+        // BlobContainer container = plugin.createBlobContainer(blobStore, baseBlobPath);
+        // if (container != null) formatBlobContainers.put(plugin.getDataFormat().name(), container);
+        // }
+        // }
 
         logger.debug("Created CompositeRemoteDirectory with {} format BlobContainers", formatBlobContainers.size());
     }
