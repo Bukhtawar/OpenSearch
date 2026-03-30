@@ -43,6 +43,7 @@ import org.opensearch.index.engine.exec.coord.CatalogSnapshot;
 import org.opensearch.index.engine.exec.coord.CatalogSnapshotManager;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.indices.IndicesService;
+import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.io.IOException;
@@ -300,8 +301,20 @@ public class DefaultPlanExecutorTests extends OpenSearchTestCase {
         }
 
         @Override
+        @Override
         public MockCatalogSnapshot clone() {
             return new MockCatalogSnapshot(generation, segments, format);
+        }
+
+        @Override
+        public int getLuceneVersionForFile(String file) {
+            return 0;
+        }
+
+        @Override
+        public byte[] serializeToSegmentInfosBytes(ReplicationCheckpoint replicationCheckpoint) throws IOException {
+            return new byte[0];
+        }
         }
 
         @Override
