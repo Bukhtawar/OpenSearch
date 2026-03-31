@@ -19,6 +19,10 @@ import org.opensearch.common.blobstore.BlobStore;
 import org.opensearch.common.blobstore.support.PlainBlobMetadata;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
 import org.opensearch.index.store.RemoteSegmentStoreDirectory.UploadedSegmentMetadata;
+import org.opensearch.common.blobstore.AsyncMultiStreamBlobContainer;
+import org.opensearch.index.store.CompositeStoreDirectory;
+import org.opensearch.index.store.FileMetadata;
+import org.opensearch.index.store.RemoteIndexOutput;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.io.ByteArrayInputStream;
@@ -35,6 +39,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -368,5 +373,238 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         // For parquet files
         BlobContainer parquetContainer = directory.getBlobContainerForFormat("parquet");
         assertSame(parquetBlobContainer, parquetContainer);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // openInput(String, long, IOContext) Tests - Format-aware routing
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testOpenInput_StringBased_LuceneFile() throws IOException {
+        byte[] content = new byte[100];
+        when(baseBlobContainer.readBlob("_0.cfs")).thenReturn(new ByteArrayInputStream(content));
+
+        IndexInput input = directory.openInput("_0.cfs", 100, IOContext.DEFAULT);
+        assertNotNull(input);
+        assertEquals(100, input.length());
+        input.close();
+
+        verify(baseBlobContainer).readBlob("_0.cfs");
+    }
+
+    public void testOpenInput_StringBased_ParquetFile_WithFormatSuffix() throws IOException {
+        // Pre-register parquet container
+        directory.getBlobContainerForFormat("parquet");
+
+        byte[] content = new byte[200];
+        when(parquetBlobContainer.readBlob("_0.parquet:::parquet")).thenReturn(new ByteArrayInputStream(content));
+
+        IndexInput input = directory.openInput("_0.parquet:::parquet", 200, IOContext.DEFAULT);
+        assertNotNull(input);
+        assertEquals(200, input.length());
+        input.close();
+
+        verify(parquetBlobContainer).readBlob("_0.parquet:::parquet");
+        verify(baseBlobContainer, never()).readBlob(anyString());
+    }
+
+    public void testOpenInput_StringBased_ClosesStreamOnException() throws IOException {
+        when(baseBlobContainer.readBlob("_0.cfs")).thenThrow(new IOException("read error"));
+
+        expectThrows(IOException.class, () -> directory.openInput("_0.cfs", 100, IOContext.DEFAULT));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // createOutput Tests - Format-aware routing
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testCreateOutput_LuceneFormat() throws IOException {
+        RemoteIndexOutput output = directory.createOutput("test_file", "lucene", IOContext.DEFAULT);
+        assertNotNull(output);
+    }
+
+    public void testCreateOutput_ParquetFormat() throws IOException {
+        // Pre-register parquet container
+        directory.getBlobContainerForFormat("parquet");
+
+        RemoteIndexOutput output = directory.createOutput("test_file.parquet", "parquet", IOContext.DEFAULT);
+        assertNotNull(output);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // fileLength(FileMetadata) Tests
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testFileLength_FileMetadata_Lucene() throws IOException {
+        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
+        List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.cfs", 1234));
+        when(baseBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.cfs"), eq(1), any())).thenReturn(blobList);
+
+        long length = directory.fileLength(fm);
+        assertEquals(1234, length);
+    }
+
+    public void testFileLength_FileMetadata_Parquet() throws IOException {
+        directory.getBlobContainerForFormat("parquet");
+
+        FileMetadata fm = new FileMetadata("parquet", "_0.parquet");
+        List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.parquet", 5678));
+        when(parquetBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.parquet"), eq(1), any())).thenReturn(blobList);
+
+        long length = directory.fileLength(fm);
+        assertEquals(5678, length);
+    }
+
+    public void testFileLength_FileMetadata_NotFound() throws IOException {
+        FileMetadata fm = new FileMetadata("lucene", "nonexistent");
+        when(baseBlobContainer.listBlobsByPrefixInSortedOrder(eq("nonexistent"), eq(1), any())).thenReturn(Collections.emptyList());
+
+        expectThrows(NoSuchFileException.class, () -> directory.fileLength(fm));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // openInput(FileMetadata, long, IOContext) Tests
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testOpenInput_FileMetadata_Lucene() throws IOException {
+        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
+        byte[] content = new byte[100];
+        when(baseBlobContainer.readBlob("_0.cfs")).thenReturn(new ByteArrayInputStream(content));
+
+        IndexInput input = directory.openInput(fm, 100, IOContext.DEFAULT);
+        assertNotNull(input);
+        assertEquals(100, input.length());
+        input.close();
+
+        verify(baseBlobContainer).readBlob("_0.cfs");
+    }
+
+    public void testOpenInput_FileMetadata_Parquet() throws IOException {
+        directory.getBlobContainerForFormat("parquet");
+        FileMetadata fm = new FileMetadata("parquet", "_0.parquet");
+        byte[] content = new byte[200];
+        when(parquetBlobContainer.readBlob("_0.parquet")).thenReturn(new ByteArrayInputStream(content));
+
+        IndexInput input = directory.openInput(fm, 200, IOContext.DEFAULT);
+        assertNotNull(input);
+        assertEquals(200, input.length());
+        input.close();
+
+        verify(parquetBlobContainer).readBlob("_0.parquet");
+        verify(baseBlobContainer, never()).readBlob(anyString());
+    }
+
+    public void testOpenInput_FileMetadata_ClosesStreamOnException() throws IOException {
+        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
+        InputStream mockStream = mock(InputStream.class);
+        when(baseBlobContainer.readBlob("_0.cfs")).thenReturn(mockStream);
+        when(mockStream.read(any(), anyInt(), anyInt())).thenThrow(new IOException("read error"));
+
+        // openInput wraps the stream, reading from it will fail
+        IndexInput input = directory.openInput(fm, 100, IOContext.DEFAULT);
+        assertNotNull(input);
+        input.close();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // deleteFile(UploadedSegmentMetadata) - Lucene metadata
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testDeleteFile_WithUploadedSegmentMetadata_Lucene() throws IOException {
+        UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString("_0.cfs::_0.cfs__UUID1::checksum123::100::10");
+
+        directory.deleteFile(metadata);
+
+        verify(baseBlobContainer).deleteBlobsIgnoringIfNotExists(Collections.singletonList("_0.cfs__UUID1"));
+        verify(parquetBlobContainer, never()).deleteBlobsIgnoringIfNotExists(any());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Async copyFrom Tests (8-arg version, returns boolean)
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testAsyncCopyFrom_NonAsyncContainer_ReturnsFalse() throws IOException {
+        // baseBlobContainer is NOT AsyncMultiStreamBlobContainer, so should return false
+        org.opensearch.core.action.ActionListener<Void> listener = mock(org.opensearch.core.action.ActionListener.class);
+        org.apache.lucene.store.Directory mockFrom = mock(org.apache.lucene.store.Directory.class);
+
+        boolean result = directory.copyFrom(
+            mockFrom,
+            "_0.cfs",              // src (lucene format, no :::)
+            "_0.cfs__UUID",        // remoteFileName
+            IOContext.DEFAULT,
+            () -> {},
+            listener,
+            false,
+            null
+        );
+
+        assertFalse("Should return false when container is not AsyncMultiStreamBlobContainer", result);
+    }
+
+    public void testAsyncCopyFrom_ExceptionHandling() throws IOException {
+        org.opensearch.core.action.ActionListener<Void> listener = mock(org.opensearch.core.action.ActionListener.class);
+        org.apache.lucene.store.Directory mockFrom = mock(org.apache.lucene.store.Directory.class);
+        // Make openInput throw an exception
+        when(mockFrom.openInput(anyString(), any())).thenThrow(new IOException("open failed"));
+
+        // Even with exception, it should not propagate but call listener.onFailure
+        boolean result = directory.copyFrom(
+            mockFrom,
+            "_0.cfs",
+            "_0.cfs__UUID",
+            IOContext.DEFAULT,
+            () -> {},
+            listener,
+            false,
+            null
+        );
+
+        // Returns false because baseBlobContainer is not AsyncMultiStreamBlobContainer
+        assertFalse(result);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FileMetadata-based copyFrom (non-async) - returns false when not async
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testCopyFrom_FileMetadata_NonAsync_ReturnsFalse() throws IOException {
+        CompositeStoreDirectory mockComposite = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
+
+        org.opensearch.core.action.ActionListener<Void> listener = mock(org.opensearch.core.action.ActionListener.class);
+
+        boolean result = directory.copyFrom(
+            mockComposite,
+            fm,
+            "_0.cfs__UUID",
+            IOContext.DEFAULT,
+            () -> {},
+            listener,
+            false
+        );
+
+        assertFalse("Should return false when base container is not AsyncMultiStreamBlobContainer", result);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // openInput(UploadedSegmentMetadata) - Exception closes stream
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testOpenInput_UploadedSegmentMetadata_ExceptionClosesStream() throws IOException {
+        UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString("_0.cfs::_0.cfs__UUID1::checksum123::100::10");
+        when(baseBlobContainer.readBlob("_0.cfs__UUID1")).thenThrow(new IOException("blob read failed"));
+
+        expectThrows(IOException.class, () -> directory.openInput(metadata, 100, IOContext.DEFAULT));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Metadata file routing
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testDeleteFile_MetadataFile() throws IOException {
+        directory.deleteFile("metadata__1__2__3");
+
+        // "metadata" format routes to base container
+        verify(baseBlobContainer).deleteBlobsIgnoringIfNotExists(Collections.singletonList("metadata__1__2__3"));
     }
 }

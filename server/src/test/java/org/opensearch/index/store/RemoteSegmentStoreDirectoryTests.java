@@ -40,6 +40,8 @@ import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadataHandlerFactory;
 import org.opensearch.test.MockLogAppender;
 import org.opensearch.test.junit.annotations.TestLogging;
+import org.opensearch.index.engine.exec.CatalogSnapshot;
+import org.opensearch.index.engine.exec.SegmentInfosCatalogSnapshot;
 import org.opensearch.threadpool.ThreadPool;
 import org.junit.Before;
 
@@ -1352,6 +1354,167 @@ public class RemoteSegmentStoreDirectoryTests extends BaseRemoteSegmentStoreDire
         assertEquals(2, uploadedSegments.size());
         assertTrue(uploadedSegments.containsKey("_0.cfe"));
         assertTrue(uploadedSegments.containsKey("_0.cfs"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Tests for new CatalogSnapshot-based uploadMetadata
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testUploadMetadataWithCatalogSnapshot() throws IOException {
+        indexDocs(142364, 5);
+        flushShard(indexShard, true);
+        SegmentInfos segInfos = indexShard.store().readLastCommittedSegmentsInfo();
+        long primaryTerm = indexShard.getLatestReplicationCheckpoint().getPrimaryTerm();
+        String primaryTermLong = RemoteStoreUtils.invertLong(primaryTerm);
+        long generation = segInfos.getGeneration();
+        String generationLong = RemoteStoreUtils.invertLong(generation);
+        String latestMetadataFileName = "metadata__" + primaryTermLong + "__" + generationLong + "__abc";
+        List<String> metadataFiles = List.of(latestMetadataFileName);
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX,
+                METADATA_FILES_TO_FETCH
+            )
+        ).thenReturn(metadataFiles);
+        Map<String, Map<String, String>> metadataFilenameContentMapping = Map.of(
+            latestMetadataFileName,
+            getDummyMetadata("_0", (int) generation)
+        );
+        when(remoteMetadataDirectory.getBlobStream(latestMetadataFileName)).thenReturn(
+            createMetadataFileBytes(
+                metadataFilenameContentMapping.get(latestMetadataFileName),
+                indexShard.getLatestReplicationCheckpoint(),
+                segmentInfos
+            )
+        );
+
+        remoteSegmentStoreDirectory.init();
+
+        Directory storeDirectory = mock(Directory.class);
+        BytesStreamOutput output = new BytesStreamOutput();
+        IndexOutput indexOutput = new OutputStreamIndexOutput("segment metadata", "metadata output stream", output, 4096);
+        when(storeDirectory.createOutput(startsWith("metadata__" + primaryTermLong + "__" + generationLong), eq(IOContext.DEFAULT)))
+            .thenReturn(indexOutput);
+
+        // Create CatalogSnapshot from SegmentInfos
+        SegmentInfosCatalogSnapshot catalogSnapshot = new SegmentInfosCatalogSnapshot(segInfos);
+
+        remoteSegmentStoreDirectory.uploadMetadata(
+            segInfos.files(true),
+            catalogSnapshot,
+            storeDirectory,
+            generation,
+            indexShard.getLatestReplicationCheckpoint(),
+            ""
+        );
+
+        verify(remoteMetadataDirectory).copyFrom(
+            eq(storeDirectory),
+            startsWith("metadata__" + primaryTermLong + "__" + generationLong),
+            startsWith("metadata__" + primaryTermLong + "__" + generationLong),
+            eq(IOContext.DEFAULT)
+        );
+    }
+
+    public void testUploadMetadataWithCatalogSnapshot_MissingSegment() throws IOException {
+        populateMetadata();
+        remoteSegmentStoreDirectory.init();
+
+        Directory storeDirectory = mock(Directory.class);
+        IndexOutput indexOutput = mock(IndexOutput.class);
+
+        String generation = RemoteStoreUtils.invertLong(segmentInfos.getGeneration());
+        long primaryTermLong = indexShard.getLatestReplicationCheckpoint().getPrimaryTerm();
+        String primaryTerm = RemoteStoreUtils.invertLong(primaryTermLong);
+        when(storeDirectory.createOutput(startsWith("metadata__" + primaryTerm + "__" + generation), eq(IOContext.DEFAULT))).thenReturn(
+            indexOutput
+        );
+
+        SegmentInfosCatalogSnapshot catalogSnapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
+
+        Collection<String> segmentFiles = List.of("_123.si");
+        assertThrows(
+            NoSuchFileException.class,
+            () -> remoteSegmentStoreDirectory.uploadMetadata(
+                segmentFiles,
+                catalogSnapshot,
+                storeDirectory,
+                12L,
+                indexShard.getLatestReplicationCheckpoint(),
+                ""
+            )
+        );
+        verify(indexOutput).close();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Tests for UploadedSegmentMetadata with format-aware filenames
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testUploadedSegmentMetadataFromString_WithFormatDelimiter() {
+        // Format: originalFilename::uploadedFilename::checksum::length::writtenByMajor
+        // Where originalFilename contains ":::" (e.g., "_0.parquet:::parquet")
+        String metadataString = "_0.parquet:::parquet::_0.parquet__UUID1::checksum456::200::" + Version.LATEST.major;
+        RemoteSegmentStoreDirectory.UploadedSegmentMetadata metadata =
+            RemoteSegmentStoreDirectory.UploadedSegmentMetadata.fromString(metadataString);
+
+        assertEquals("_0.parquet:::parquet", metadata.getOriginalFilename());
+        assertEquals("_0.parquet__UUID1", metadata.getUploadedFilename());
+        assertEquals("checksum456", metadata.getChecksum());
+        assertEquals(200, metadata.getLength());
+    }
+
+    public void testUploadedSegmentMetadataToString_WithFormatDelimiter() {
+        RemoteSegmentStoreDirectory.UploadedSegmentMetadata metadata = new RemoteSegmentStoreDirectory.UploadedSegmentMetadata(
+            "_0.parquet:::parquet",
+            "_0.parquet__UUID1",
+            "checksum456",
+            200
+        );
+        metadata.setWrittenByMajor(Version.LATEST.major);
+
+        String result = metadata.toString();
+        assertTrue("toString should contain :::parquet", result.contains(":::parquet"));
+        assertTrue("toString should contain uploaded filename", result.contains("_0.parquet__UUID1"));
+
+        // Verify round-trip
+        RemoteSegmentStoreDirectory.UploadedSegmentMetadata parsed =
+            RemoteSegmentStoreDirectory.UploadedSegmentMetadata.fromString(result);
+        assertEquals("_0.parquet:::parquet", parsed.getOriginalFilename());
+        assertEquals("_0.parquet__UUID1", parsed.getUploadedFilename());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Tests for readLatestNMetadataFiles
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testReadLatestNMetadataFiles_Empty() throws IOException {
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX,
+                3
+            )
+        ).thenReturn(new ArrayList<>());
+
+        Map<String, RemoteSegmentMetadata> result = remoteSegmentStoreDirectory.readLatestNMetadataFiles(3);
+        assertNotNull(result);
+        assertEquals(0, result.size());
+    }
+
+    public void testReadLatestNMetadataFiles_SingleFile() throws IOException {
+        populateMetadata();
+
+        when(
+            remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+                RemoteSegmentStoreDirectory.MetadataFilenameUtils.METADATA_PREFIX,
+                1
+            )
+        ).thenReturn(List.of(metadataFilename));
+
+        Map<String, RemoteSegmentMetadata> result = remoteSegmentStoreDirectory.readLatestNMetadataFiles(1);
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        assertTrue(result.containsKey(metadataFilename));
     }
 
     public void testMarkMergedSegmentPendingDownload() {
