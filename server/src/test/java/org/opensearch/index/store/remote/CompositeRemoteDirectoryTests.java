@@ -18,11 +18,10 @@ import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.BlobStore;
 import org.opensearch.common.blobstore.support.PlainBlobMetadata;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
-import org.opensearch.index.store.RemoteSegmentStoreDirectory.UploadedSegmentMetadata;
-import org.opensearch.common.blobstore.AsyncMultiStreamBlobContainer;
 import org.opensearch.index.store.CompositeStoreDirectory;
 import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.RemoteIndexOutput;
+import org.opensearch.index.store.RemoteSegmentStoreDirectory.UploadedSegmentMetadata;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.io.ByteArrayInputStream;
@@ -39,7 +38,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -548,16 +546,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         when(mockFrom.openInput(anyString(), any())).thenThrow(new IOException("open failed"));
 
         // Even with exception, it should not propagate but call listener.onFailure
-        boolean result = directory.copyFrom(
-            mockFrom,
-            "_0.cfs",
-            "_0.cfs__UUID",
-            IOContext.DEFAULT,
-            () -> {},
-            listener,
-            false,
-            null
-        );
+        boolean result = directory.copyFrom(mockFrom, "_0.cfs", "_0.cfs__UUID", IOContext.DEFAULT, () -> {}, listener, false, null);
 
         // Returns false because baseBlobContainer is not AsyncMultiStreamBlobContainer
         assertFalse(result);
@@ -573,15 +562,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
 
         org.opensearch.core.action.ActionListener<Void> listener = mock(org.opensearch.core.action.ActionListener.class);
 
-        boolean result = directory.copyFrom(
-            mockComposite,
-            fm,
-            "_0.cfs__UUID",
-            IOContext.DEFAULT,
-            () -> {},
-            listener,
-            false
-        );
+        boolean result = directory.copyFrom(mockComposite, fm, "_0.cfs__UUID", IOContext.DEFAULT, () -> {}, listener, false);
 
         assertFalse("Should return false when base container is not AsyncMultiStreamBlobContainer", result);
     }

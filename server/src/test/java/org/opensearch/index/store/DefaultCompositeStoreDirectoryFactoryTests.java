@@ -82,10 +82,7 @@ public class DefaultCompositeStoreDirectoryFactoryTests extends OpenSearchTestCa
         CompositeStoreDirectory directory = factory.newCompositeStoreDirectory(indexSettings, shardPath.getShardId(), shardPath);
 
         assertNotNull("Directory should have a checksum registry", directory.getChecksumRegistry());
-        assertTrue(
-            "Checksum registry should have 'lucene' handler",
-            directory.getChecksumRegistry().hasHandler("lucene")
-        );
+        assertTrue("Checksum registry should have 'lucene' handler", directory.getChecksumRegistry().hasHandler("lucene"));
     }
 
     public void testNewCompositeStoreDirectory_CanListFiles() throws IOException {

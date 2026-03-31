@@ -32,6 +32,7 @@ import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
+import org.opensearch.index.engine.exec.SegmentInfosCatalogSnapshot;
 import org.opensearch.index.remote.RemoteStoreEnums.PathHashAlgorithm;
 import org.opensearch.index.remote.RemoteStoreEnums.PathType;
 import org.opensearch.index.remote.RemoteStorePathStrategy;
@@ -40,8 +41,6 @@ import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadataHandlerFactory;
 import org.opensearch.test.MockLogAppender;
 import org.opensearch.test.junit.annotations.TestLogging;
-import org.opensearch.index.engine.exec.CatalogSnapshot;
-import org.opensearch.index.engine.exec.SegmentInfosCatalogSnapshot;
 import org.opensearch.threadpool.ThreadPool;
 import org.junit.Before;
 
@@ -1455,8 +1454,9 @@ public class RemoteSegmentStoreDirectoryTests extends BaseRemoteSegmentStoreDire
         // Format: originalFilename::uploadedFilename::checksum::length::writtenByMajor
         // Where originalFilename contains ":::" (e.g., "_0.parquet:::parquet")
         String metadataString = "_0.parquet:::parquet::_0.parquet__UUID1::checksum456::200::" + Version.LATEST.major;
-        RemoteSegmentStoreDirectory.UploadedSegmentMetadata metadata =
-            RemoteSegmentStoreDirectory.UploadedSegmentMetadata.fromString(metadataString);
+        RemoteSegmentStoreDirectory.UploadedSegmentMetadata metadata = RemoteSegmentStoreDirectory.UploadedSegmentMetadata.fromString(
+            metadataString
+        );
 
         assertEquals("_0.parquet:::parquet", metadata.getOriginalFilename());
         assertEquals("_0.parquet__UUID1", metadata.getUploadedFilename());
@@ -1478,8 +1478,7 @@ public class RemoteSegmentStoreDirectoryTests extends BaseRemoteSegmentStoreDire
         assertTrue("toString should contain uploaded filename", result.contains("_0.parquet__UUID1"));
 
         // Verify round-trip
-        RemoteSegmentStoreDirectory.UploadedSegmentMetadata parsed =
-            RemoteSegmentStoreDirectory.UploadedSegmentMetadata.fromString(result);
+        RemoteSegmentStoreDirectory.UploadedSegmentMetadata parsed = RemoteSegmentStoreDirectory.UploadedSegmentMetadata.fromString(result);
         assertEquals("_0.parquet:::parquet", parsed.getOriginalFilename());
         assertEquals("_0.parquet__UUID1", parsed.getUploadedFilename());
     }
