@@ -109,7 +109,7 @@ public class CompositeStoreDirectory extends Store.StoreDirectory {
 
     @Override
     public void close() {
-        // No-op: lifecycle is managed by Store.closeInternal() via IOUtils.close()
+        assert false : "Nobody should close this directory except of the Store itself";
     }
 
     private String resolveFileName(String fileName) {
