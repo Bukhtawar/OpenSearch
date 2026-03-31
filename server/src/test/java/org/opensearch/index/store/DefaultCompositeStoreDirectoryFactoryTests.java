@@ -113,4 +113,33 @@ public class DefaultCompositeStoreDirectoryFactoryTests extends OpenSearchTestCa
         assertNotNull(dir2);
         assertNotSame("Each call should create a new instance", dir1, dir2);
     }
+
+    public void testNewCompositeStoreDirectory_InvalidPath_ThrowsIOException() throws IOException {
+        DefaultCompositeStoreDirectoryFactory factory = new DefaultCompositeStoreDirectoryFactory();
+        IndexSettings indexSettings = createIndexSettings();
+
+        // Create a valid shard path structure (must end with shardId, parent with indexUUID)
+        // but place a regular file where the "index" directory should be, so FSDirectory.open() fails
+        String indexUUID = "test-index-uuid";
+        int shardId = 0;
+        Path tempDir = createTempDir();
+        Path shardDataPath = tempDir.resolve(indexUUID).resolve(Integer.toString(shardId));
+        Files.createDirectories(shardDataPath);
+        // Create a FILE named "index" instead of a directory — FSDirectory.open() will fail
+        Path indexFile = shardDataPath.resolve(ShardPath.INDEX_FOLDER_NAME);
+        Files.createFile(indexFile);
+
+        ShardId sid = new ShardId(new Index("test-index", indexUUID), shardId);
+        ShardPath invalidShardPath = new ShardPath(false, shardDataPath, shardDataPath, sid);
+
+        // This should trigger the catch block which wraps the exception as IOException
+        IOException exception = expectThrows(
+            IOException.class,
+            () -> factory.newCompositeStoreDirectory(indexSettings, invalidShardPath.getShardId(), invalidShardPath)
+        );
+        assertTrue(
+            "Exception message should mention shard, but was: " + exception.getMessage(),
+            exception.getMessage().contains("Failed to create CompositeStoreDirectory for shard")
+        );
+    }
 }

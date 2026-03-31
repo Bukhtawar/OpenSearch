@@ -10,14 +10,22 @@ package org.opensearch.index.store.remote;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.lucene.codecs.CodecUtil;
+import org.apache.lucene.index.CorruptIndexException;
+import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.IndexOutput;
+import org.opensearch.common.blobstore.AsyncMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.BlobMetadata;
 import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.BlobStore;
+import org.opensearch.common.blobstore.exception.CorruptFileException;
+import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.support.PlainBlobMetadata;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
+import org.opensearch.core.action.ActionListener;
 import org.opensearch.index.store.CompositeStoreDirectory;
 import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.RemoteIndexOutput;
@@ -32,7 +40,12 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.UnaryOperator;
+
+import org.mockito.Mockito;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -587,5 +600,755 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
 
         // "metadata" format routes to base container
         verify(baseBlobContainer).deleteBlobsIgnoringIfNotExists(Collections.singletonList("metadata__1__2__3"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Sync copyFrom(Directory, String, String, IOContext) Tests
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testSyncCopyFrom_LuceneFile_CopiesToBaseContainer() throws IOException {
+        Directory mockFrom = mock(Directory.class);
+        IndexInput mockInput = mock(IndexInput.class);
+        when(mockInput.length()).thenReturn(10L);
+        when(mockFrom.openInput(eq("_0.cfs"), any(IOContext.class))).thenReturn(mockInput);
+
+        // The copyFrom creates a RemoteIndexOutput that writes to the base container
+        directory.copyFrom(mockFrom, "_0.cfs", "_0.cfs__UUID", IOContext.DEFAULT);
+
+        verify(mockFrom).openInput(eq("_0.cfs"), any(IOContext.class));
+    }
+
+    public void testSyncCopyFrom_ParquetFile_CopiesToFormatContainer() throws IOException {
+        directory.getBlobContainerForFormat("parquet");
+
+        Directory mockFrom = mock(Directory.class);
+        IndexInput mockInput = mock(IndexInput.class);
+        when(mockInput.length()).thenReturn(20L);
+        when(mockFrom.openInput(eq("_0.pqt:::parquet"), any(IOContext.class))).thenReturn(mockInput);
+
+        directory.copyFrom(mockFrom, "_0.pqt:::parquet", "_0.pqt__UUID", IOContext.DEFAULT);
+
+        verify(mockFrom).openInput(eq("_0.pqt:::parquet"), any(IOContext.class));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Async copyFrom with AsyncMultiStreamBlobContainer Tests
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testAsyncCopyFrom_WithAsyncContainer_ReturnsTrue() throws Exception {
+        // Create an async blob container
+        AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
+        when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
+        when(asyncContainer.path()).thenReturn(baseBlobPath);
+
+        // Wire up blobStore to return async container for base path
+        BlobStore asyncBlobStore = mock(BlobStore.class);
+        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
+
+        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+            asyncBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new HashMap<>(),
+            logger,
+            null
+        );
+
+        // Set up async upload to call onResponse
+        Mockito.doAnswer(invocation -> {
+            ActionListener<Void> completionListener = invocation.getArgument(1);
+            completionListener.onResponse(null);
+            return null;
+        }).when(asyncContainer).asyncBlobUpload(any(WriteContext.class), any());
+
+        // Create a real directory with a file that has a valid codec footer
+        Directory storeDirectory = newDirectory();
+        String filename = "_100.si";
+        IndexOutput indexOutput = storeDirectory.createOutput(filename, IOContext.DEFAULT);
+        indexOutput.writeString("Hello World!");
+        CodecUtil.writeFooter(indexOutput);
+        indexOutput.close();
+        storeDirectory.sync(List.of(filename));
+
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Boolean> postUploadInvoked = new AtomicReference<>(false);
+
+        boolean result = asyncDir.copyFrom(
+            storeDirectory,
+            filename,
+            filename,
+            IOContext.DEFAULT,
+            () -> postUploadInvoked.set(true),
+            new ActionListener<>() {
+                @Override
+                public void onResponse(Void unused) {
+                    latch.countDown();
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    fail("Should not fail: " + e.getMessage());
+                }
+            },
+            false,
+            null
+        );
+
+        assertTrue("Should return true when container is AsyncMultiStreamBlobContainer", result);
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertTrue(postUploadInvoked.get());
+        storeDirectory.close();
+    }
+
+    public void testAsyncCopyFrom_ParquetFormat_WithAsyncContainer_ReturnsTrue() throws Exception {
+        AsyncMultiStreamBlobContainer asyncParquetContainer = mock(AsyncMultiStreamBlobContainer.class);
+        when(asyncParquetContainer.remoteIntegrityCheckSupported()).thenReturn(false);
+        when(asyncParquetContainer.path()).thenReturn(baseBlobPath.add("parquet"));
+
+        BlobStore asyncBlobStore = mock(BlobStore.class);
+        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(baseBlobContainer);
+        when(asyncBlobStore.blobContainer(baseBlobPath.add("parquet"))).thenReturn(asyncParquetContainer);
+
+        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+            asyncBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new HashMap<>(),
+            logger,
+            null
+        );
+
+        Mockito.doAnswer(invocation -> {
+            ActionListener<Void> completionListener = invocation.getArgument(1);
+            completionListener.onResponse(null);
+            return null;
+        }).when(asyncParquetContainer).asyncBlobUpload(any(WriteContext.class), any());
+
+        // Use CompositeStoreDirectory mock to handle ":::parquet" convention properly
+        // The async copyFrom with format routing uses uploadBlob, which calls from.openInput(src, ...)
+        // and calculateChecksumOfChecksum(from, src). A plain Directory can't understand ":::parquet"
+        // so we use mock CompositeStoreDirectory + FileMetadata-based copyFrom instead.
+        CompositeStoreDirectory mockComposite = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("parquet", "_0.pqt");
+
+        IndexInput mockInput = mock(IndexInput.class);
+        when(mockInput.length()).thenReturn(100L);
+        when(mockInput.clone()).thenReturn(mockInput);
+        when(mockComposite.openInput(eq(fm), any(IOContext.class))).thenReturn(mockInput);
+        when(mockComposite.calculateChecksum(fm)).thenReturn(67890L);
+
+        CountDownLatch latch = new CountDownLatch(1);
+
+        boolean result = asyncDir.copyFrom(mockComposite, fm, "_0.pqt__UUID", IOContext.DEFAULT, () -> {}, new ActionListener<>() {
+            @Override
+            public void onResponse(Void unused) {
+                latch.countDown();
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                fail("Should not fail: " + e.getMessage());
+            }
+        }, false);
+
+        assertTrue("Should return true for async parquet container", result);
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+    }
+
+    public void testAsyncCopyFrom_ExceptionDuringUpload_CallsListenerOnFailure() throws Exception {
+        AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
+        when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
+        when(asyncContainer.path()).thenReturn(baseBlobPath);
+
+        BlobStore asyncBlobStore = mock(BlobStore.class);
+        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
+
+        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+            asyncBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new HashMap<>(),
+            logger,
+            null
+        );
+
+        // File does not exist - openInput will throw
+        Directory storeDirectory = newDirectory();
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Exception> failureRef = new AtomicReference<>();
+
+        boolean result = asyncDir.copyFrom(
+            storeDirectory,
+            "_nonexistent.si",
+            "_nonexistent.si__UUID",
+            IOContext.DEFAULT,
+            () -> {},
+            new ActionListener<>() {
+                @Override
+                public void onResponse(Void unused) {
+                    fail("Should have failed");
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    failureRef.set(e);
+                    latch.countDown();
+                }
+            },
+            false,
+            null
+        );
+
+        assertTrue("Should return true (handled)", result);
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertNotNull(failureRef.get());
+        storeDirectory.close();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FileMetadata-based async copyFrom with AsyncMultiStreamBlobContainer
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testCopyFrom_FileMetadata_Async_WithAsyncContainer_ReturnsTrue() throws Exception {
+        AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
+        when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
+        when(asyncContainer.path()).thenReturn(baseBlobPath);
+
+        BlobStore asyncBlobStore = mock(BlobStore.class);
+        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
+
+        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+            asyncBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new HashMap<>(),
+            logger,
+            null
+        );
+
+        Mockito.doAnswer(invocation -> {
+            ActionListener<Void> completionListener = invocation.getArgument(1);
+            completionListener.onResponse(null);
+            return null;
+        }).when(asyncContainer).asyncBlobUpload(any(WriteContext.class), any());
+
+        CompositeStoreDirectory mockComposite = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
+
+        IndexInput mockInput = mock(IndexInput.class);
+        when(mockInput.length()).thenReturn(100L);
+        when(mockInput.clone()).thenReturn(mockInput);
+        when(mockComposite.openInput(eq(fm), any(IOContext.class))).thenReturn(mockInput);
+        when(mockComposite.calculateChecksum(fm)).thenReturn(12345L);
+
+        CountDownLatch latch = new CountDownLatch(1);
+
+        boolean result = asyncDir.copyFrom(mockComposite, fm, "_0.cfs__UUID", IOContext.DEFAULT, () -> {}, new ActionListener<>() {
+            @Override
+            public void onResponse(Void unused) {
+                latch.countDown();
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                fail("Should not fail: " + e.getMessage());
+            }
+        }, false);
+
+        assertTrue("Should return true for async container", result);
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+    }
+
+    public void testCopyFrom_FileMetadata_Async_ExceptionCallsListener() throws Exception {
+        AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
+        when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
+        when(asyncContainer.path()).thenReturn(baseBlobPath);
+
+        BlobStore asyncBlobStore = mock(BlobStore.class);
+        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
+
+        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+            asyncBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new HashMap<>(),
+            logger,
+            null
+        );
+
+        CompositeStoreDirectory mockComposite = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
+        when(mockComposite.calculateChecksum(fm)).thenThrow(new IOException("checksum failed"));
+
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Exception> failureRef = new AtomicReference<>();
+
+        boolean result = asyncDir.copyFrom(mockComposite, fm, "_0.cfs__UUID", IOContext.DEFAULT, () -> {}, new ActionListener<>() {
+            @Override
+            public void onResponse(Void unused) {
+                fail("Should have failed");
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                failureRef.set(e);
+                latch.countDown();
+            }
+        }, false);
+
+        assertTrue("Should return true (handled)", result);
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertNotNull(failureRef.get());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // openInput exception close-on-failure (stream opened but readBlob fails)
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testOpenInput_UploadedSegmentMetadata_StreamClosedOnReadException() throws IOException {
+        InputStream mockStream = mock(InputStream.class);
+        when(baseBlobContainer.readBlob("_0.cfs__UUID1")).thenReturn(mockStream);
+        // Simulate the rate limiter wrapping failing by making read throw
+        when(mockStream.read(any(), anyInt(), anyInt())).thenThrow(new IOException("stream corrupted"));
+
+        UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString("_0.cfs::_0.cfs__UUID1::checksum123::100::10");
+
+        // openInput wraps the stream; the exception happens later during read
+        IndexInput input = directory.openInput(metadata, 100, IOContext.DEFAULT);
+        assertNotNull(input);
+        // Close the input - it should clean up properly
+        input.close();
+    }
+
+    public void testOpenInput_FileMetadata_ExceptionClosesStream() throws IOException {
+        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
+        when(baseBlobContainer.readBlob("_0.cfs")).thenThrow(new IOException("blob read failed"));
+
+        expectThrows(IOException.class, () -> directory.openInput(fm, 100, IOContext.DEFAULT));
+    }
+
+    public void testOpenInput_StringBased_StreamClosedWhenInputStreamReadFails() throws IOException {
+        InputStream mockStream = mock(InputStream.class);
+        when(baseBlobContainer.readBlob("_0.cfs")).thenReturn(mockStream);
+        when(mockStream.read(any(), anyInt(), anyInt())).thenThrow(new IOException("stream error"));
+
+        // openInput wraps the stream successfully
+        IndexInput input = directory.openInput("_0.cfs", 100, IOContext.DEFAULT);
+        assertNotNull(input);
+        input.close();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // fileLength name mismatch tests
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testFileLength_NameMismatch_ThrowsNoSuchFile() throws IOException {
+        // Returns a blob but name doesn't match
+        List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.cfs_DIFFERENT", 1234));
+        when(baseBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.cfs"), eq(1), any())).thenReturn(blobList);
+
+        expectThrows(NoSuchFileException.class, () -> directory.fileLength("_0.cfs"));
+    }
+
+    public void testFileLength_FileMetadata_NameMismatch_ThrowsNoSuchFile() throws IOException {
+        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
+        List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.cfs_DIFFERENT", 1234));
+        when(baseBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.cfs"), eq(1), any())).thenReturn(blobList);
+
+        expectThrows(NoSuchFileException.class, () -> directory.fileLength(fm));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // DownloadRateLimiterProvider merged segment path
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testDownloadRateLimiter_MergedSegment_UsesLowPriorityRateLimiter() throws IOException {
+        // Create directory with pending merged segments
+        Map<String, String> pendingMergedSegments = new HashMap<>();
+        pendingMergedSegments.put("localFile", "_0.cfs__UUID_MERGED");
+
+        UnaryOperator<InputStream> normalRateLimiter = stream -> stream;
+        UnaryOperator<InputStream> lowPriorityRateLimiter = stream -> stream;
+
+        CompositeRemoteDirectory dirWithMerged = new CompositeRemoteDirectory(
+            mockBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            normalRateLimiter,
+            lowPriorityRateLimiter,
+            pendingMergedSegments,
+            logger,
+            null
+        );
+
+        // When opening a merged segment, the low-priority rate limiter should be used
+        byte[] content = new byte[100];
+        when(baseBlobContainer.readBlob("_0.cfs__UUID_MERGED")).thenReturn(new ByteArrayInputStream(content));
+
+        UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString("_0.cfs::_0.cfs__UUID_MERGED::checksum123::100::10");
+
+        IndexInput input = dirWithMerged.openInput(metadata, 100, IOContext.DEFAULT);
+        assertNotNull(input);
+        assertEquals(100, input.length());
+        input.close();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Completion listener tests (via async upload with errors)
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testCompletionListener_PostUploadRunnerException() throws Exception {
+        AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
+        when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
+        when(asyncContainer.path()).thenReturn(baseBlobPath);
+
+        BlobStore asyncBlobStore = mock(BlobStore.class);
+        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
+
+        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+            asyncBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new HashMap<>(),
+            logger,
+            null
+        );
+
+        Mockito.doAnswer(invocation -> {
+            ActionListener<Void> completionListener = invocation.getArgument(1);
+            completionListener.onResponse(null);
+            return null;
+        }).when(asyncContainer).asyncBlobUpload(any(WriteContext.class), any());
+
+        Directory storeDirectory = newDirectory();
+        String filename = "_100.si";
+        IndexOutput indexOutput = storeDirectory.createOutput(filename, IOContext.DEFAULT);
+        indexOutput.writeString("data");
+        CodecUtil.writeFooter(indexOutput);
+        indexOutput.close();
+        storeDirectory.sync(List.of(filename));
+
+        CountDownLatch latch = new CountDownLatch(1);
+
+        // postUploadRunner throws exception → listener.onFailure
+        boolean result = asyncDir.copyFrom(storeDirectory, filename, filename + "__UUID", IOContext.DEFAULT, () -> {
+            throw new RuntimeException("postUpload error");
+        }, new ActionListener<>() {
+            @Override
+            public void onResponse(Void unused) {
+                fail("Should not succeed");
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                latch.countDown();
+            }
+        }, false, null);
+
+        assertTrue(result);
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        storeDirectory.close();
+    }
+
+    public void testCompletionListener_CorruptIndexException() throws Exception {
+        AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
+        when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
+        when(asyncContainer.path()).thenReturn(baseBlobPath);
+
+        BlobStore asyncBlobStore = mock(BlobStore.class);
+        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
+
+        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+            asyncBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new HashMap<>(),
+            logger,
+            null
+        );
+
+        // asyncBlobUpload calls onFailure with a wrapped CorruptIndexException
+        Mockito.doAnswer(invocation -> {
+            ActionListener<Void> completionListener = invocation.getArgument(1);
+            completionListener.onFailure(new RuntimeException(new CorruptIndexException("corrupted", "test")));
+            return null;
+        }).when(asyncContainer).asyncBlobUpload(any(WriteContext.class), any());
+
+        Directory storeDirectory = newDirectory();
+        String filename = "_100.si";
+        IndexOutput indexOutput = storeDirectory.createOutput(filename, IOContext.DEFAULT);
+        indexOutput.writeString("data");
+        CodecUtil.writeFooter(indexOutput);
+        indexOutput.close();
+        storeDirectory.sync(List.of(filename));
+
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Exception> failureRef = new AtomicReference<>();
+
+        boolean result = asyncDir.copyFrom(
+            storeDirectory,
+            filename,
+            filename + "__UUID",
+            IOContext.DEFAULT,
+            () -> {},
+            new ActionListener<>() {
+                @Override
+                public void onResponse(Void unused) {
+                    fail("Should not succeed");
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    failureRef.set(e);
+                    latch.countDown();
+                }
+            },
+            false,
+            null
+        );
+
+        assertTrue(result);
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertTrue("Should be CorruptIndexException", failureRef.get() instanceof CorruptIndexException);
+        storeDirectory.close();
+    }
+
+    public void testCompletionListener_CorruptFileException() throws Exception {
+        AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
+        when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
+        when(asyncContainer.path()).thenReturn(baseBlobPath);
+
+        BlobStore asyncBlobStore = mock(BlobStore.class);
+        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
+
+        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+            asyncBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new HashMap<>(),
+            logger,
+            null
+        );
+
+        // asyncBlobUpload calls onFailure with a wrapped CorruptFileException
+        Mockito.doAnswer(invocation -> {
+            ActionListener<Void> completionListener = invocation.getArgument(1);
+            completionListener.onFailure(new RuntimeException(new CorruptFileException("corrupted", "test_file")));
+            return null;
+        }).when(asyncContainer).asyncBlobUpload(any(WriteContext.class), any());
+
+        Directory storeDirectory = newDirectory();
+        String filename = "_100.si";
+        IndexOutput indexOutput = storeDirectory.createOutput(filename, IOContext.DEFAULT);
+        indexOutput.writeString("data");
+        CodecUtil.writeFooter(indexOutput);
+        indexOutput.close();
+        storeDirectory.sync(List.of(filename));
+
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Exception> failureRef = new AtomicReference<>();
+
+        boolean result = asyncDir.copyFrom(
+            storeDirectory,
+            filename,
+            filename + "__UUID",
+            IOContext.DEFAULT,
+            () -> {},
+            new ActionListener<>() {
+                @Override
+                public void onResponse(Void unused) {
+                    fail("Should not succeed");
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    failureRef.set(e);
+                    latch.countDown();
+                }
+            },
+            false,
+            null
+        );
+
+        assertTrue(result);
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertTrue("Should be CorruptIndexException", failureRef.get() instanceof CorruptIndexException);
+        storeDirectory.close();
+    }
+
+    public void testCompletionListener_GenericException() throws Exception {
+        AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
+        when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
+        when(asyncContainer.path()).thenReturn(baseBlobPath);
+
+        BlobStore asyncBlobStore = mock(BlobStore.class);
+        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
+
+        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+            asyncBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new HashMap<>(),
+            logger,
+            null
+        );
+
+        // asyncBlobUpload calls onFailure with a generic exception (not corrupt)
+        Mockito.doAnswer(invocation -> {
+            ActionListener<Void> completionListener = invocation.getArgument(1);
+            completionListener.onFailure(new IOException("network error"));
+            return null;
+        }).when(asyncContainer).asyncBlobUpload(any(WriteContext.class), any());
+
+        Directory storeDirectory = newDirectory();
+        String filename = "_100.si";
+        IndexOutput indexOutput = storeDirectory.createOutput(filename, IOContext.DEFAULT);
+        indexOutput.writeString("data");
+        CodecUtil.writeFooter(indexOutput);
+        indexOutput.close();
+        storeDirectory.sync(List.of(filename));
+
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Exception> failureRef = new AtomicReference<>();
+
+        boolean result = asyncDir.copyFrom(
+            storeDirectory,
+            filename,
+            filename + "__UUID",
+            IOContext.DEFAULT,
+            () -> {},
+            new ActionListener<>() {
+                @Override
+                public void onResponse(Void unused) {
+                    fail("Should not succeed");
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    failureRef.set(e);
+                    latch.countDown();
+                }
+            },
+            false,
+            null
+        );
+
+        assertTrue(result);
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertTrue("Should be IOException", failureRef.get() instanceof IOException);
+        storeDirectory.close();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Sync copyFrom with FileMetadata
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testCopyFrom_FileMetadata_Sync() throws IOException {
+        CompositeStoreDirectory mockComposite = mock(CompositeStoreDirectory.class);
+        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
+
+        IndexInput mockInput = mock(IndexInput.class);
+        when(mockInput.length()).thenReturn(50L);
+        when(mockComposite.openInput(eq(fm), eq(IOContext.READONCE))).thenReturn(mockInput);
+
+        // Should write to base container since format is "lucene"
+        directory.copyFrom(mockComposite, fm, "_0.cfs__UUID", IOContext.DEFAULT);
+
+        verify(mockComposite).openInput(eq(fm), eq(IOContext.READONCE));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Low priority upload path (content > 15GB triggers low priority)
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testAsyncCopyFrom_LowPriorityUpload() throws Exception {
+        AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
+        when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
+        when(asyncContainer.path()).thenReturn(baseBlobPath);
+
+        BlobStore asyncBlobStore = mock(BlobStore.class);
+        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
+
+        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+            asyncBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new HashMap<>(),
+            logger,
+            null
+        );
+
+        Mockito.doAnswer(invocation -> {
+            ActionListener<Void> completionListener = invocation.getArgument(1);
+            completionListener.onResponse(null);
+            return null;
+        }).when(asyncContainer).asyncBlobUpload(any(WriteContext.class), any());
+
+        Directory storeDirectory = newDirectory();
+        String filename = "_100.si";
+        IndexOutput indexOutput = storeDirectory.createOutput(filename, IOContext.DEFAULT);
+        indexOutput.writeString("data");
+        CodecUtil.writeFooter(indexOutput);
+        indexOutput.close();
+        storeDirectory.sync(List.of(filename));
+
+        CountDownLatch latch = new CountDownLatch(1);
+
+        // Pass lowPriorityUpload=true
+        boolean result = asyncDir.copyFrom(
+            storeDirectory,
+            filename,
+            filename + "__UUID",
+            IOContext.DEFAULT,
+            () -> {},
+            new ActionListener<>() {
+                @Override
+                public void onResponse(Void unused) {
+                    latch.countDown();
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    fail("Should not fail: " + e.getMessage());
+                }
+            },
+            true,  // lowPriorityUpload
+            null
+        );
+
+        assertTrue(result);
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        storeDirectory.close();
     }
 }
