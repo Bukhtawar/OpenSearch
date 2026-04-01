@@ -233,61 +233,38 @@ public class SegmentInfosCatalogSnapshotTests extends OpenSearchTestCase {
         snapshot.decRef();
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // Serialization Tests (writeTo / StreamInput constructor)
-    // ═══════════════════════════════════════════════════════════════
 
-    public void testSerializationRoundTrip() throws IOException {
-        SegmentInfos segmentInfos = createEmptySegmentInfos();
-        Map<String, String> userData = new HashMap<>();
-        userData.put("key1", "value1");
-        segmentInfos.setUserData(userData, false);
-
-        SegmentInfosCatalogSnapshot original = new SegmentInfosCatalogSnapshot(segmentInfos);
-
-        // Serialize
-        BytesStreamOutput out = new BytesStreamOutput();
-        original.writeTo(out);
-
-        // Deserialize
-        StreamInput in = out.bytes().streamInput();
-        SegmentInfosCatalogSnapshot deserialized = new SegmentInfosCatalogSnapshot(in);
-
-        assertEquals(original.getGeneration(), deserialized.getGeneration());
-        assertEquals(original.getVersion(), deserialized.getVersion());
-    }
 
     // ═══════════════════════════════════════════════════════════════
-    // serializeToSegmentInfosBytes Tests
+    // serialize Tests
     // ═══════════════════════════════════════════════════════════════
 
-    public void testSerializeToSegmentInfosBytes() throws IOException {
+    public void testSerialize() throws IOException {
         SegmentInfos segmentInfos = createEmptySegmentInfos();
         SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
 
-        ReplicationCheckpoint mockCheckpoint = mock(ReplicationCheckpoint.class);
-        byte[] bytes = snapshot.serializeToSegmentInfosBytes(mockCheckpoint);
+        byte[] bytes = snapshot.serialize();
 
         assertNotNull(bytes);
         assertTrue("Serialized bytes should not be empty", bytes.length > 0);
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // getLuceneVersionForFile Tests
+    // getFormatVersionForFile Tests
     // ═══════════════════════════════════════════════════════════════
 
-    public void testGetLuceneVersionForFile_SegmentFile() throws IOException {
+    public void testGetFormatVersionForFile_SegmentFile() throws IOException {
         SegmentInfos segmentInfos = createTestSegmentInfos();
         SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
 
         // _0.si is a known segment file
-        int version = snapshot.getLuceneVersionForFile("_0.si");
+        int version = snapshot.getFormatVersionForFile("_0.si");
         assertEquals(Version.LATEST.major, version);
     }
 
-    public void testGetLuceneVersionForFile_SegmentsFile_FallsBackToLatest() throws IOException {
+    public void testGetFormatVersionForFile_SegmentsFile_FallsBackToLatest() throws IOException {
         // For uncommitted SegmentInfos, getCommitLuceneVersion() is null,
-        // so getLuceneVersionForFile falls through to Version.LATEST.major
+        // so getFormatVersionForFile falls through to Version.LATEST.major
         SegmentInfos segmentInfos = createTestSegmentInfos();
         SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
 
@@ -298,26 +275,26 @@ public class SegmentInfosCatalogSnapshotTests extends OpenSearchTestCase {
         // For uncommitted SegmentInfos this is null, so let's verify behavior for a file
         // not in the segment map that isn't the segments file either.
         String unknownSegmentFile = "_99.cfs";
-        int version = snapshot.getLuceneVersionForFile(unknownSegmentFile);
+        int version = snapshot.getFormatVersionForFile(unknownSegmentFile);
         // Falls back to Version.LATEST.major since _99 has no .si file in versionMap
         assertEquals(Version.LATEST.major, version);
     }
 
-    public void testGetLuceneVersionForFile_UnknownFile() throws IOException {
+    public void testGetFormatVersionForFile_UnknownFile() throws IOException {
         SegmentInfos segmentInfos = createTestSegmentInfos();
         SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
 
         // An unknown file like _0.cfs should fall back to .si version for same segment
-        int version = snapshot.getLuceneVersionForFile("_0.cfs");
+        int version = snapshot.getFormatVersionForFile("_0.cfs");
         assertEquals(Version.LATEST.major, version);
     }
 
-    public void testGetLuceneVersionForFile_CompletelyUnknownFile() throws IOException {
+    public void testGetFormatVersionForFile_CompletelyUnknownFile() throws IOException {
         SegmentInfos segmentInfos = createEmptySegmentInfos();
         SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
 
         // A completely unknown file should fall back to Version.LATEST.major
-        int version = snapshot.getLuceneVersionForFile("unknown_file.xyz");
+        int version = snapshot.getFormatVersionForFile("unknown_file.xyz");
         assertEquals(Version.LATEST.major, version);
     }
 }

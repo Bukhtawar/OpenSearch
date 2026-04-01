@@ -286,7 +286,7 @@ public class RemoteDirectory extends Directory {
     /**
      * Opens a stream for reading an existing file using UploadedSegmentMetadata.
      * Default implementation delegates to openInput(String, long, IOContext) using the uploaded filename.
-     * CompositeRemoteDirectory overrides this for format-aware routing, extracting the data format
+     * DataFormatAwareRemoteDirectory overrides this for format-aware routing, extracting the data format
      * from originalFilename to determine which BlobContainer to read from.
      *
      * @param metadata   the uploaded segment metadata containing original and uploaded filenames
@@ -405,19 +405,19 @@ public class RemoteDirectory extends Directory {
 
     // ═══════════════════════════════════════════════════════════════
     // Format registration — no-ops in base class.
-    // CompositeRemoteDirectory overrides these for format-aware routing.
+    // DataFormatAwareRemoteDirectory overrides these for format-aware routing.
     // ═══════════════════════════════════════════════════════════════
 
     /**
      * Register data format for a blob key. No-op in base RemoteDirectory.
-     * CompositeRemoteDirectory overrides to maintain a format lookup cache
+     * DataFormatAwareRemoteDirectory overrides to maintain a format lookup cache
      * that maps blob keys to their data format (e.g., "parquet").
      *
      * @param blobKey the remote blob key (e.g., "_0.pqt__UUID")
      * @param format  the data format name (e.g., "parquet", "lucene")
      */
     public void registerBlobFormat(String blobKey, String format) {
-        // No-op — only CompositeRemoteDirectory needs format routing
+        // No-op — only DataFormatAwareRemoteDirectory needs format routing
     }
 
     /**
@@ -431,7 +431,7 @@ public class RemoteDirectory extends Directory {
 
     /**
      * Atomically replace the entire format cache. No-op in base RemoteDirectory.
-     * CompositeRemoteDirectory uses this during init() to rebuild the cache from scratch.
+     * DataFormatAwareRemoteDirectory uses this during init() to rebuild the cache from scratch.
      *
      * @param blobKeyToFormat the new complete mapping of blob key to format
      */

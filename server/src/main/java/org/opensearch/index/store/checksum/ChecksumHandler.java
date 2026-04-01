@@ -33,7 +33,7 @@ public interface ChecksumHandler {
 
     /**
      * Returns the name of the data format this handler supports.
-     * This name is used as the key in the {@link ChecksumHandlerRegistry}.
+     * This name is used as the key in the {@link org.opensearch.index.engine.dataformat.DataFormatRegistry}.
      *
      * @return format name (e.g., "lucene", "parquet", "arrow")
      */

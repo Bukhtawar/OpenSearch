@@ -154,7 +154,7 @@ public class SegmentInfosCatalogSnapshot extends CatalogSnapshot {
      * file itself, or to the .si file's version for other unmapped files.
      */
     @Override
-    public int getLuceneVersionForFile(String file) {
+    public int getFormatVersionForFile(String file) {
         Map<String, Integer> versionMap = buildSegmentToLuceneVersionMap();
         Integer version = versionMap.get(file);
         if (version != null) {
@@ -175,7 +175,7 @@ public class SegmentInfosCatalogSnapshot extends CatalogSnapshot {
      * Serializes the actual SegmentInfos to bytes for the remote metadata file.
      */
     @Override
-    public byte[] serializeToSegmentInfosBytes(ReplicationCheckpoint replicationCheckpoint) throws IOException {
+    public byte[] serialize() throws IOException {
         ByteBuffersDataOutput byteBuffersIndexOutput = new ByteBuffersDataOutput();
         segmentInfos.write(new ByteBuffersIndexOutput(byteBuffersIndexOutput, "Snapshot of SegmentInfos", "SegmentInfos"));
         return byteBuffersIndexOutput.toArrayCopy();

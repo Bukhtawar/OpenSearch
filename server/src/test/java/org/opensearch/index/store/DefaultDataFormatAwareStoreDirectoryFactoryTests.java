@@ -13,19 +13,26 @@ import org.opensearch.common.settings.Settings;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
+import org.opensearch.index.engine.dataformat.DataFormatPlugin;
+import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.plugins.PluginsService;
+import org.opensearch.plugins.SearchBackEndPlugin;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.opensearch.cluster.metadata.IndexMetadata.SETTING_INDEX_UUID;
 
 /**
- * Unit tests for {@link DefaultCompositeStoreDirectoryFactory}.
+ * Unit tests for {@link DefaultDataFormatAwareStoreDirectoryFactory}.
  */
-public class DefaultCompositeStoreDirectoryFactoryTests extends OpenSearchTestCase {
+public class DefaultDataFormatAwareStoreDirectoryFactoryTests extends OpenSearchTestCase {
 
     private ShardPath createShardPath(Path tempDir) throws IOException {
         String indexUUID = "test-index-uuid";
@@ -47,75 +54,88 @@ public class DefaultCompositeStoreDirectoryFactoryTests extends OpenSearchTestCa
         return new IndexSettings(metadata, Settings.EMPTY);
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // newCompositeStoreDirectory Tests
-    // ═══════════════════════════════════════════════════════════════
-
-    public void testNewCompositeStoreDirectory_CreatesSuccessfully() throws IOException {
-        DefaultCompositeStoreDirectoryFactory factory = new DefaultCompositeStoreDirectoryFactory();
-        Path tempDir = createTempDir();
-        ShardPath shardPath = createShardPath(tempDir);
-        IndexSettings indexSettings = createIndexSettings();
-
-        CompositeStoreDirectory directory = factory.newCompositeStoreDirectory(indexSettings, shardPath.getShardId(), shardPath);
-
-        assertNotNull("Factory should create a non-null CompositeStoreDirectory", directory);
+    private DataFormatRegistry createEmptyDataFormatRegistry() {
+        PluginsService pluginsService = mock(PluginsService.class);
+        when(pluginsService.filterPlugins(DataFormatPlugin.class)).thenReturn(List.of());
+        when(pluginsService.filterPlugins(SearchBackEndPlugin.class)).thenReturn(List.of());
+        return new DataFormatRegistry(pluginsService);
     }
 
-    public void testNewCompositeStoreDirectory_HasCorrectShardPath() throws IOException {
-        DefaultCompositeStoreDirectoryFactory factory = new DefaultCompositeStoreDirectoryFactory();
+    // ═══════════════════════════════════════════════════════════════
+    // newDataFormatAwareStoreDirectory Tests
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testNewDataFormatAwareStoreDirectory_CreatesSuccessfully() throws IOException {
+        DataFormatRegistry registry = createEmptyDataFormatRegistry();
+        DefaultDataFormatAwareStoreDirectoryFactory factory = new DefaultDataFormatAwareStoreDirectoryFactory();
         Path tempDir = createTempDir();
         ShardPath shardPath = createShardPath(tempDir);
         IndexSettings indexSettings = createIndexSettings();
 
-        CompositeStoreDirectory directory = factory.newCompositeStoreDirectory(indexSettings, shardPath.getShardId(), shardPath);
+        DataFormatAwareStoreDirectory directory = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath.getShardId(), shardPath, registry);
+
+        assertNotNull("Factory should create a non-null DataFormatAwareStoreDirectory", directory);
+    }
+
+    public void testNewDataFormatAwareStoreDirectory_HasCorrectShardPath() throws IOException {
+        DataFormatRegistry registry = createEmptyDataFormatRegistry();
+        DefaultDataFormatAwareStoreDirectoryFactory factory = new DefaultDataFormatAwareStoreDirectoryFactory();
+        Path tempDir = createTempDir();
+        ShardPath shardPath = createShardPath(tempDir);
+        IndexSettings indexSettings = createIndexSettings();
+
+        DataFormatAwareStoreDirectory directory = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath.getShardId(), shardPath, registry);
 
         assertEquals(shardPath, directory.getShardPath());
     }
 
-    public void testNewCompositeStoreDirectory_HasChecksumRegistry() throws IOException {
-        DefaultCompositeStoreDirectoryFactory factory = new DefaultCompositeStoreDirectoryFactory();
+    public void testNewDataFormatAwareStoreDirectory_HasChecksumHandlers() throws IOException {
+        DataFormatRegistry registry = createEmptyDataFormatRegistry();
+        DefaultDataFormatAwareStoreDirectoryFactory factory = new DefaultDataFormatAwareStoreDirectoryFactory();
         Path tempDir = createTempDir();
         ShardPath shardPath = createShardPath(tempDir);
         IndexSettings indexSettings = createIndexSettings();
 
-        CompositeStoreDirectory directory = factory.newCompositeStoreDirectory(indexSettings, shardPath.getShardId(), shardPath);
+        DataFormatAwareStoreDirectory directory = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath.getShardId(), shardPath, registry);
 
-        assertNotNull("Directory should have a checksum registry", directory.getChecksumRegistry());
-        assertTrue("Checksum registry should have 'lucene' handler", directory.getChecksumRegistry().hasHandler("lucene"));
+        assertNotNull("Directory should have a data format registry", directory.getDataFormatRegistry());
+        assertTrue("Registry should have 'lucene' checksum handler", directory.getDataFormatRegistry().hasChecksumHandler("lucene"));
     }
 
-    public void testNewCompositeStoreDirectory_CanListFiles() throws IOException {
-        DefaultCompositeStoreDirectoryFactory factory = new DefaultCompositeStoreDirectoryFactory();
+    public void testNewDataFormatAwareStoreDirectory_CanListFiles() throws IOException {
+        DataFormatRegistry registry = createEmptyDataFormatRegistry();
+        DefaultDataFormatAwareStoreDirectoryFactory factory = new DefaultDataFormatAwareStoreDirectoryFactory();
         Path tempDir = createTempDir();
         ShardPath shardPath = createShardPath(tempDir);
         IndexSettings indexSettings = createIndexSettings();
 
-        CompositeStoreDirectory directory = factory.newCompositeStoreDirectory(indexSettings, shardPath.getShardId(), shardPath);
+        DataFormatAwareStoreDirectory directory = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath.getShardId(), shardPath, registry);
 
         // Should not throw
         String[] files = directory.listAll();
         assertNotNull(files);
     }
 
-    public void testNewCompositeStoreDirectory_MultipleCalls_CreatesSeparateInstances() throws IOException {
-        DefaultCompositeStoreDirectoryFactory factory = new DefaultCompositeStoreDirectoryFactory();
+    public void testNewDataFormatAwareStoreDirectory_MultipleCalls_CreatesSeparateInstances() throws IOException {
+        DataFormatRegistry registry = createEmptyDataFormatRegistry();
+        DefaultDataFormatAwareStoreDirectoryFactory factory = new DefaultDataFormatAwareStoreDirectoryFactory();
         Path tempDir1 = createTempDir();
         Path tempDir2 = createTempDir();
         ShardPath shardPath1 = createShardPath(tempDir1);
         ShardPath shardPath2 = createShardPath(tempDir2);
         IndexSettings indexSettings = createIndexSettings();
 
-        CompositeStoreDirectory dir1 = factory.newCompositeStoreDirectory(indexSettings, shardPath1.getShardId(), shardPath1);
-        CompositeStoreDirectory dir2 = factory.newCompositeStoreDirectory(indexSettings, shardPath2.getShardId(), shardPath2);
+        DataFormatAwareStoreDirectory dir1 = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath1.getShardId(), shardPath1, registry);
+        DataFormatAwareStoreDirectory dir2 = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath2.getShardId(), shardPath2, registry);
 
         assertNotNull(dir1);
         assertNotNull(dir2);
         assertNotSame("Each call should create a new instance", dir1, dir2);
     }
 
-    public void testNewCompositeStoreDirectory_InvalidPath_ThrowsIOException() throws IOException {
-        DefaultCompositeStoreDirectoryFactory factory = new DefaultCompositeStoreDirectoryFactory();
+    public void testNewDataFormatAwareStoreDirectory_InvalidPath_ThrowsIOException() throws IOException {
+        DataFormatRegistry registry = createEmptyDataFormatRegistry();
+        DefaultDataFormatAwareStoreDirectoryFactory factory = new DefaultDataFormatAwareStoreDirectoryFactory();
         IndexSettings indexSettings = createIndexSettings();
 
         // Create a valid shard path structure (must end with shardId, parent with indexUUID)
@@ -135,11 +155,11 @@ public class DefaultCompositeStoreDirectoryFactoryTests extends OpenSearchTestCa
         // This should trigger the catch block which wraps the exception as IOException
         IOException exception = expectThrows(
             IOException.class,
-            () -> factory.newCompositeStoreDirectory(indexSettings, invalidShardPath.getShardId(), invalidShardPath)
+            () -> factory.newDataFormatAwareStoreDirectory(indexSettings, invalidShardPath.getShardId(), invalidShardPath, registry)
         );
         assertTrue(
             "Exception message should mention shard, but was: " + exception.getMessage(),
-            exception.getMessage().contains("Failed to create CompositeStoreDirectory for shard")
+            exception.getMessage().contains("Failed to create DataFormatAwareStoreDirectory for shard")
         );
     }
 }

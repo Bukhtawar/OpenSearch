@@ -100,7 +100,7 @@ public final class IndexSettings {
     private static final String MERGE_ON_FLUSH_MERGE_POLICY = "merge-on-flush";
 
     // ToDo: Needs to be implemented to support multi-format data.
-    public boolean isOptimizedIndex() {
+    public boolean isPluggableDataFormatEnabled() {
         return false;
     }
 

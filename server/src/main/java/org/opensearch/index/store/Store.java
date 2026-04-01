@@ -176,7 +176,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     );
 
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
-    private CompositeStoreDirectory compositeStoreDirectory;
+    private DataFormatAwareStoreDirectory dataFormatAwareStoreDirectory;
     private final StoreDirectory directory;
     private final ReentrantReadWriteLock metadataLock = new ReentrantReadWriteLock();
     private final ShardLock shardLock;
@@ -225,7 +225,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     }
 
     /**
-     * Constructor with factory-created CompositeStoreDirectory.
+     * Constructor with factory-created DataFormatAwareStoreDirectory.
      *
      * @param shardId              the shard identifier
      * @param indexSettings        the index settings
@@ -234,7 +234,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * @param onClose              callback invoked when the store is closed
      * @param shardPath            the shard's file path
      * @param directoryFactory     the directory factory for creating temp directories
-     * @param compositeStoreDirectory the factory-created CompositeStoreDirectory, or null if not available
+     * @param dataFormatAwareStoreDirectory the factory-created DataFormatAwareStoreDirectory, or null if not available
      */
     public Store(
         ShardId shardId,
@@ -244,7 +244,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         OnClose onClose,
         ShardPath shardPath,
         IndexStorePlugin.DirectoryFactory directoryFactory,
-        CompositeStoreDirectory compositeStoreDirectory
+        DataFormatAwareStoreDirectory dataFormatAwareStoreDirectory
     ) {
         super(shardId, indexSettings);
         final TimeValue refreshInterval = indexSettings.getValue(INDEX_STORE_STATS_REFRESH_INTERVAL_SETTING);
@@ -257,10 +257,10 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         this.isIndexSortEnabled = indexSettings.getIndexSortConfig().hasIndexSort();
         this.isParentFieldEnabledVersion = indexSettings.getIndexVersionCreated().onOrAfter(org.opensearch.Version.V_3_2_0);
         this.directoryFactory = directoryFactory;
-        this.compositeStoreDirectory = compositeStoreDirectory;
+        this.dataFormatAwareStoreDirectory = dataFormatAwareStoreDirectory;
 
-        if (compositeStoreDirectory != null) {
-            logger.debug("Store created with factory-provided CompositeStoreDirectory for shard {}", shardId);
+        if (dataFormatAwareStoreDirectory != null) {
+            logger.debug("Store created with factory-provided DataFormatAwareStoreDirectory for shard {}", shardId);
         }
 
         assert onClose != null;
@@ -269,16 +269,16 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     }
 
     /**
-     * Sets the CompositeStoreDirectory for this store after construction.
+     * Sets the DataFormatAwareStoreDirectory for this store after construction.
      * This allows the store factory to create the Store instance first,
-     * and then have the CompositeStoreDirectory set by the caller.
+     * and then have the DataFormatAwareStoreDirectory set by the caller.
      *
-     * @param compositeStoreDirectory the CompositeStoreDirectory to set, or null
+     * @param dataFormatAwareStoreDirectory the DataFormatAwareStoreDirectory to set, or null
      */
-    public void setCompositeStoreDirectory(CompositeStoreDirectory compositeStoreDirectory) {
-        this.compositeStoreDirectory = compositeStoreDirectory;
-        if (compositeStoreDirectory != null) {
-            logger.debug("CompositeStoreDirectory set for shard {}", shardId());
+    public void setDataFormatAwareStoreDirectory(DataFormatAwareStoreDirectory dataFormatAwareStoreDirectory) {
+        this.dataFormatAwareStoreDirectory = dataFormatAwareStoreDirectory;
+        if (dataFormatAwareStoreDirectory != null) {
+            logger.debug("DataFormatAwareStoreDirectory set for shard {}", shardId());
         }
     }
 
@@ -618,7 +618,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         try (Closeable c = shardLock) {
             try {
                 directory.innerClose(); // this closes the distributorDirectory as well
-                IOUtils.close(compositeStoreDirectory);
+                IOUtils.close(dataFormatAwareStoreDirectory);
             } finally {
                 onClose.accept(shardLock);
             }

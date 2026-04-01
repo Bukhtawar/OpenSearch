@@ -26,7 +26,7 @@ import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.support.PlainBlobMetadata;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
 import org.opensearch.core.action.ActionListener;
-import org.opensearch.index.store.CompositeStoreDirectory;
+import org.opensearch.index.store.DataFormatAwareStoreDirectory;
 import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.RemoteIndexOutput;
 import org.opensearch.index.store.RemoteSegmentStoreDirectory.UploadedSegmentMetadata;
@@ -58,17 +58,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link CompositeRemoteDirectory}.
+ * Unit tests for {@link DataFormatAwareRemoteDirectory}.
  */
-public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
+public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
 
-    private static final Logger logger = LogManager.getLogger(CompositeRemoteDirectoryTests.class);
+    private static final Logger logger = LogManager.getLogger(DataFormatAwareRemoteDirectoryTests.class);
 
     private BlobStore mockBlobStore;
     private BlobContainer baseBlobContainer;
     private BlobContainer parquetBlobContainer;
     private BlobPath baseBlobPath;
-    private CompositeRemoteDirectory directory;
+    private DataFormatAwareRemoteDirectory directory;
 
     @Override
     public void setUp() throws Exception {
@@ -87,7 +87,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         UnaryOperator<InputStream> downloadRateLimiter = UnaryOperator.identity();
         UnaryOperator<InputStream> lowPriorityDownloadRateLimiter = UnaryOperator.identity();
 
-        directory = new CompositeRemoteDirectory(
+        directory = new DataFormatAwareRemoteDirectory(
             mockBlobStore,
             baseBlobPath,
             uploadRateLimiter,
@@ -364,7 +364,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         directory.getBlobContainerForFormat("parquet");
 
         String str = directory.toString();
-        assertTrue(str.contains("CompositeRemoteDirectory"));
+        assertTrue(str.contains("DataFormatAwareRemoteDirectory"));
         assertTrue(str.contains("parquet"));
     }
 
@@ -570,7 +570,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
     // ═══════════════════════════════════════════════════════════════
 
     public void testCopyFrom_FileMetadata_NonAsync_ReturnsFalse() throws IOException {
-        CompositeStoreDirectory mockComposite = mock(CompositeStoreDirectory.class);
+        DataFormatAwareStoreDirectory mockComposite = mock(DataFormatAwareStoreDirectory.class);
         FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
 
         org.opensearch.core.action.ActionListener<Void> listener = mock(org.opensearch.core.action.ActionListener.class);
@@ -645,7 +645,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobStore asyncBlobStore = mock(BlobStore.class);
         when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
 
-        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
             asyncBlobStore,
             baseBlobPath,
             UnaryOperator.identity(),
@@ -712,7 +712,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(baseBlobContainer);
         when(asyncBlobStore.blobContainer(baseBlobPath.add("parquet"))).thenReturn(asyncParquetContainer);
 
-        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
             asyncBlobStore,
             baseBlobPath,
             UnaryOperator.identity(),
@@ -730,11 +730,11 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
             return null;
         }).when(asyncParquetContainer).asyncBlobUpload(any(WriteContext.class), any());
 
-        // Use CompositeStoreDirectory mock to handle ":::parquet" convention properly
+        // Use DataFormatAwareStoreDirectory mock to handle ":::parquet" convention properly
         // The async copyFrom with format routing uses uploadBlob, which calls from.openInput(src, ...)
         // and calculateChecksumOfChecksum(from, src). A plain Directory can't understand ":::parquet"
-        // so we use mock CompositeStoreDirectory + FileMetadata-based copyFrom instead.
-        CompositeStoreDirectory mockComposite = mock(CompositeStoreDirectory.class);
+        // so we use mock DataFormatAwareStoreDirectory + FileMetadata-based copyFrom instead.
+        DataFormatAwareStoreDirectory mockComposite = mock(DataFormatAwareStoreDirectory.class);
         FileMetadata fm = new FileMetadata("parquet", "_0.pqt");
 
         IndexInput mockInput = mock(IndexInput.class);
@@ -769,7 +769,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobStore asyncBlobStore = mock(BlobStore.class);
         when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
 
-        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
             asyncBlobStore,
             baseBlobPath,
             UnaryOperator.identity(),
@@ -826,7 +826,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobStore asyncBlobStore = mock(BlobStore.class);
         when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
 
-        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
             asyncBlobStore,
             baseBlobPath,
             UnaryOperator.identity(),
@@ -844,7 +844,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
             return null;
         }).when(asyncContainer).asyncBlobUpload(any(WriteContext.class), any());
 
-        CompositeStoreDirectory mockComposite = mock(CompositeStoreDirectory.class);
+        DataFormatAwareStoreDirectory mockComposite = mock(DataFormatAwareStoreDirectory.class);
         FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
 
         IndexInput mockInput = mock(IndexInput.class);
@@ -879,7 +879,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobStore asyncBlobStore = mock(BlobStore.class);
         when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
 
-        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
             asyncBlobStore,
             baseBlobPath,
             UnaryOperator.identity(),
@@ -891,7 +891,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
             null
         );
 
-        CompositeStoreDirectory mockComposite = mock(CompositeStoreDirectory.class);
+        DataFormatAwareStoreDirectory mockComposite = mock(DataFormatAwareStoreDirectory.class);
         FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
         when(mockComposite.calculateChecksum(fm)).thenThrow(new IOException("checksum failed"));
 
@@ -985,7 +985,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         UnaryOperator<InputStream> normalRateLimiter = stream -> stream;
         UnaryOperator<InputStream> lowPriorityRateLimiter = stream -> stream;
 
-        CompositeRemoteDirectory dirWithMerged = new CompositeRemoteDirectory(
+        DataFormatAwareRemoteDirectory dirWithMerged = new DataFormatAwareRemoteDirectory(
             mockBlobStore,
             baseBlobPath,
             UnaryOperator.identity(),
@@ -1021,7 +1021,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobStore asyncBlobStore = mock(BlobStore.class);
         when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
 
-        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
             asyncBlobStore,
             baseBlobPath,
             UnaryOperator.identity(),
@@ -1077,7 +1077,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobStore asyncBlobStore = mock(BlobStore.class);
         when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
 
-        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
             asyncBlobStore,
             baseBlobPath,
             UnaryOperator.identity(),
@@ -1143,7 +1143,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobStore asyncBlobStore = mock(BlobStore.class);
         when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
 
-        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
             asyncBlobStore,
             baseBlobPath,
             UnaryOperator.identity(),
@@ -1209,7 +1209,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobStore asyncBlobStore = mock(BlobStore.class);
         when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
 
-        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
             asyncBlobStore,
             baseBlobPath,
             UnaryOperator.identity(),
@@ -1272,7 +1272,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
     // ═══════════════════════════════════════════════════════════════
 
     public void testCopyFrom_FileMetadata_Sync() throws IOException {
-        CompositeStoreDirectory mockComposite = mock(CompositeStoreDirectory.class);
+        DataFormatAwareStoreDirectory mockComposite = mock(DataFormatAwareStoreDirectory.class);
         FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
 
         IndexInput mockInput = mock(IndexInput.class);
@@ -1297,7 +1297,7 @@ public class CompositeRemoteDirectoryTests extends OpenSearchTestCase {
         BlobStore asyncBlobStore = mock(BlobStore.class);
         when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
 
-        CompositeRemoteDirectory asyncDir = new CompositeRemoteDirectory(
+        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
             asyncBlobStore,
             baseBlobPath,
             UnaryOperator.identity(),

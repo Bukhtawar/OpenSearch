@@ -426,7 +426,7 @@ public class IndicesService extends AbstractLifecycleComponent
     private final StatusCounterStats statusCounterStats;
     private final ClusterMergeSchedulerConfig clusterMergeSchedulerConfig;
     private final DataFormatRegistry dataFormatRegistry;
-    private final Map<String, org.opensearch.index.store.CompositeStoreDirectoryFactory> compositeStoreDirectoryFactories;
+    private final Map<String, org.opensearch.index.store.DataFormatAwareStoreDirectoryFactory> dataFormatAwareStoreDirectoryFactories;
 
     @Override
     protected void doStart() {
@@ -455,7 +455,7 @@ public class IndicesService extends AbstractLifecycleComponent
         Collection<Function<IndexSettings, Optional<EngineFactory>>> engineFactoryProviders,
         Map<String, IndexStorePlugin.DirectoryFactory> directoryFactories,
         Map<String, IndexStorePlugin.CompositeDirectoryFactory> compositeDirectoryFactories,
-        Map<String, org.opensearch.index.store.CompositeStoreDirectoryFactory> compositeStoreDirectoryFactories,
+        Map<String, org.opensearch.index.store.DataFormatAwareStoreDirectoryFactory> dataFormatAwareStoreDirectoryFactories,
         ValuesSourceRegistry valuesSourceRegistry,
         Map<String, IndexStorePlugin.RecoveryStateFactory> recoveryStateFactories,
         Map<String, IndexStorePlugin.StoreFactory> storeFactories,
@@ -523,7 +523,7 @@ public class IndicesService extends AbstractLifecycleComponent
 
         this.directoryFactories = directoryFactories;
         this.compositeDirectoryFactories = compositeDirectoryFactories;
-        this.compositeStoreDirectoryFactories = compositeStoreDirectoryFactories;
+        this.dataFormatAwareStoreDirectoryFactories = dataFormatAwareStoreDirectoryFactories;
         this.recoveryStateFactories = recoveryStateFactories;
         this.storeFactories = storeFactories;
         this.ingestionConsumerFactories = ingestionConsumerFactories;
@@ -1108,7 +1108,7 @@ public class IndicesService extends AbstractLifecycleComponent
             storeFactories,
             fileCache,
             compositeIndexSettings,
-            compositeStoreDirectoryFactories
+            dataFormatAwareStoreDirectoryFactories
         );
         for (IndexingOperationListener operationListener : indexingOperationListeners) {
             indexModule.addIndexOperationListener(operationListener);
@@ -1232,7 +1232,7 @@ public class IndicesService extends AbstractLifecycleComponent
             storeFactories,
             fileCache,
             compositeIndexSettings,
-            compositeStoreDirectoryFactories
+            dataFormatAwareStoreDirectoryFactories
         );
         pluginsService.onIndexModule(indexModule);
         return indexModule.newIndexMapperService(xContentRegistry, mapperRegistry, scriptService);

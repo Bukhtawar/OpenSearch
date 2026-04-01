@@ -20,7 +20,7 @@ import org.opensearch.index.remote.RemoteStoreUtils;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.store.lockmanager.RemoteStoreLockManager;
 import org.opensearch.index.store.lockmanager.RemoteStoreLockManagerFactory;
-import org.opensearch.index.store.remote.CompositeRemoteDirectory;
+import org.opensearch.index.store.remote.DataFormatAwareRemoteDirectory;
 import org.opensearch.plugins.IndexStorePlugin;
 import org.opensearch.plugins.PluginsService;
 import org.opensearch.repositories.RepositoriesService;
@@ -90,7 +90,7 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
             null,
             RemoteStoreUtils.isServerSideEncryptionEnabledIndex(indexSettings.getIndexMetadata()),
             indexSettings.isWarmIndex(),
-            indexSettings.isOptimizedIndex()
+            indexSettings.isPluggableDataFormatEnabled()
         );
     }
 
@@ -149,7 +149,7 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
         String indexFixedPrefix,
         boolean isServerSideEncryptionEnabled,
         boolean isWarmIndex,
-        boolean isOptimizedIndex
+        boolean isPluggableDataFormatEnabled
     ) throws IOException {
         assert Objects.nonNull(pathStrategy);
         // We should be not calling close for repository.
@@ -173,8 +173,8 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
 
             // Derive the path for data directory of SEGMENTS
             BlobPath dataPath = pathStrategy.generatePath(dataPathInput);
-            RemoteDirectory dataDirectory = isOptimizedIndex
-                ? new CompositeRemoteDirectory(
+            RemoteDirectory dataDirectory = isPluggableDataFormatEnabled
+                ? new DataFormatAwareRemoteDirectory(
                     blobStoreRepository.blobStore(isServerSideEncryptionEnabled),
                     dataPath,
                     blobStoreRepository::maybeRateLimitRemoteUploadTransfers,

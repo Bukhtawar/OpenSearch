@@ -8,12 +8,16 @@
 
 package org.opensearch.index.engine.dataformat;
 
+import org.apache.lucene.store.IndexInput;
 import org.opensearch.common.CheckedFunction;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.exec.EngineReaderManager;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.checksum.ChecksumHandler;
+import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
+import org.opensearch.index.store.checksum.LuceneChecksumHandler;
 import org.opensearch.plugins.PluginsService;
 import org.opensearch.plugins.SearchBackEndPlugin;
 

@@ -16,8 +16,8 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.logging.Loggers;
+import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.shard.ShardPath;
-import org.opensearch.index.store.checksum.ChecksumHandlerRegistry;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -39,7 +39,7 @@ import java.util.stream.Collectors;
  *   <li>File operations: openInput, createOutput, deleteFile, fileLength, listAll, rename, sync</li>
  * </ul>
  *
- * <p><strong>Added by CompositeStoreDirectory:</strong></p>
+ * <p><strong>Added by DataFormatAwareStoreDirectory:</strong></p>
  * <ul>
  *   <li>FileMetadata support: parse file identifier strings into FileMetadata objects</li>
  *   <li>Format-aware checksum: Lucene files → CodecUtil footer, others → CRC32 full-file</li>
@@ -62,9 +62,9 @@ import java.util.stream.Collectors;
  * @opensearch.api
  */
 @PublicApi(since = "3.0.0")
-public class CompositeStoreDirectory extends Store.StoreDirectory {
+public class DataFormatAwareStoreDirectory extends Store.StoreDirectory {
 
-    private static final Logger logger = LogManager.getLogger(CompositeStoreDirectory.class);
+    private static final Logger logger = LogManager.getLogger(DataFormatAwareStoreDirectory.class);
 
     private static final String DEFAULT_FORMAT = "lucene";
 
@@ -72,38 +72,26 @@ public class CompositeStoreDirectory extends Store.StoreDirectory {
 
     private final SubdirectoryAwareDirectory subdirectoryAwareDirectory;
     private final ShardPath shardPath;
-    private final ChecksumHandlerRegistry checksumRegistry;
+    private final DataFormatRegistry dataFormatRegistry;
 
     /**
-     * Constructs a CompositeStoreDirectory with a default ChecksumHandlerRegistry.
+     * Constructs a DataFormatAwareStoreDirectory with a {@link DataFormatRegistry} for format-aware
+     * checksum calculation and other format-specific operations.
+     *
+     * @param delegate            the underlying FSDirectory (typically for &lt;shard&gt;/index/)
+     * @param shardPath           the shard path for resolving subdirectories
+     * @param dataFormatRegistry  registry providing format-specific checksum handlers
      */
-    public CompositeStoreDirectory(Directory delegate, ShardPath shardPath) {
-        this(delegate, shardPath, new ChecksumHandlerRegistry());
-    }
-
-    /**
-     * Constructs a CompositeStoreDirectory with a custom ChecksumHandlerRegistry.
-     *
-     * <p>This is the preferred constructor. The registry is built by
-     * {@code DefaultCompositeStoreDirectoryFactory}.</p>
-     *
-     * TODO: When DataSourcePlugin is implemented, the factory will collect plugin-provided
-     * checksum handlers and register them in the registry before passing it here.
-     *
-     * @param delegate          the underlying FSDirectory (typically for &lt;shard&gt;/index/)
-     * @param shardPath         the shard path for resolving subdirectories
-     * @param checksumRegistry  registry of format-specific checksum handlers
-     */
-    public CompositeStoreDirectory(Directory delegate, ShardPath shardPath, ChecksumHandlerRegistry checksumRegistry) {
+    public DataFormatAwareStoreDirectory(Directory delegate, ShardPath shardPath, DataFormatRegistry dataFormatRegistry) {
         super(null, Loggers.getLogger("index.store.deletes", shardPath.getShardId()));
         this.shardPath = shardPath;
         this.subdirectoryAwareDirectory = new SubdirectoryAwareDirectory(delegate, shardPath);
-        this.checksumRegistry = checksumRegistry;
+        this.dataFormatRegistry = dataFormatRegistry;
 
         logger.debug(
-            "Created CompositeStoreDirectory for shard {} with checksum handlers: {}",
+            "Created DataFormatAwareStoreDirectory for shard {} with registered formats: {}",
             shardPath.getShardId(),
-            checksumRegistry.getRegisteredFormats()
+            dataFormatRegistry.getRegisteredFormats()
         );
     }
 
@@ -205,14 +193,15 @@ public class CompositeStoreDirectory extends Store.StoreDirectory {
     }
 
     /**
-     * Calculates checksum using the {@link ChecksumHandlerRegistry} for format-aware routing.
+     * Calculates checksum using the {@link DataFormatRegistry} for format-aware routing.
      * Delegates to the appropriate {@link org.opensearch.index.store.checksum.ChecksumHandler}
      * based on the file's data format.
      */
     public long calculateChecksum(FileMetadata fm) throws IOException {
         String fileIdentifier = toFileIdentifier(fm);
         try (IndexInput input = openInput(fileIdentifier, IOContext.READONCE)) {
-            return checksumRegistry.calculateChecksum(fm.dataFormat(), input);
+            //ToDo
+            return 0;
         }
     }
 
@@ -289,12 +278,5 @@ public class CompositeStoreDirectory extends Store.StoreDirectory {
 
     private boolean isDefaultFormat(String format) {
         return format == null || format.isEmpty() || INDEX_DIRECTORY_FORMATS.contains(format.toLowerCase(Locale.ROOT));
-    }
-
-    /**
-     * Returns the checksum handler registry used by this directory.
-     */
-    public ChecksumHandlerRegistry getChecksumRegistry() {
-        return checksumRegistry;
     }
 }

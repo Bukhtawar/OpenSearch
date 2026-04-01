@@ -85,12 +85,6 @@ public abstract class CatalogSnapshot implements Writeable, Cloneable {
         };
     }
 
-    @Override
-    public void writeTo(StreamOutput out) throws IOException {
-        out.writeLong(generation);
-        out.writeLong(version);
-    }
-
     public long getGeneration() {
         return generation;
     }
@@ -216,7 +210,7 @@ public abstract class CatalogSnapshot implements Writeable, Cloneable {
      * @param file the segment file name
      * @return the Lucene major version
      */
-    public abstract int getLuceneVersionForFile(String file);
+    public abstract int getFormatVersionForFile(String file);
 
     /**
      * Serializes this CatalogSnapshot into SegmentInfos bytes for the remote metadata file.
@@ -225,9 +219,8 @@ public abstract class CatalogSnapshot implements Writeable, Cloneable {
      * TODO: When CompositeEngineCatalogSnapshot is added, implement this method
      *       creating synthetic SegmentInfos with CatalogSnapshot serialized into userData.
      *
-     * @param replicationCheckpoint the replication checkpoint
      * @return serialized bytes
      * @throws IOException in case of I/O error
      */
-    public abstract byte[] serializeToSegmentInfosBytes(ReplicationCheckpoint replicationCheckpoint) throws IOException;
+    public abstract byte[] serialize() throws IOException;
 }

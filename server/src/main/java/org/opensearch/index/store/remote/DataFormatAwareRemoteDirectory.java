@@ -48,7 +48,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.UnaryOperator;
 
 /**
- * CompositeRemoteDirectory extends RemoteDirectory with format-aware blob routing.
+ * DataFormatAwareRemoteDirectory extends RemoteDirectory with format-aware blob routing.
  *
  * <p>This directory routes file operations to format-specific BlobContainers based on the
  * data format encoded in the filename (using the "filename:::format" convention from FileMetadata).
@@ -64,13 +64,13 @@ import java.util.function.UnaryOperator;
  * @opensearch.api
  */
 @InternalApi
-public class CompositeRemoteDirectory extends RemoteDirectory {
+public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
 
     private static final String DEFAULT_FORMAT = "lucene";
 
     /**
      * Formats that should route to the base blobContainer (same path as RemoteDirectory).
-     * Mirrors CompositeStoreDirectory.INDEX_DIRECTORY_FORMATS.
+     * Mirrors DataFormatAwareStoreDirectory.INDEX_DIRECTORY_FORMATS.
      */
     private static final java.util.Set<String> BASE_PATH_FORMATS = java.util.Set.of("lucene", "LUCENE", "metadata");
 
@@ -95,7 +95,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
     /**
      * Full constructor with all rate limiter parameters.
      */
-    public CompositeRemoteDirectory(
+    public DataFormatAwareRemoteDirectory(
         BlobStore blobStore,
         BlobPath baseBlobPath,
         UnaryOperator<OffsetRangeInputStream> uploadRateLimiter,
@@ -133,7 +133,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         // }
         // }
 
-        logger.debug("Created CompositeRemoteDirectory with {} format BlobContainers", formatBlobContainers.size());
+        logger.debug("Created DataFormatAwareRemoteDirectory with {} format BlobContainers", formatBlobContainers.size());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -290,7 +290,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
      *
      * <p>When AsyncMultiStreamBlobContainer is not available (e.g., FS-based blob store in tests),
      * this fallback is used. The src string may contain ":::format" (e.g., "_0.pqt:::parquet")
-     * which the source CompositeStoreDirectory handles via parseFilePath().
+     * which the source DataFormatAwareStoreDirectory handles via parseFilePath().
      *
      * <p>Routes to the format-specific BlobContainer via {@link #getBlobContainerForFormat(String)}:
      * lucene/metadata files → base blobContainer, non-lucene formats (parquet, etc.) → format-specific sub-path.
@@ -302,7 +302,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         logger.debug("Sync copyFrom: src={}, dest={}", src, dest);
         FileMetadata fileMetadata = new FileMetadata(src);
         BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
-        // Read from local directory (CompositeStoreDirectory handles ":::format" in src)
+        // Read from local directory (DataFormatAwareStoreDirectory handles ":::format" in src)
         // Write to format-specific BlobContainer (lucene→base, parquet→parquet sub-path, etc.)
         try (IndexInput is = from.openInput(src, context); IndexOutput os = new RemoteIndexOutput(dest, container)) {
             os.copyBytes(is, is.length());
@@ -313,7 +313,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
      * Format-aware async copyFrom override.
      *
      * <p>Parses the src string (e.g., "_0.pqt:::parquet") to determine format routing.
-     * Opens local file using src as-is (CompositeStoreDirectory handles ::: parsing).
+     * Opens local file using src as-is (DataFormatAwareStoreDirectory handles ::: parsing).
      * Uploads to the format-specific BlobContainer using remoteFileName as the blob key.
      */
     @Override
@@ -433,13 +433,13 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
 
     // ═══════════════════════════════════════════════════════════════
     // FileMetadata-based convenience methods
-    // Used by callers that have FileMetadata objects (e.g., CompositeStoreDirectory)
+    // Used by callers that have FileMetadata objects (e.g., DataFormatAwareStoreDirectory)
     // ═══════════════════════════════════════════════════════════════
 
     /**
-     * Copy from CompositeStoreDirectory using FileMetadata for synchronous upload.
+     * Copy from DataFormatAwareStoreDirectory using FileMetadata for synchronous upload.
      */
-    public void copyFrom(CompositeStoreDirectory from, FileMetadata src, String dest, IOContext context) throws IOException {
+    public void copyFrom(DataFormatAwareStoreDirectory from, FileMetadata src, String dest, IOContext context) throws IOException {
         boolean success = false;
         try (IndexInput is = from.openInput(src, IOContext.READONCE); IndexOutput os = createOutput(dest, src.dataFormat(), context)) {
             os.copyBytes(is, is.length());
@@ -452,10 +452,10 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
     }
 
     /**
-     * Copy from CompositeStoreDirectory using FileMetadata for async upload with format routing.
+     * Copy from DataFormatAwareStoreDirectory using FileMetadata for async upload with format routing.
      */
     public boolean copyFrom(
-        CompositeStoreDirectory from,
+        DataFormatAwareStoreDirectory from,
         FileMetadata fileMetadata,
         String remoteFileName,
         IOContext context,
@@ -569,7 +569,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         }
         // Also delete the base container (inherited from RemoteDirectory)
         super.delete();
-        logger.debug("Deleted all containers from CompositeRemoteDirectory");
+        logger.debug("Deleted all containers from DataFormatAwareRemoteDirectory");
     }
 
     @Override
@@ -580,7 +580,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
 
     @Override
     public String toString() {
-        return "CompositeRemoteDirectory{" + "formats=" + formatBlobContainers.keySet() + ", basePath=" + baseBlobPath + '}';
+        return "DataFormatAwareRemoteDirectory{" + "formats=" + formatBlobContainers.keySet() + ", basePath=" + baseBlobPath + '}';
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -604,8 +604,8 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
     ) throws Exception {
         assert ioContext != IOContext.READONCE : "Remote upload will fail with IoContext.READONCE";
         long expectedChecksum;
-        if (from instanceof CompositeStoreDirectory) {
-            expectedChecksum = ((CompositeStoreDirectory) from).calculateChecksum(new FileMetadata(src));
+        if (from instanceof DataFormatAwareStoreDirectory) {
+            expectedChecksum = ((DataFormatAwareStoreDirectory) from).calculateChecksum(new FileMetadata(src));
         } else {
             expectedChecksum = calculateChecksumOfChecksum(from, src);
         }
@@ -652,10 +652,10 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
     }
 
     /**
-     * Upload blob from CompositeStoreDirectory using FileMetadata.
+     * Upload blob from DataFormatAwareStoreDirectory using FileMetadata.
      */
     private void uploadBlobFromComposite(
-        CompositeStoreDirectory from,
+        DataFormatAwareStoreDirectory from,
         FileMetadata fileMetadata,
         String remoteFileName,
         BlobContainer targetContainer,

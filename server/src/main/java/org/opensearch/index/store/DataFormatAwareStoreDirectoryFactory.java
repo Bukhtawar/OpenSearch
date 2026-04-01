@@ -11,12 +11,13 @@ package org.opensearch.index.store;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
+import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.shard.ShardPath;
 
 import java.io.IOException;
 
 /**
- * Factory interface for creating CompositeStoreDirectory instances.
+ * Factory interface for creating DataFormatAwareStoreDirectory instances.
  * This interface follows the existing IndexStorePlugin pattern to provide
  * a centralized way to create composite directories with format discovery.
  *
@@ -24,10 +25,10 @@ import java.io.IOException;
  */
 @ExperimentalApi
 @FunctionalInterface
-public interface CompositeStoreDirectoryFactory {
+public interface DataFormatAwareStoreDirectoryFactory {
 
     /**
-     * Creates a new CompositeStoreDirectory per shard with automatic format discovery.
+     * Creates a new DataFormatAwareStoreDirectory per shard with automatic format discovery.
      * <p>
      * The factory will:
      * - Use PluginsService to discover available DataFormat plugins
@@ -38,9 +39,9 @@ public interface CompositeStoreDirectoryFactory {
      * @param indexSettings  the shard's index settings containing configuration
      * @param shardId
      * @param shardPath      the path the shard is using for file storage
-     * @return a new CompositeStoreDirectory instance supporting all discovered formats
+     * @return a new DataFormatAwareStoreDirectory instance supporting all discovered formats
      * @throws IOException if directory creation fails or resources cannot be allocated
      */
-    CompositeStoreDirectory newCompositeStoreDirectory(IndexSettings indexSettings, ShardId shardId, ShardPath shardPath)
+    DataFormatAwareStoreDirectory newDataFormatAwareStoreDirectory(IndexSettings indexSettings, ShardId shardId, ShardPath shardPath, DataFormatRegistry dataFormatRegistry)
         throws IOException;
 }

@@ -117,7 +117,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      *
      * <p>IMPORTANT: All mutations to this map must go through the encapsulated APIs
      * ({@link #replaceUploadedSegments}, {@link #addUploadedSegment}, {@link #removeUploadedSegment})
-     * to keep the format cache in CompositeRemoteDirectory in sync.
+     * to keep the format cache in DataFormatAwareRemoteDirectory in sync.
      */
     private Map<String, UploadedSegmentMetadata> segmentsUploadedToRemoteStore;
 
@@ -579,7 +579,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     @Override
     public IndexInput openInput(String name, IOContext context) throws IOException {
         // Use UploadedSegmentMetadata-based openInput for format-aware routing.
-        // CompositeRemoteDirectory.openInput(UploadedSegmentMetadata) extracts the format
+        // DataFormatAwareRemoteDirectory.openInput(UploadedSegmentMetadata) extracts the format
         // from originalFilename to route to the correct format-specific BlobContainer.
         if (segmentsUploadedToRemoteStore.containsKey(name)) {
             UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(name);
@@ -885,7 +885,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
                     for (String file : segmentFiles) {
                         if (segmentsUploadedToRemoteStore.containsKey(file)) {
                             UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(file);
-                            metadata.setWrittenByMajor(catalogSnapshot.getLuceneVersionForFile(metadata.originalFilename));
+                            metadata.setWrittenByMajor(catalogSnapshot.getFormatVersionForFile(metadata.originalFilename));
                             uploadedSegments.put(file, metadata.toString());
                         } else {
                             throw new NoSuchFileException(file);
@@ -894,7 +894,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
 
                     // Polymorphic dispatch — each CatalogSnapshot subclass knows how to serialize itself
                     // to SegmentInfos bytes for the remote metadata file.
-                    byte[] segmentInfoSnapshotByteArray = catalogSnapshot.serializeToSegmentInfosBytes(replicationCheckpoint);
+                    byte[] segmentInfoSnapshotByteArray = catalogSnapshot.serialize();
 
                     metadataStreamWrapper.writeStream(
                         indexOutput,
@@ -918,7 +918,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     // since setUserData() is now properly implemented in SegmentInfosCatalogSnapshot.
     // Also, the old uploadMetadata(SegmentInfos, ...) overload above can be removed at that point
     // and getSegmentToLuceneVersion() can be deleted since it's encapsulated in
-    // SegmentInfosCatalogSnapshot.getLuceneVersionForFile().
+    // SegmentInfosCatalogSnapshot.getFormatVersionForFile().
 
     /**
      * Parses the provided SegmentInfos to retrieve a mapping of the provided segment files to
@@ -974,7 +974,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      * format-aware checksum calculation.
      *
      * <ul>
-     *   <li>If the local directory is a {@link CompositeStoreDirectory}, it uses
+     *   <li>If the local directory is a {@link DataFormatAwareStoreDirectory}, it uses
      *       {@code calculateUploadChecksum()} which routes via the registry.</li>
      *   <li>Otherwise, falls back to Lucene's {@code CodecUtil.retrieveChecksum()} for
      *       backward compatibility with non-composite directories.</li>
@@ -982,8 +982,8 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      *
      */
     private String getChecksumOfLocalFile(Directory directory, String file) throws IOException {
-        if (directory instanceof CompositeStoreDirectory) {
-            return ((CompositeStoreDirectory) directory).calculateUploadChecksum(file);
+        if (directory instanceof DataFormatAwareStoreDirectory) {
+            return ((DataFormatAwareStoreDirectory) directory).calculateUploadChecksum(file);
         }
         // Fallback for non-optimized indices (backward compatibility)
         try (IndexInput indexInput = directory.openInput(file, IOContext.READONCE)) {

@@ -301,18 +301,17 @@ public class DefaultPlanExecutorTests extends OpenSearchTestCase {
         }
 
         @Override
-        @Override
         public MockCatalogSnapshot clone() {
             return new MockCatalogSnapshot(generation, segments, format);
         }
 
         @Override
-        public int getLuceneVersionForFile(String file) {
+        public int getFormatVersionForFile(String file) {
             return 0;
         }
 
         @Override
-        public byte[] serializeToSegmentInfosBytes(ReplicationCheckpoint replicationCheckpoint) throws IOException {
+        public byte[] serialize(ReplicationCheckpoint replicationCheckpoint) throws IOException {
             return new byte[0];
         }
         }

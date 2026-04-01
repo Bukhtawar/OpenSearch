@@ -54,6 +54,8 @@ public class GenericCRC32ChecksumHandler implements ChecksumHandler {
         return formatName;
     }
 
+    // Note: This reads the entire input sequentially which is slow for large files
+    // and may not work for all use cases.
     @Override
     public long calculateChecksum(IndexInput input) throws IOException {
         CRC32 crc32 = new CRC32();
