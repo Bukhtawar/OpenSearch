@@ -29,14 +29,10 @@ import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.blobstore.transfer.RemoteTransferContainer;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeIndexInputStream;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
+import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.unit.ByteSizeUnit;
-import org.opensearch.index.store.CompositeStoreDirectory;
-import org.opensearch.index.store.FileMetadata;
-import org.opensearch.index.store.RemoteDirectory;
-import org.opensearch.index.store.RemoteIndexInput;
-import org.opensearch.index.store.RemoteIndexOutput;
-import org.opensearch.index.store.RemoteSegmentStoreDirectory;
+import org.opensearch.index.store.*;
 import org.opensearch.plugins.PluginsService;
 
 import java.io.IOException;
@@ -88,6 +84,15 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
     private final Logger logger;
 
     /**
+     * Format lookup cache: maps blob keys (e.g., "_0.pqt__UUID") to their data format (e.g., "parquet").
+     * Populated by RemoteSegmentStoreDirectory via registerBlobFormat/replaceBlobFormatCache at well-defined
+     * mutation points (init, postUpload, deleteFile, markMergedSegmentsPendingDownload, etc.).
+     *
+     * <p>Volatile for atomic reference swap in {@link #replaceBlobFormatCache(Map)}.
+     */
+    private volatile ConcurrentHashMap<String, String> blobFormatCache = new ConcurrentHashMap<>();
+
+    /**
      * Full constructor with all rate limiter parameters.
      */
     public CompositeRemoteDirectory(
@@ -129,6 +134,62 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
         // }
 
         logger.debug("Created CompositeRemoteDirectory with {} format BlobContainers", formatBlobContainers.size());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Format registration — overrides from RemoteDirectory
+    // Maintains format lookup cache for plain blob key routing
+    // ═══════════════════════════════════════════════════════════════
+
+    @Override
+    public void registerBlobFormat(String blobKey, String format) {
+        if (blobKey != null && format != null) {
+            blobFormatCache.put(blobKey, format);
+        }
+    }
+
+    @Override
+    public void unregisterBlobFormat(String blobKey) {
+        if (blobKey != null) {
+            blobFormatCache.remove(blobKey);
+        }
+    }
+
+    @Override
+    public void replaceBlobFormatCache(Map<String, String> blobKeyToFormat) {
+        // Atomic reference swap — avoids clear+put race condition.
+        // Safe because init() is called during shard startup before any concurrent uploads.
+        this.blobFormatCache = new ConcurrentHashMap<>(blobKeyToFormat != null ? blobKeyToFormat : Map.of());
+    }
+
+    /**
+     * Resolve the data format for a given name/blob key.
+     *
+     * <p>Priority:
+     * <ol>
+     *   <li>If name contains ":::format" delimiter → parse it (e.g., copyFrom paths)</li>
+     *   <li>If name is in blobFormatCache → use cached format (e.g., plain blob keys from RSSD)</li>
+     *   <li>Default → "lucene"</li>
+     * </ol>
+     *
+     * @param name the filename or blob key to resolve format for
+     * @return the resolved data format name
+     */
+    private String resolveFormat(String name) {
+        // 1. Inline format info (e.g., "_0.pqt:::parquet")
+        if (name.contains(FileMetadata.DELIMITER)) {
+            return new FileMetadata(name).dataFormat();
+        }
+        // 2. Cached lookup (e.g., "_0.pqt__UUID" → "parquet")
+        String cached = blobFormatCache.get(name);
+        if (cached != null) {
+            return cached;
+        }
+        // 3. Warn if this looks like a UUID-suffixed blob key — it should have been in cache
+        if (name.contains(RemoteSegmentStoreDirectory.SEGMENT_NAME_UUID_SEPARATOR)) {
+            logger.warn("Format cache miss for blob key [{}], defaulting to lucene", name);
+        }
+        return DEFAULT_FORMAT;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -183,14 +244,16 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
     /**
      * Format-aware deleteFile override.
      *
-     * <p>Parses the name (which may contain ":::format") to determine which BlobContainer
-     * to delete from. For plain blob names without format info (e.g., "_0.cfs__UUID"),
-     * deletes from the base container.
+     * <p>Uses {@link #resolveFormat(String)} to determine which BlobContainer to delete from.
+     * For names with ":::format" suffix, parses the format inline. For plain blob keys
+     * (e.g., "_0.pqt__UUID"), looks up the format from the blobFormatCache populated by RSSD.
+     * Falls back to "lucene" (base container) if no format info is available.
      */
     @Override
     public void deleteFile(String name) throws IOException {
-        FileMetadata fileMetadata = new FileMetadata(name);
-        BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
+        // name is always a plain blob key (e.g., "_0.pqt__UUID") from RSSD — never contains ":::format"
+        String format = resolveFormat(name);
+        BlobContainer container = getBlobContainerForFormat(format);
         container.deleteBlobsIgnoringIfNotExists(Collections.singletonList(name));
     }
 
@@ -348,25 +411,21 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
     /**
      * Format-aware fileLength override.
      *
-     * <p>Parses the name (which may contain ":::format") to determine which BlobContainer to query.
+     * <p>Uses {@link #resolveFormat(String)} for format resolution. For names with ":::format",
+     * parses inline. For plain blob keys, looks up from blobFormatCache. Falls back to "lucene".
      */
     @Override
     public long fileLength(String name) throws IOException {
-        FileMetadata fileMetadata = new FileMetadata(name);
-        BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
+        // name is always a plain blob key (e.g., "_0.pqt__UUID") from RSSD — never contains ":::format"
+        String format = resolveFormat(name);
+        BlobContainer container = getBlobContainerForFormat(format);
 
         if (container == null) {
-            throw new NoSuchFileException(
-                String.format(java.util.Locale.ROOT, "No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file())
-            );
+            throw new NoSuchFileException(String.format(java.util.Locale.ROOT, "No container for format %s, file %s", format, name));
         }
 
-        List<BlobMetadata> metadata = container.listBlobsByPrefixInSortedOrder(
-            fileMetadata.file(),
-            1,
-            BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC
-        );
-        if (metadata.size() == 1 && metadata.get(0).name().equals(fileMetadata.file())) {
+        List<BlobMetadata> metadata = container.listBlobsByPrefixInSortedOrder(name, 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC);
+        if (metadata.size() == 1 && metadata.get(0).name().equals(name)) {
             return metadata.get(0).length();
         }
         throw new NoSuchFileException(name);
@@ -515,6 +574,7 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
 
     @Override
     public void close() throws IOException {
+        blobFormatCache = new ConcurrentHashMap<>();
         formatBlobContainers.clear();
     }
 
@@ -559,8 +619,8 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
 
             RemoteTransferContainer.OffsetRangeInputStreamSupplier supplier = lowPriorityUpload
                 ? (size, position) -> lowPriorityUploadRateLimiter.apply(
-                    new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
-                )
+                new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
+            )
                 : (size, position) -> uploadRateLimiter.apply(new OffsetRangeIndexInputStream(indexInput.clone(), size, position));
 
             RemoteTransferContainer remoteTransferContainer = new RemoteTransferContainer(
@@ -616,8 +676,8 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
 
             RemoteTransferContainer.OffsetRangeInputStreamSupplier supplier = lowPriorityUpload
                 ? (size, position) -> lowPriorityUploadRateLimiter.apply(
-                    new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
-                )
+                new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
+            )
                 : (size, position) -> uploadRateLimiter.apply(new OffsetRangeIndexInputStream(indexInput.clone(), size, position));
 
             RemoteTransferContainer remoteTransferContainer = new RemoteTransferContainer(
@@ -651,17 +711,20 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
     /**
      * Opens a stream for reading the existing file and returns {@link RemoteIndexInput} enclosing
      * the stream.
+     *
+     * <p>Uses {@link #resolveFormat(String)} for format resolution: inline ":::format" → cache → default "lucene".
+     *
      * @param name the name of an existing file.
      * @param fileLength file length
      * @param context desired {@link IOContext} context
-     * @return the {@link RemoteIndexInput} enclosing the block stream
+     * @return the {@link RemoteIndexInput} enclosing the stream
      * @throws IOException in case of I/O error
      * @throws NoSuchFileException if the file does not exist
      */
     @Override
     public IndexInput openInput(String name, long fileLength, IOContext context) throws IOException {
-        FileMetadata fileMetadata = new FileMetadata(name);
-        BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
+        String format = resolveFormat(name);
+        BlobContainer container = getBlobContainerForFormat(format);
         InputStream inputStream = null;
         try {
             inputStream = container.readBlob(name);
@@ -676,9 +739,43 @@ public class CompositeRemoteDirectory extends RemoteDirectory {
                     e.addSuppressed(closeEx);
                 }
             }
-            logger.error("Exception while reading blob for file: " + name + " for path " + blobContainer.path());
+            logger.error("Exception while reading blob for file: {} format: {} path: {}", name, format, blobContainer.path());
             throw e;
         }
+    }
+
+    /**
+     * Format-aware openBlockInput override.
+     *
+     * <p>Uses {@link #resolveFormat(String)} to determine which BlobContainer to read the block from.
+     * This is critical for non-lucene files accessed via plain blob keys (e.g., from CompositeDirectory
+     * warm/searchable snapshot reads through RSSD's openBlockInput).
+     *
+     * @param name the name of an existing file (blob key).
+     * @param position block start position
+     * @param length block length
+     * @param fileLength total file length
+     * @param context desired {@link IOContext} context
+     * @return the {@link IndexInput} enclosing the block data
+     * @throws IOException in case of I/O error
+     * @throws NoSuchFileException if the file does not exist
+     */
+    @Override
+    public IndexInput openBlockInput(String name, long position, long length, long fileLength, IOContext context) throws IOException {
+        String format = resolveFormat(name);
+        BlobContainer container = getBlobContainerForFormat(format);
+        if (position < 0 || length <= 0 || (position + length > fileLength)) {
+            throw new IllegalArgumentException("Invalid values of block start and size");
+        }
+        byte[] bytes;
+        try (InputStream inputStream = container.readBlob(name, position, length)) {
+            UnaryOperator<InputStream> rateLimiter = downloadRateLimiterProvider.get(name);
+            bytes = rateLimiter.apply(inputStream).readAllBytes();
+        } catch (Exception e) {
+            logger.error("Exception while reading block for file: {} format: {} path: {}", name, format, blobContainer.path());
+            throw e;
+        }
+        return new ByteArrayIndexInput(name, bytes);
     }
 
     private ActionListener<Void> createCompletionListener(

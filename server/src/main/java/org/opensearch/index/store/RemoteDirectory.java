@@ -403,6 +403,42 @@ public class RemoteDirectory extends Directory {
         blobContainer.delete();
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // Format registration — no-ops in base class.
+    // CompositeRemoteDirectory overrides these for format-aware routing.
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Register data format for a blob key. No-op in base RemoteDirectory.
+     * CompositeRemoteDirectory overrides to maintain a format lookup cache
+     * that maps blob keys to their data format (e.g., "parquet").
+     *
+     * @param blobKey the remote blob key (e.g., "_0.pqt__UUID")
+     * @param format  the data format name (e.g., "parquet", "lucene")
+     */
+    public void registerBlobFormat(String blobKey, String format) {
+        // No-op — only CompositeRemoteDirectory needs format routing
+    }
+
+    /**
+     * Unregister data format for a blob key. No-op in base RemoteDirectory.
+     *
+     * @param blobKey the remote blob key to unregister
+     */
+    public void unregisterBlobFormat(String blobKey) {
+        // No-op
+    }
+
+    /**
+     * Atomically replace the entire format cache. No-op in base RemoteDirectory.
+     * CompositeRemoteDirectory uses this during init() to rebuild the cache from scratch.
+     *
+     * @param blobKeyToFormat the new complete mapping of blob key to format
+     */
+    public void replaceBlobFormatCache(Map<String, String> blobKeyToFormat) {
+        // No-op
+    }
+
     public boolean copyFrom(
         Directory from,
         String src,

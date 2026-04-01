@@ -114,6 +114,10 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      * Keeps track of local segment filename to uploaded filename along with other attributes like checksum.
      * This map acts as a cache layer for uploaded segment filenames which helps avoid calling listAll() each time.
      * It is important to initialize this map on creation of RemoteSegmentStoreDirectory and update it on each upload and delete.
+     *
+     * <p>IMPORTANT: All mutations to this map must go through the encapsulated APIs
+     * ({@link #replaceUploadedSegments}, {@link #addUploadedSegment}, {@link #removeUploadedSegment})
+     * to keep the format cache in CompositeRemoteDirectory in sync.
      */
     private Map<String, UploadedSegmentMetadata> segmentsUploadedToRemoteStore;
 
@@ -180,9 +184,9 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         logger.debug("Start initialisation of remote segment metadata");
         RemoteSegmentMetadata remoteSegmentMetadata = readLatestMetadataFile();
         if (remoteSegmentMetadata != null) {
-            this.segmentsUploadedToRemoteStore = new ConcurrentHashMap<>(remoteSegmentMetadata.getMetadata());
+            replaceUploadedSegments(remoteSegmentMetadata.getMetadata());
         } else {
-            this.segmentsUploadedToRemoteStore = new ConcurrentHashMap<>();
+            replaceUploadedSegments(Collections.emptyMap());
         }
         logger.debug("Initialisation of remote segment metadata completed");
         return remoteSegmentMetadata;
@@ -201,9 +205,9 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         String metadataFile = ((RemoteStoreMetadataLockManager) mdLockManager).fetchLockedMetadataFile(metadataFilePrefix, acquirerId);
         RemoteSegmentMetadata remoteSegmentMetadata = readMetadataFile(metadataFile);
         if (remoteSegmentMetadata != null) {
-            this.segmentsUploadedToRemoteStore = new ConcurrentHashMap<>(remoteSegmentMetadata.getMetadata());
+            replaceUploadedSegments(remoteSegmentMetadata.getMetadata());
         } else {
-            this.segmentsUploadedToRemoteStore = new ConcurrentHashMap<>();
+            replaceUploadedSegments(Collections.emptyMap());
         }
         return remoteSegmentMetadata;
     }
@@ -238,9 +242,9 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         String metadataFile = lockedMetadataFiles.iterator().next();
         RemoteSegmentMetadata remoteSegmentMetadata = readMetadataFile(metadataFile);
         if (remoteSegmentMetadata != null) {
-            this.segmentsUploadedToRemoteStore = new ConcurrentHashMap<>(remoteSegmentMetadata.getMetadata());
+            replaceUploadedSegments(remoteSegmentMetadata.getMetadata());
         } else {
-            this.segmentsUploadedToRemoteStore = new ConcurrentHashMap<>();
+            replaceUploadedSegments(Collections.emptyMap());
         }
         return remoteSegmentMetadata;
     }
@@ -526,8 +530,10 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     public void deleteFile(String name) throws IOException {
         String remoteFilename = getExistingRemoteFilename(name);
         if (remoteFilename != null) {
+            // Step 1: delete from remote (format cache entry still available for routing)
             remoteDataDirectory.deleteFile(remoteFilename);
-            segmentsUploadedToRemoteStore.remove(name);
+            // Step 2: cleanup map + format cache AFTER the remote delete
+            removeUploadedSegment(name);
         }
     }
 
@@ -747,7 +753,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
 
     private void postUpload(Directory from, String src, String remoteFilename, String checksum) throws IOException {
         UploadedSegmentMetadata segmentMetadata = new UploadedSegmentMetadata(src, remoteFilename, checksum, from.fileLength(src));
-        segmentsUploadedToRemoteStore.put(src, segmentMetadata);
+        addUploadedSegment(src, segmentMetadata);
     }
 
     /**
@@ -994,6 +1000,78 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         return null;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // Encapsulated map mutation APIs — keep format cache in sync
+    // IMPORTANT: All mutations to segmentsUploadedToRemoteStore and
+    // pendingDownloadMergedSegments must go through these methods.
+    // ═══════════════════════════════════════════════════════════════
+
+    /** Extract format from originalFilename. Returns "lucene" if no :::format present. */
+    private static String extractFormat(String originalFilename) {
+        if (originalFilename != null && originalFilename.contains(FileMetadata.DELIMITER)) {
+            return originalFilename.split(FileMetadata.DELIMITER)[1];
+        }
+        return "lucene";
+    }
+
+    /** Shared helper for single format registration. */
+    private void registerFormatForBlob(String blobKey, String originalFilename) {
+        remoteDataDirectory.registerBlobFormat(blobKey, extractFormat(originalFilename));
+    }
+
+    /** Shared helper for single format unregistration. */
+    private void unregisterFormatForBlob(String blobKey) {
+        remoteDataDirectory.unregisterBlobFormat(blobKey);
+    }
+
+    /**
+     * Replace entire uploaded segments map + rebuild format cache.
+     * Called by init(), initializeToSpecificCommit(), initializeToSpecificTimestamp().
+     */
+    private void replaceUploadedSegments(Map<String, UploadedSegmentMetadata> newSegments) {
+        this.segmentsUploadedToRemoteStore = new ConcurrentHashMap<>(newSegments);
+        syncBlobFormatCache();
+    }
+
+    /**
+     * Add a segment to uploaded map + register its format in cache.
+     * Called by postUpload().
+     */
+    private void addUploadedSegment(String localFilename, UploadedSegmentMetadata metadata) {
+        segmentsUploadedToRemoteStore.put(localFilename, metadata);
+        registerFormatForBlob(metadata.getUploadedFilename(), metadata.getOriginalFilename());
+    }
+
+    /**
+     * Remove a segment from uploaded map + unregister its format from cache.
+     * Called by deleteFile(), deleteStaleSegments().
+     * IMPORTANT: Call this AFTER the remote delete operation, not before,
+     * so that the format cache entry is still available during routing.
+     */
+    private void removeUploadedSegment(String localFilename) {
+        UploadedSegmentMetadata removed = segmentsUploadedToRemoteStore.remove(localFilename);
+        if (removed != null) {
+            unregisterFormatForBlob(removed.getUploadedFilename());
+        }
+    }
+
+    /**
+     * Rebuild format cache from both segmentsUploadedToRemoteStore and pendingDownloadMergedSegments.
+     * Called after bulk replacement of segmentsUploadedToRemoteStore (init paths).
+     */
+    private void syncBlobFormatCache() {
+        Map<String, String> blobKeyToFormat = new HashMap<>();
+        for (UploadedSegmentMetadata metadata : segmentsUploadedToRemoteStore.values()) {
+            blobKeyToFormat.put(metadata.getUploadedFilename(), extractFormat(metadata.getOriginalFilename()));
+        }
+        if (pendingDownloadMergedSegments != null) {
+            for (Map.Entry<String, String> entry : pendingDownloadMergedSegments.entrySet()) {
+                blobKeyToFormat.put(entry.getValue(), extractFormat(entry.getKey()));
+            }
+        }
+        remoteDataDirectory.replaceBlobFormatCache(blobKeyToFormat);
+    }
+
     private String getNewRemoteSegmentFilename(String localFilename) {
         // Strip :::format suffix if present before appending UUID.
         // For optimized indices, localFilename may be "filename:::format" (e.g., "_0.pqt:::parquet").
@@ -1179,7 +1257,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
                 // Update cache after successful batch deletion
                 for (String file : filesToDelete) {
                     if (!activeSegmentFilesMetadataMap.containsKey(getLocalSegmentFilename(file))) {
-                        segmentsUploadedToRemoteStore.remove(getLocalSegmentFilename(file));
+                        removeUploadedSegment(getLocalSegmentFilename(file));
                     }
                 }
             } catch (IOException e) {
@@ -1302,6 +1380,10 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      */
     public void markMergedSegmentsPendingDownload(Map<String, String> localToRemoteFilenames) {
         pendingDownloadMergedSegments.putAll(localToRemoteFilenames);
+        // Register format for each pending segment in the format cache
+        for (Map.Entry<String, String> entry : localToRemoteFilenames.entrySet()) {
+            registerFormatForBlob(entry.getValue(), entry.getKey());
+        }
     }
 
     /**
@@ -1310,7 +1392,12 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      * @param localFilenames Set of local filenames to remove from pending downloads
      */
     public void unmarkMergedSegmentsPendingDownload(Set<String> localFilenames) {
-        localFilenames.forEach(pendingDownloadMergedSegments::remove);
+        for (String localFilename : localFilenames) {
+            String remoteFilename = pendingDownloadMergedSegments.remove(localFilename);
+            if (remoteFilename != null) {
+                unregisterFormatForBlob(remoteFilename);
+            }
+        }
     }
 
     /**
