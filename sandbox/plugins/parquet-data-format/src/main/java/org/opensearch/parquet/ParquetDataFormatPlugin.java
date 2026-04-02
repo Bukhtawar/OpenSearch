@@ -23,6 +23,8 @@ import org.opensearch.index.engine.dataformat.DataFormatPlugin;
 import org.opensearch.index.engine.dataformat.IndexingExecutionEngine;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.checksum.ChecksumHandler;
+import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 import org.opensearch.parquet.engine.ParquetDataFormat;
 import org.opensearch.parquet.engine.ParquetIndexingEngine;
 import org.opensearch.parquet.fields.ArrowSchemaBuilder;
@@ -38,6 +40,7 @@ import org.opensearch.watcher.ResourceWatcherService;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 
 /**
@@ -97,6 +100,11 @@ public class ParquetDataFormatPlugin extends Plugin implements DataFormatPlugin 
             indexSettings,
             threadPool
         );
+    }
+
+    @Override
+    public Map<String, ChecksumHandler> checksumHandlers() {
+        return Map.of(dataFormat.name(), new GenericCRC32ChecksumHandler(dataFormat.name()));
     }
 
     @Override

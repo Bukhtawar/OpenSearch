@@ -83,6 +83,7 @@ public class MockCatalogSnapshot extends CatalogSnapshot {
     }
 
     @Override
+    @Override
     public CatalogSnapshot clone() {
         return new MockCatalogSnapshot(generation, segments, format);
     }
@@ -90,6 +91,17 @@ public class MockCatalogSnapshot extends CatalogSnapshot {
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
+    }
+
+    @Override
+    public int getFormatVersionForFile(String file) {
+        return 0;
+    }
+
+    @Override
+    public byte[] serialize() throws IOException {
+        return new byte[0];
+    }
     }
 
     @Override

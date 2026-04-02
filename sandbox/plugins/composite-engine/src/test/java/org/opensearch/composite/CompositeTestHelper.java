@@ -25,13 +25,14 @@ import org.opensearch.index.engine.dataformat.WriteResult;
 import org.opensearch.index.engine.dataformat.Writer;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.checksum.ChecksumHandler;
+import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.Set;import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Shared test utilities for composite engine tests.
@@ -83,6 +84,11 @@ final class CompositeTestHelper {
             ) {
                 return new StubIndexingExecutionEngine(format);
             }
+
+            @Override
+            public Map<String, ChecksumHandler> checksumHandlers() {
+                return Map.of(formatName, new GenericCRC32ChecksumHandler(formatName));
+            }
         };
     }
 
@@ -101,6 +107,11 @@ final class CompositeTestHelper {
                 IndexSettings indexSettings
             ) {
                 return new StubIndexingExecutionEngine(format);
+            }
+
+            @Override
+            public Map<String, ChecksumHandler> checksumHandlers() {
+                return Map.of(formatName, new GenericCRC32ChecksumHandler(formatName));
             }
         };
     }

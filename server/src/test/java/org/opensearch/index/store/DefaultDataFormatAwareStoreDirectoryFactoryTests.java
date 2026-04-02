@@ -89,19 +89,6 @@ public class DefaultDataFormatAwareStoreDirectoryFactoryTests extends OpenSearch
         assertEquals(shardPath, directory.getShardPath());
     }
 
-    public void testNewDataFormatAwareStoreDirectory_HasChecksumHandlers() throws IOException {
-        DataFormatRegistry registry = createEmptyDataFormatRegistry();
-        DefaultDataFormatAwareStoreDirectoryFactory factory = new DefaultDataFormatAwareStoreDirectoryFactory();
-        Path tempDir = createTempDir();
-        ShardPath shardPath = createShardPath(tempDir);
-        IndexSettings indexSettings = createIndexSettings();
-
-        DataFormatAwareStoreDirectory directory = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath.getShardId(), shardPath, registry);
-
-        assertNotNull("Directory should have a data format registry", directory.getDataFormatRegistry());
-        assertTrue("Registry should have 'lucene' checksum handler", directory.getDataFormatRegistry().hasChecksumHandler("lucene"));
-    }
-
     public void testNewDataFormatAwareStoreDirectory_CanListFiles() throws IOException {
         DataFormatRegistry registry = createEmptyDataFormatRegistry();
         DefaultDataFormatAwareStoreDirectoryFactory factory = new DefaultDataFormatAwareStoreDirectoryFactory();

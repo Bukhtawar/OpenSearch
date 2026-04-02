@@ -12,14 +12,10 @@ import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.checksum.ChecksumHandler;
 
-/**
- * Plugin interface for providing custom data format implementations.
- * Plugins implement this to register their data format (e.g., Parquet, Lucene)
- * with the DataFormatRegistry during node bootstrap.
- *
- * @opensearch.experimental
- */
+import java.util.Map;
+
 /**
  * Plugin interface for providing custom data format implementations.
  * Plugins implement this to register their data format (e.g., Parquet, Lucene)
@@ -46,4 +42,14 @@ public interface DataFormatPlugin {
      * @return the indexing execution engine instance
      */
     IndexingExecutionEngine<?, ?> indexingEngine(MapperService mapperService, ShardPath shardPath, IndexSettings indexSettings);
+
+    /**
+     * Returns a map of format name to checksum handler for all formats this plugin supports.
+     * <p>
+     * Most plugins return a single-entry map for their own format. Composite plugins
+     * return entries for each format they orchestrate.
+     *
+     * @return map of format name to checksum handler
+     */
+    Map<String, ChecksumHandler> checksumHandlers();
 }

@@ -18,10 +18,13 @@ import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.logging.Loggers;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.checksum.ChecksumHandler;
+import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 
 import java.io.IOException;
 import java.util.Collection;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -72,7 +75,8 @@ public class DataFormatAwareStoreDirectory extends Store.StoreDirectory {
 
     private final SubdirectoryAwareDirectory subdirectoryAwareDirectory;
     private final ShardPath shardPath;
-    private final DataFormatRegistry dataFormatRegistry;
+    private final Map<String, ChecksumHandler> checksumHandlers;
+    private static final ChecksumHandler DEFAULT_CHECKSUM_HANDLER = new GenericCRC32ChecksumHandler();
 
     /**
      * Constructs a DataFormatAwareStoreDirectory with a {@link DataFormatRegistry} for format-aware
@@ -86,12 +90,12 @@ public class DataFormatAwareStoreDirectory extends Store.StoreDirectory {
         super(null, Loggers.getLogger("index.store.deletes", shardPath.getShardId()));
         this.shardPath = shardPath;
         this.subdirectoryAwareDirectory = new SubdirectoryAwareDirectory(delegate, shardPath);
-        this.dataFormatRegistry = dataFormatRegistry;
+        this.checksumHandlers = dataFormatRegistry.getChecksumHandlers();
 
         logger.debug(
-            "Created DataFormatAwareStoreDirectory for shard {} with registered formats: {}",
+            "Created DataFormatAwareStoreDirectory for shard {} with checksum handlers for formats: {}",
             shardPath.getShardId(),
-            dataFormatRegistry.getRegisteredFormats()
+            checksumHandlers.keySet()
         );
     }
 
@@ -193,15 +197,15 @@ public class DataFormatAwareStoreDirectory extends Store.StoreDirectory {
     }
 
     /**
-     * Calculates checksum using the {@link DataFormatRegistry} for format-aware routing.
-     * Delegates to the appropriate {@link org.opensearch.index.store.checksum.ChecksumHandler}
-     * based on the file's data format.
+     * Calculates checksum using the format-specific {@link ChecksumHandler}.
+     * Looks up the handler from the internal map by the file's data format,
+     * falling back to {@link GenericCRC32ChecksumHandler} for unknown formats.
      */
     public long calculateChecksum(FileMetadata fm) throws IOException {
         String fileIdentifier = toFileIdentifier(fm);
+        ChecksumHandler handler = checksumHandlers.getOrDefault(fm.dataFormat(), DEFAULT_CHECKSUM_HANDLER);
         try (IndexInput input = openInput(fileIdentifier, IOContext.READONCE)) {
-            //ToDo
-            return 0;
+            return handler.calculateChecksum(input);
         }
     }
 

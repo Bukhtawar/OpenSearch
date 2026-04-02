@@ -8,7 +8,6 @@
 
 package org.opensearch.index.engine.dataformat;
 
-import org.apache.lucene.store.IndexInput;
 import org.opensearch.common.CheckedFunction;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.index.IndexSettings;
@@ -16,7 +15,6 @@ import org.opensearch.index.engine.exec.EngineReaderManager;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.store.checksum.ChecksumHandler;
-import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 import org.opensearch.index.store.checksum.LuceneChecksumHandler;
 import org.opensearch.plugins.PluginsService;
 import org.opensearch.plugins.SearchBackEndPlugin;
@@ -45,6 +43,9 @@ public class DataFormatRegistry {
     private final Map<DataFormat, CheckedFunction<ShardPath, EngineReaderManager<?>, IOException>> readerManagerBuilders;
 
     private final Map<String, DataFormat> dataFormats;
+
+    /** Map from format name to its checksum handler, built from plugin-provided handlers plus built-in lucene. */
+    private final Map<String, ChecksumHandler> checksumHandlers;
 
     /**
      * Creates a registry by discovering all {@link DataFormatPlugin} and {@link SearchBackEndPlugin} implementations
@@ -88,6 +89,14 @@ public class DataFormatRegistry {
         this.dataFormatPluginRegistry = Map.copyOf(dataFormatPlugiRegistry);
         this.dataFormats = Map.copyOf(dataFormats);
         this.readerManagerBuilders = Map.copyOf(readerManagerBuilders);
+
+        // Build checksum handlers: built-in lucene + all plugin-provided handlers
+        Map<String, ChecksumHandler> checksumHandlerMap = new HashMap<>();
+        checksumHandlerMap.put("lucene", new LuceneChecksumHandler());
+        for (DataFormatPlugin plugin : dataFormatPlugiRegistry.values()) {
+            checksumHandlerMap.putAll(plugin.checksumHandlers());
+        }
+        this.checksumHandlers = Map.copyOf(checksumHandlerMap);
     }
 
     /**
@@ -143,10 +152,20 @@ public class DataFormatRegistry {
     /**
      * Returns an unmodifiable view of all registered data formats and their plugins.
      *
-     * @return unmodifiable map of data formats to plugins
+     * @return unmodifiable set of data formats
      */
     public Set<DataFormat> getRegisteredFormats() {
         return Set.copyOf(dataFormatPluginRegistry.keySet());
+    }
+
+    /**
+     * Returns an unmodifiable map of format name to checksum handler.
+     * Includes the built-in Lucene handler and all plugin-provided handlers.
+     *
+     * @return unmodifiable map of format name to checksum handler
+     */
+    public Map<String, ChecksumHandler> getChecksumHandlers() {
+        return checksumHandlers;
     }
 
     /**
