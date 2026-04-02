@@ -15,6 +15,7 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
+import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.dataformat.DataFormatPlugin;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.shard.ShardPath;
@@ -61,18 +62,19 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         shardPath = new ShardPath(false, shardDataPath, shardDataPath, sid);
 
         PluginsService pluginsService = mock(PluginsService.class);
+        IndexSettings indexSettings = mock(IndexSettings.class);
         when(pluginsService.filterPlugins(DataFormatPlugin.class)).thenReturn(List.of());
         when(pluginsService.filterPlugins(SearchBackEndPlugin.class)).thenReturn(List.of());
         DataFormatRegistry dataFormatRegistry = new DataFormatRegistry(pluginsService);
 
-        dataFormatAwareStoreDirectory = new DataFormatAwareStoreDirectory(fsDirectory, shardPath, dataFormatRegistry);
+        dataFormatAwareStoreDirectory = new DataFormatAwareStoreDirectory(indexSettings, fsDirectory, shardPath, dataFormatRegistry);
     }
 
     @After
     public void tearDown() throws Exception {
-        // Don't call dataFormatAwareStoreDirectory.close() - StoreDirectory.close() asserts
-        // that only the Store itself should close it. Just close the underlying FSDirectory.
-        fsDirectory.close();
+        // DataFormatAwareStoreDirectory now extends FilterDirectory, so close() will
+        // propagate through SubdirectoryAwareDirectory to FSDirectory.
+        dataFormatAwareStoreDirectory.close();
         super.tearDown();
     }
 

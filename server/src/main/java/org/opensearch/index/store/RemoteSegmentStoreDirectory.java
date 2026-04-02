@@ -982,8 +982,9 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      *
      */
     private String getChecksumOfLocalFile(Directory directory, String file) throws IOException {
-        if (directory instanceof DataFormatAwareStoreDirectory) {
-            return ((DataFormatAwareStoreDirectory) directory).calculateUploadChecksum(file);
+        DataFormatAwareStoreDirectory dfasd = DataFormatAwareStoreDirectory.unwrap(directory);
+        if (dfasd != null) {
+            return dfasd.calculateUploadChecksum(file);
         }
         // Fallback for non-optimized indices (backward compatibility)
         try (IndexInput indexInput = directory.openInput(file, IOContext.READONCE)) {

@@ -11,11 +11,11 @@ package org.opensearch.index.store;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.common.annotation.PublicApi;
-import org.opensearch.common.logging.Loggers;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.shard.ShardPath;
@@ -31,7 +31,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Format-aware composite directory that uses {@link SubdirectoryAwareDirectory} via composition.
+ * Format-aware directory that extends {@link FilterDirectory} and wraps a {@link SubdirectoryAwareDirectory}.
  *
  * <p>This directory adds data format awareness on top of the subdirectory path routing
  * provided by {@link SubdirectoryAwareDirectory}. It understands that files in different
@@ -67,7 +67,7 @@ import java.util.stream.Collectors;
  * @opensearch.api
  */
 @PublicApi(since = "3.0.0")
-public class DataFormatAwareStoreDirectory extends Store.StoreDirectory {
+public class DataFormatAwareStoreDirectory extends FilterDirectory {
 
     private static final Logger logger = LogManager.getLogger(DataFormatAwareStoreDirectory.class);
 
@@ -75,7 +75,6 @@ public class DataFormatAwareStoreDirectory extends Store.StoreDirectory {
 
     private static final Set<String> INDEX_DIRECTORY_FORMATS = Set.of("lucene", "metadata");
 
-    private final SubdirectoryAwareDirectory subdirectoryAwareDirectory;
     private final ShardPath shardPath;
     private final Map<String, ChecksumHandler> checksumHandlers;
     private static final ChecksumHandler DEFAULT_CHECKSUM_HANDLER = new GenericCRC32ChecksumHandler();
@@ -89,9 +88,8 @@ public class DataFormatAwareStoreDirectory extends Store.StoreDirectory {
      * @param dataFormatRegistry  registry providing format-specific checksum handlers
      */
     public DataFormatAwareStoreDirectory(IndexSettings indexSettings, Directory delegate, ShardPath shardPath, DataFormatRegistry dataFormatRegistry) {
-        super(null, Loggers.getLogger("index.store.deletes", shardPath.getShardId()));
+        super(new SubdirectoryAwareDirectory(delegate, shardPath));
         this.shardPath = shardPath;
-        this.subdirectoryAwareDirectory = new SubdirectoryAwareDirectory(delegate, shardPath);
         this.checksumHandlers = dataFormatRegistry.getChecksumHandlers(indexSettings);
         this.checksumHandlers.put(DEFAULT_FORMAT, new LuceneChecksumHandler());
 
@@ -102,9 +100,27 @@ public class DataFormatAwareStoreDirectory extends Store.StoreDirectory {
         );
     }
 
-    @Override
-    public void close() {
-        // Nobody should close this directory except of the Store itself
+    /**
+     * Walks the {@link FilterDirectory} wrapping chain to find a {@link DataFormatAwareStoreDirectory}.
+     * This is needed because the directory may be wrapped in {@link ByteSizeCachingDirectory} and
+     * {@link Store.StoreDirectory}, so a direct {@code instanceof} check on the outermost directory
+     * would fail.
+     *
+     * @param dir the directory to unwrap (may be null)
+     * @return the DataFormatAwareStoreDirectory found in the chain, or null if not present
+     */
+    public static DataFormatAwareStoreDirectory unwrap(Directory dir) {
+        while (dir != null) {
+            if (dir instanceof DataFormatAwareStoreDirectory) {
+                return (DataFormatAwareStoreDirectory) dir;
+            }
+            if (dir instanceof FilterDirectory) {
+                dir = ((FilterDirectory) dir).getDelegate();
+            } else {
+                return null;
+            }
+        }
+        return null;
     }
 
     private String resolveFileName(String fileName) {
@@ -117,37 +133,37 @@ public class DataFormatAwareStoreDirectory extends Store.StoreDirectory {
 
     @Override
     public IndexInput openInput(String name, IOContext context) throws IOException {
-        return subdirectoryAwareDirectory.openInput(resolveFileName(name), context);
+        return in.openInput(resolveFileName(name), context);
     }
 
     @Override
     public IndexOutput createOutput(String name, IOContext context) throws IOException {
-        return subdirectoryAwareDirectory.createOutput(resolveFileName(name), context);
+        return in.createOutput(resolveFileName(name), context);
     }
 
     @Override
     public void deleteFile(String name) throws IOException {
-        subdirectoryAwareDirectory.deleteFile(resolveFileName(name));
+        in.deleteFile(resolveFileName(name));
     }
 
     @Override
     public long fileLength(String name) throws IOException {
-        return subdirectoryAwareDirectory.fileLength(resolveFileName(name));
+        return in.fileLength(resolveFileName(name));
     }
 
     @Override
     public void sync(Collection<String> names) throws IOException {
-        subdirectoryAwareDirectory.sync(names.stream().map(this::resolveFileName).collect(Collectors.toList()));
+        in.sync(names.stream().map(this::resolveFileName).collect(Collectors.toList()));
     }
 
     @Override
     public void rename(String source, String dest) throws IOException {
-        subdirectoryAwareDirectory.rename(resolveFileName(source), resolveFileName(dest));
+        in.rename(resolveFileName(source), resolveFileName(dest));
     }
 
     @Override
     public String[] listAll() throws IOException {
-        return subdirectoryAwareDirectory.listAll();
+        return in.listAll();
     }
 
     // ═══════════════════════════════════════════════════════════════

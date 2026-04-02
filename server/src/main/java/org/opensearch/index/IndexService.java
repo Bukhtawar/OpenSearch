@@ -773,6 +773,9 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                     fileCache,
                     threadPool
                 );
+            } else if (false) {
+                // Will be enabled in case of formatAware indices.
+                directory = createDataFormatAwareStoreDirectory(shardId, path);
             } else {
                 directory = directoryFactory.newDirectory(this.indexSettings, path);
             }
@@ -785,10 +788,6 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 path,
                 directoryFactory
             );
-            DataFormatAwareStoreDirectory dataFormatAwareStoreDirectory = createDataFormatAwareStoreDirectory(shardId, path);
-            if (dataFormatAwareStoreDirectory != null) {
-                store.setDataFormatAwareStoreDirectory(dataFormatAwareStoreDirectory);
-            }
             eventListener.onStoreCreated(shardId);
             indexShard = new IndexShard(
                 routing,

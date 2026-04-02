@@ -604,8 +604,9 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
     ) throws Exception {
         assert ioContext != IOContext.READONCE : "Remote upload will fail with IoContext.READONCE";
         long expectedChecksum;
-        if (from instanceof DataFormatAwareStoreDirectory) {
-            expectedChecksum = ((DataFormatAwareStoreDirectory) from).calculateChecksum(new FileMetadata(src));
+        DataFormatAwareStoreDirectory dfasd = DataFormatAwareStoreDirectory.unwrap(from);
+        if (dfasd != null) {
+            expectedChecksum = dfasd.calculateChecksum(new FileMetadata(src));
         } else {
             expectedChecksum = calculateChecksumOfChecksum(from, src);
         }

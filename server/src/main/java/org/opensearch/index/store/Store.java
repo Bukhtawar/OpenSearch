@@ -176,7 +176,6 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     );
 
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
-    private DataFormatAwareStoreDirectory dataFormatAwareStoreDirectory;
     private final StoreDirectory directory;
     private final ReentrantReadWriteLock metadataLock = new ReentrantReadWriteLock();
     private final ShardLock shardLock;
@@ -221,31 +220,6 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         ShardPath shardPath,
         IndexStorePlugin.DirectoryFactory directoryFactory
     ) {
-        this(shardId, indexSettings, directory, shardLock, onClose, shardPath, directoryFactory, null);
-    }
-
-    /**
-     * Constructor with factory-created DataFormatAwareStoreDirectory.
-     *
-     * @param shardId              the shard identifier
-     * @param indexSettings        the index settings
-     * @param directory            the underlying Lucene directory
-     * @param shardLock            the shard lock
-     * @param onClose              callback invoked when the store is closed
-     * @param shardPath            the shard's file path
-     * @param directoryFactory     the directory factory for creating temp directories
-     * @param dataFormatAwareStoreDirectory the factory-created DataFormatAwareStoreDirectory, or null if not available
-     */
-    public Store(
-        ShardId shardId,
-        IndexSettings indexSettings,
-        Directory directory,
-        ShardLock shardLock,
-        OnClose onClose,
-        ShardPath shardPath,
-        IndexStorePlugin.DirectoryFactory directoryFactory,
-        DataFormatAwareStoreDirectory dataFormatAwareStoreDirectory
-    ) {
         super(shardId, indexSettings);
         final TimeValue refreshInterval = indexSettings.getValue(INDEX_STORE_STATS_REFRESH_INTERVAL_SETTING);
         logger.debug("store stats are refreshed with refresh_interval [{}]", refreshInterval);
@@ -257,34 +231,26 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         this.isIndexSortEnabled = indexSettings.getIndexSortConfig().hasIndexSort();
         this.isParentFieldEnabledVersion = indexSettings.getIndexVersionCreated().onOrAfter(org.opensearch.Version.V_3_2_0);
         this.directoryFactory = directoryFactory;
-        this.dataFormatAwareStoreDirectory = dataFormatAwareStoreDirectory;
-
-        if (dataFormatAwareStoreDirectory != null) {
-            logger.debug("Store created with factory-provided DataFormatAwareStoreDirectory for shard {}", shardId);
-        }
 
         assert onClose != null;
         assert shardLock != null;
         assert shardLock.getShardId().equals(shardId);
     }
 
-    /**
-     * Sets the DataFormatAwareStoreDirectory for this store after construction.
-     * This allows the store factory to create the Store instance first,
-     * and then have the DataFormatAwareStoreDirectory set by the caller.
-     *
-     * @param dataFormatAwareStoreDirectory the DataFormatAwareStoreDirectory to set, or null
-     */
-    public void setDataFormatAwareStoreDirectory(DataFormatAwareStoreDirectory dataFormatAwareStoreDirectory) {
-        this.dataFormatAwareStoreDirectory = dataFormatAwareStoreDirectory;
-        if (dataFormatAwareStoreDirectory != null) {
-            logger.debug("DataFormatAwareStoreDirectory set for shard {}", shardId());
-        }
-    }
-
     public Directory directory() {
         ensureOpen();
         return directory;
+    }
+
+    /**
+     * Returns the DataFormatAwareStoreDirectory from the directory wrapping chain, if present.
+     * For optimized indices, the DataFormatAwareStoreDirectory is part of the FilterDirectory chain.
+     * For regular indices, this returns null.
+     *
+     * @return the DataFormatAwareStoreDirectory, or null if not in the chain
+     */
+    public DataFormatAwareStoreDirectory getDataFormatAwareStoreDirectory() {
+        return DataFormatAwareStoreDirectory.unwrap(this.directory);
     }
 
     public Directory newTempDirectory(String pathString) throws IOException {
@@ -617,8 +583,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         // Leverage try-with-resources to close the shard lock for us
         try (Closeable c = shardLock) {
             try {
-                directory.innerClose(); // this closes the distributorDirectory as well
-                IOUtils.close(dataFormatAwareStoreDirectory);
+                directory.innerClose(); // this closes the entire directory chain including DataFormatAwareStoreDirectory
             } finally {
                 onClose.accept(shardLock);
             }
