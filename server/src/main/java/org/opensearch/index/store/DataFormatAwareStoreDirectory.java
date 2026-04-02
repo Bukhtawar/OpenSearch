@@ -95,7 +95,7 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
     ) {
         super(new SubdirectoryAwareDirectory(delegate, shardPath));
         this.shardPath = shardPath;
-        this.checksumHandlers = dataFormatRegistry.getChecksumHandlers(indexSettings);
+        this.checksumHandlers = new java.util.HashMap<>(dataFormatRegistry.getChecksumHandlers(indexSettings));
         this.checksumHandlers.put(DEFAULT_FORMAT, new LuceneChecksumHandler());
 
         logger.debug(

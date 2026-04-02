@@ -16,6 +16,7 @@ import org.opensearch.index.mapper.MappedFieldType;
 import org.opensearch.index.mapper.TextSearchInfo;
 import org.opensearch.index.mapper.ValueFetcher;
 import org.opensearch.index.query.QueryShardContext;
+import org.opensearch.index.store.checksum.ChecksumHandler;
 import org.opensearch.search.lookup.SearchLookup;
 import org.opensearch.test.OpenSearchTestCase;
 
@@ -142,6 +143,11 @@ public class CompositeDocumentInputTests extends OpenSearchTestCase {
             @Override
             public Set<FieldTypeCapabilities> supportedFields() {
                 return fields;
+            }
+
+            @Override
+            public Map<String, ChecksumHandler> checksumHandlers() {
+                return Map.of();
             }
         };
     }

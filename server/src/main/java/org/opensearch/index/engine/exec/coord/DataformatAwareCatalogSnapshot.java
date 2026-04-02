@@ -189,6 +189,16 @@ public class DataformatAwareCatalogSnapshot extends CatalogSnapshot {
     }
 
     @Override
+    public int getFormatVersionForFile(String file) {
+        return org.apache.lucene.util.Version.LATEST.major;
+    }
+
+    @Override
+    public byte[] serialize() throws IOException {
+        throw new UnsupportedOperationException("DataformatAwareCatalogSnapshot does not support serialize()");
+    }
+
+    @Override
     protected void closeInternal() {
         closed.set(true);
     }

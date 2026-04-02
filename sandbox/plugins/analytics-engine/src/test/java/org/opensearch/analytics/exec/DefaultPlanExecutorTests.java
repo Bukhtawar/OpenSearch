@@ -42,8 +42,8 @@ import org.opensearch.index.engine.exec.WriterFileSet;
 import org.opensearch.index.engine.exec.coord.CatalogSnapshot;
 import org.opensearch.index.engine.exec.coord.CatalogSnapshotManager;
 import org.opensearch.index.shard.IndexShard;
+import org.opensearch.index.store.checksum.ChecksumHandler;
 import org.opensearch.indices.IndicesService;
-import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.io.IOException;
@@ -202,6 +202,11 @@ public class DefaultPlanExecutorTests extends OpenSearchTestCase {
                 )
             );
         }
+
+        @Override
+        public Map<String, ChecksumHandler> checksumHandlers() {
+            return Map.of();
+        }
     }
 
     static class MockReaderManager implements EngineReaderManager<Object> {
@@ -311,9 +316,8 @@ public class DefaultPlanExecutorTests extends OpenSearchTestCase {
         }
 
         @Override
-        public byte[] serialize(ReplicationCheckpoint replicationCheckpoint) throws IOException {
+        public byte[] serialize() throws IOException {
             return new byte[0];
-        }
         }
 
         @Override

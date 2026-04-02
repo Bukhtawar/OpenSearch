@@ -10,9 +10,11 @@ package org.opensearch.composite;
 
 import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.dataformat.FieldTypeCapabilities;
+import org.opensearch.index.store.checksum.ChecksumHandler;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -92,6 +94,11 @@ public class CompositeDataFormatTests extends OpenSearchTestCase {
             @Override
             public Set<FieldTypeCapabilities> supportedFields() {
                 return fields;
+            }
+
+            @Override
+            public Map<String, ChecksumHandler> checksumHandlers() {
+                return Map.of();
             }
         };
     }

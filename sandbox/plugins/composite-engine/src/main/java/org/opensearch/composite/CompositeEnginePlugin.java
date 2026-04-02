@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
 /**
  * Sandbox plugin that provides a {@link CompositeIndexingExecutionEngine} for
  * orchestrating multi-format indexing. Discovers {@link DataFormatPlugin} instances

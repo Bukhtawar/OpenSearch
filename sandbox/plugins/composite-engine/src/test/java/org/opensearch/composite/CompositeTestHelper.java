@@ -27,11 +27,13 @@ import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.store.checksum.ChecksumHandler;
 import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
+
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;import java.util.concurrent.atomic.AtomicLong;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Shared test utilities for composite engine tests.

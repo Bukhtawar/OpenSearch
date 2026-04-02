@@ -13,6 +13,9 @@ import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.opensearch.Version;
+import org.opensearch.cluster.metadata.IndexMetadata;
+import org.opensearch.common.settings.Settings;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
@@ -62,19 +65,26 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         shardPath = new ShardPath(false, shardDataPath, shardDataPath, sid);
 
         PluginsService pluginsService = mock(PluginsService.class);
-        IndexSettings indexSettings = mock(IndexSettings.class);
         when(pluginsService.filterPlugins(DataFormatPlugin.class)).thenReturn(List.of());
         when(pluginsService.filterPlugins(SearchBackEndPlugin.class)).thenReturn(List.of());
         DataFormatRegistry dataFormatRegistry = new DataFormatRegistry(pluginsService);
+
+        // Create real IndexSettings (IndexSettings is final, cannot be mocked)
+        Settings settings = Settings.builder()
+            .put(IndexMetadata.SETTING_VERSION_CREATED, Version.CURRENT)
+            .put(IndexMetadata.SETTING_INDEX_UUID, indexUUID)
+            .build();
+        IndexMetadata metadata = IndexMetadata.builder("test-index").settings(settings).numberOfShards(1).numberOfReplicas(0).build();
+        IndexSettings indexSettings = new IndexSettings(metadata, Settings.EMPTY);
 
         dataFormatAwareStoreDirectory = new DataFormatAwareStoreDirectory(indexSettings, fsDirectory, shardPath, dataFormatRegistry);
     }
 
     @After
     public void tearDown() throws Exception {
-        // DataFormatAwareStoreDirectory now extends FilterDirectory, so close() will
-        // propagate through SubdirectoryAwareDirectory to FSDirectory.
-        dataFormatAwareStoreDirectory.close();
+        if (dataFormatAwareStoreDirectory != null) {
+            dataFormatAwareStoreDirectory.close();
+        }
         super.tearDown();
     }
 

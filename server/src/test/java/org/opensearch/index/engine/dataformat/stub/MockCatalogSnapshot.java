@@ -83,7 +83,6 @@ public class MockCatalogSnapshot extends CatalogSnapshot {
     }
 
     @Override
-    @Override
     public CatalogSnapshot clone() {
         return new MockCatalogSnapshot(generation, segments, format);
     }
@@ -101,7 +100,6 @@ public class MockCatalogSnapshot extends CatalogSnapshot {
     @Override
     public byte[] serialize() throws IOException {
         return new byte[0];
-    }
     }
 
     @Override

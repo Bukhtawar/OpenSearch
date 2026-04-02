@@ -312,7 +312,9 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.parquet", 5678));
         when(parquetBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.parquet"), eq(1), any())).thenReturn(blobList);
 
-        long length = directory.fileLength("_0.parquet:::parquet");
+        // Use FileMetadata-based fileLength which routes by format directly
+        FileMetadata fm = new FileMetadata("parquet", "_0.parquet");
+        long length = directory.fileLength(fm);
         assertEquals(5678, length);
     }
 
