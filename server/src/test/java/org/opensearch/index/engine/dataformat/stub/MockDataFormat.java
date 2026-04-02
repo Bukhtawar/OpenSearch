@@ -10,7 +10,10 @@ package org.opensearch.index.engine.dataformat.stub;
 
 import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.dataformat.FieldTypeCapabilities;
+import org.opensearch.index.store.checksum.ChecksumHandler;
+import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -54,5 +57,10 @@ public class MockDataFormat extends DataFormat {
     @Override
     public Set<FieldTypeCapabilities> supportedFields() {
         return supportedFields;
+    }
+
+    @Override
+    public Map<String, ChecksumHandler> checksumHandlers() {
+        return Map.of(name, new GenericCRC32ChecksumHandler(name));
     }
 }

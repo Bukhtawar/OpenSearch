@@ -785,9 +785,9 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 path,
                 directoryFactory
             );
-            DataFormatAwareStoreDirectory compositeStoreDir = createDataFormatAwareStoreDirectory(shardId, path);
-            if (compositeStoreDir != null) {
-                store.setDataFormatAwareStoreDirectory(compositeStoreDir);
+            DataFormatAwareStoreDirectory dataFormatAwareStoreDirectory = createDataFormatAwareStoreDirectory(shardId, path);
+            if (dataFormatAwareStoreDirectory != null) {
+                store.setDataFormatAwareStoreDirectory(dataFormatAwareStoreDirectory);
             }
             eventListener.onStoreCreated(shardId);
             indexShard = new IndexShard(
@@ -1337,7 +1337,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     private DataFormatAwareStoreDirectory createDataFormatAwareStoreDirectory(ShardId shardId, ShardPath shardPath) throws IOException {
         if (dataFormatAwareStoreDirectoryFactory != null) {
             logger.debug("Using DataFormatAwareStoreDirectoryFactory to create directory for shard path: {}", shardPath);
-            return dataFormatAwareStoreDirectoryFactory.newDataFormatAwareStoreDirectory(indexSettings, shardId, shardPath, dataFormatRegistry);
+            return dataFormatAwareStoreDirectoryFactory.newDataFormatAwareStoreDirectory(indexSettings, shardId, shardPath, directoryFactory, dataFormatRegistry);
         }
 
         logger.debug("No DataFormatAwareStoreDirectoryFactory available, Store will handle internal creation for: {}", shardPath);

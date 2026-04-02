@@ -16,10 +16,12 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.logging.Loggers;
+import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.store.checksum.ChecksumHandler;
 import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
+import org.opensearch.index.store.checksum.LuceneChecksumHandler;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -86,11 +88,12 @@ public class DataFormatAwareStoreDirectory extends Store.StoreDirectory {
      * @param shardPath           the shard path for resolving subdirectories
      * @param dataFormatRegistry  registry providing format-specific checksum handlers
      */
-    public DataFormatAwareStoreDirectory(Directory delegate, ShardPath shardPath, DataFormatRegistry dataFormatRegistry) {
+    public DataFormatAwareStoreDirectory(IndexSettings indexSettings, Directory delegate, ShardPath shardPath, DataFormatRegistry dataFormatRegistry) {
         super(null, Loggers.getLogger("index.store.deletes", shardPath.getShardId()));
         this.shardPath = shardPath;
         this.subdirectoryAwareDirectory = new SubdirectoryAwareDirectory(delegate, shardPath);
-        this.checksumHandlers = dataFormatRegistry.getChecksumHandlers();
+        this.checksumHandlers = dataFormatRegistry.getChecksumHandlers(indexSettings);
+        this.checksumHandlers.put(DEFAULT_FORMAT, new LuceneChecksumHandler());
 
         logger.debug(
             "Created DataFormatAwareStoreDirectory for shard {} with checksum handlers for formats: {}",

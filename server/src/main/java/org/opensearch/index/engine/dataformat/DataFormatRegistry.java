@@ -44,9 +44,6 @@ public class DataFormatRegistry {
 
     private final Map<String, DataFormat> dataFormats;
 
-    /** Map from format name to its checksum handler, built from plugin-provided handlers plus built-in lucene. */
-    private final Map<String, ChecksumHandler> checksumHandlers;
-
     /**
      * Creates a registry by discovering all {@link DataFormatPlugin} and {@link SearchBackEndPlugin} implementations
      * from the given {@link PluginsService}. Registers each data format with its indexing plugin and reader manager factory.
@@ -89,14 +86,6 @@ public class DataFormatRegistry {
         this.dataFormatPluginRegistry = Map.copyOf(dataFormatPlugiRegistry);
         this.dataFormats = Map.copyOf(dataFormats);
         this.readerManagerBuilders = Map.copyOf(readerManagerBuilders);
-
-        // Build checksum handlers: built-in lucene + all plugin-provided handlers
-        Map<String, ChecksumHandler> checksumHandlerMap = new HashMap<>();
-        checksumHandlerMap.put("lucene", new LuceneChecksumHandler());
-        for (DataFormatPlugin plugin : dataFormatPlugiRegistry.values()) {
-            checksumHandlerMap.putAll(plugin.checksumHandlers());
-        }
-        this.checksumHandlers = Map.copyOf(checksumHandlerMap);
     }
 
     /**
@@ -159,13 +148,23 @@ public class DataFormatRegistry {
     }
 
     /**
-     * Returns an unmodifiable map of format name to checksum handler.
-     * Includes the built-in Lucene handler and all plugin-provided handlers.
+     * Returns an unmodifiable map of format name to checksum handler for the given index.
+     * Resolves the data format from index settings, calls {@link DataFormat#checksumHandlers()},
+     * and adds the built-in Lucene handler.
      *
+     * @param indexSettings the index settings used to determine the active data format
      * @return unmodifiable map of format name to checksum handler
      */
-    public Map<String, ChecksumHandler> getChecksumHandlers() {
-        return checksumHandlers;
+    public Map<String, ChecksumHandler> getChecksumHandlers(IndexSettings indexSettings) {
+        Map<String, ChecksumHandler> handlers = new HashMap<>();
+        String dataformatName = indexSettings.getSettings().get("pluggable_dataformat");
+        if (dataformatName != null) {
+            DataFormat format = dataFormats.get(dataformatName);
+            if (format != null) {
+                handlers.putAll(format.checksumHandlers());
+            }
+        }
+        return Map.copyOf(handlers);
     }
 
     /**

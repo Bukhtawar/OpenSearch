@@ -27,7 +27,6 @@ import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.store.checksum.ChecksumHandler;
 import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
-
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -84,35 +83,6 @@ final class CompositeTestHelper {
             ) {
                 return new StubIndexingExecutionEngine(format);
             }
-
-            @Override
-            public Map<String, ChecksumHandler> checksumHandlers() {
-                return Map.of(formatName, new GenericCRC32ChecksumHandler(formatName));
-            }
-        };
-    }
-
-    static DataFormatPlugin stubPlugin(String formatName, long priority, Set<FieldTypeCapabilities> fields) {
-        DataFormat format = stubFormat(formatName, priority, fields);
-        return new DataFormatPlugin() {
-            @Override
-            public DataFormat getDataFormat() {
-                return format;
-            }
-
-            @Override
-            public IndexingExecutionEngine<?, ?> indexingEngine(
-                MapperService mapperService,
-                ShardPath shardPath,
-                IndexSettings indexSettings
-            ) {
-                return new StubIndexingExecutionEngine(format);
-            }
-
-            @Override
-            public Map<String, ChecksumHandler> checksumHandlers() {
-                return Map.of(formatName, new GenericCRC32ChecksumHandler(formatName));
-            }
         };
     }
 
@@ -131,6 +101,11 @@ final class CompositeTestHelper {
             @Override
             public Set<FieldTypeCapabilities> supportedFields() {
                 return fields;
+            }
+
+            @Override
+            public Map<String, ChecksumHandler> checksumHandlers() {
+                return Map.of(name, new GenericCRC32ChecksumHandler(name));
             }
 
             @Override

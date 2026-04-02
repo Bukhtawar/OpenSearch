@@ -10,8 +10,11 @@ package org.opensearch.parquet.engine;
 
 import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.dataformat.FieldTypeCapabilities;
+import org.opensearch.index.store.checksum.ChecksumHandler;
+import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 import org.opensearch.parquet.fields.ArrowFieldRegistry;
 
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -52,5 +55,10 @@ public class ParquetDataFormat extends DataFormat {
                 )
             )
             .collect(Collectors.toUnmodifiableSet());
+    }
+
+    @Override
+    public Map<String, ChecksumHandler> checksumHandlers() {
+        return Map.of(PARQUET_DATA_FORMAT_NAME, new GenericCRC32ChecksumHandler(PARQUET_DATA_FORMAT_NAME));
     }
 }

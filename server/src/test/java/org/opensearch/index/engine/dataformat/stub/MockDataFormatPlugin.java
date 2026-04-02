@@ -14,10 +14,6 @@ import org.opensearch.index.engine.dataformat.DataFormatPlugin;
 import org.opensearch.index.engine.dataformat.IndexingExecutionEngine;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
-import org.opensearch.index.store.checksum.ChecksumHandler;
-import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
-
-import java.util.Map;
 
 /**
  * A mock {@link DataFormatPlugin} for testing purposes.
@@ -41,10 +37,5 @@ public class MockDataFormatPlugin implements DataFormatPlugin {
     @Override
     public IndexingExecutionEngine<?, ?> indexingEngine(MapperService mapperService, ShardPath shardPath, IndexSettings indexSettings) {
         return new MockIndexingExecutionEngine(dataFormat);
-    }
-
-    @Override
-    public Map<String, ChecksumHandler> checksumHandlers() {
-        return Map.of(dataFormat.name(), new GenericCRC32ChecksumHandler(dataFormat.name()));
     }
 }

@@ -18,8 +18,6 @@ import org.opensearch.index.engine.dataformat.DataFormatPlugin;
 import org.opensearch.index.engine.dataformat.IndexingExecutionEngine;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
-import org.opensearch.index.store.checksum.ChecksumHandler;
-import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 import org.opensearch.plugins.ExtensiblePlugin;
 import org.opensearch.plugins.Plugin;
 
@@ -140,15 +138,6 @@ public class CompositeEnginePlugin extends Plugin implements ExtensiblePlugin, D
     @Override
     public IndexingExecutionEngine<?, ?> indexingEngine(MapperService mapperService, ShardPath shardPath, IndexSettings indexSettings) {
         return new CompositeIndexingExecutionEngine(dataFormatPlugins, indexSettings, mapperService, shardPath);
-    }
-
-    @Override
-    public Map<String, ChecksumHandler> checksumHandlers() {
-        Map<String, ChecksumHandler> handlers = new HashMap<>();
-        for (DataFormatPlugin plugin : dataFormatPlugins.values()) {
-            handlers.putAll(plugin.checksumHandlers());
-        }
-        return Map.copyOf(handlers);
     }
 
     /**
