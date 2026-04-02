@@ -16,17 +16,12 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.StringHelper;
 import org.apache.lucene.util.Version;
-import org.opensearch.common.io.stream.BytesStreamOutput;
-import org.opensearch.core.common.io.stream.StreamInput;
-import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-
-import static org.mockito.Mockito.mock;
 
 /**
  * Unit tests for {@link SegmentInfosCatalogSnapshot}.
@@ -232,8 +227,6 @@ public class SegmentInfosCatalogSnapshotTests extends OpenSearchTestCase {
         // AbstractRefCounted calls closeInternal() when refCount hits 0
         snapshot.decRef();
     }
-
-
 
     // ═══════════════════════════════════════════════════════════════
     // serialize Tests

@@ -773,11 +773,11 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                     fileCache,
                     threadPool
                 );
-            } else if (false) {
+            } else if (!this.indexSettings.isPluggableDataFormatEnabled()) {
+                directory = directoryFactory.newDirectory(this.indexSettings, path);
+            } else {
                 // Will be enabled in case of formatAware indices.
                 directory = createDataFormatAwareStoreDirectory(shardId, path);
-            } else {
-                directory = directoryFactory.newDirectory(this.indexSettings, path);
             }
             store = storeFactory.newStore(
                 shardId,
@@ -1336,7 +1336,13 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     private DataFormatAwareStoreDirectory createDataFormatAwareStoreDirectory(ShardId shardId, ShardPath shardPath) throws IOException {
         if (dataFormatAwareStoreDirectoryFactory != null) {
             logger.debug("Using DataFormatAwareStoreDirectoryFactory to create directory for shard path: {}", shardPath);
-            return dataFormatAwareStoreDirectoryFactory.newDataFormatAwareStoreDirectory(indexSettings, shardId, shardPath, directoryFactory, dataFormatRegistry);
+            return dataFormatAwareStoreDirectoryFactory.newDataFormatAwareStoreDirectory(
+                indexSettings,
+                shardId,
+                shardPath,
+                directoryFactory,
+                dataFormatRegistry
+            );
         }
 
         logger.debug("No DataFormatAwareStoreDirectoryFactory available, Store will handle internal creation for: {}", shardPath);

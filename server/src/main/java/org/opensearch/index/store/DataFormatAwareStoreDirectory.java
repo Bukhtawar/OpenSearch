@@ -87,7 +87,12 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
      * @param shardPath           the shard path for resolving subdirectories
      * @param dataFormatRegistry  registry providing format-specific checksum handlers
      */
-    public DataFormatAwareStoreDirectory(IndexSettings indexSettings, Directory delegate, ShardPath shardPath, DataFormatRegistry dataFormatRegistry) {
+    public DataFormatAwareStoreDirectory(
+        IndexSettings indexSettings,
+        Directory delegate,
+        ShardPath shardPath,
+        DataFormatRegistry dataFormatRegistry
+    ) {
         super(new SubdirectoryAwareDirectory(delegate, shardPath));
         this.shardPath = shardPath;
         this.checksumHandlers = dataFormatRegistry.getChecksumHandlers(indexSettings);

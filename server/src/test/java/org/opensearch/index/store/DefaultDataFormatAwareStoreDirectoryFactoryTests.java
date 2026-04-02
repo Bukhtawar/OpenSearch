@@ -27,9 +27,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import static org.opensearch.cluster.metadata.IndexMetadata.SETTING_INDEX_UUID;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
-import static org.opensearch.cluster.metadata.IndexMetadata.SETTING_INDEX_UUID;
 
 /**
  * Unit tests for {@link DefaultDataFormatAwareStoreDirectoryFactory}.
@@ -71,7 +71,11 @@ public class DefaultDataFormatAwareStoreDirectoryFactoryTests extends OpenSearch
             }
 
             @Override
-            public org.apache.lucene.store.Directory newFSDirectory(Path location, org.apache.lucene.store.LockFactory lockFactory, IndexSettings indexSettings) throws IOException {
+            public org.apache.lucene.store.Directory newFSDirectory(
+                Path location,
+                org.apache.lucene.store.LockFactory lockFactory,
+                IndexSettings indexSettings
+            ) throws IOException {
                 return FSDirectory.open(location, lockFactory);
             }
         };
@@ -88,7 +92,13 @@ public class DefaultDataFormatAwareStoreDirectoryFactoryTests extends OpenSearch
         ShardPath shardPath = createShardPath(tempDir);
         IndexSettings indexSettings = createIndexSettings();
 
-        DataFormatAwareStoreDirectory directory = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath.getShardId(), shardPath, createFsDirectoryFactory(), registry);
+        DataFormatAwareStoreDirectory directory = factory.newDataFormatAwareStoreDirectory(
+            indexSettings,
+            shardPath.getShardId(),
+            shardPath,
+            createFsDirectoryFactory(),
+            registry
+        );
 
         assertNotNull("Factory should create a non-null DataFormatAwareStoreDirectory", directory);
     }
@@ -100,7 +110,13 @@ public class DefaultDataFormatAwareStoreDirectoryFactoryTests extends OpenSearch
         ShardPath shardPath = createShardPath(tempDir);
         IndexSettings indexSettings = createIndexSettings();
 
-        DataFormatAwareStoreDirectory directory = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath.getShardId(), shardPath, createFsDirectoryFactory(), registry);
+        DataFormatAwareStoreDirectory directory = factory.newDataFormatAwareStoreDirectory(
+            indexSettings,
+            shardPath.getShardId(),
+            shardPath,
+            createFsDirectoryFactory(),
+            registry
+        );
 
         assertEquals(shardPath, directory.getShardPath());
     }
@@ -112,7 +128,13 @@ public class DefaultDataFormatAwareStoreDirectoryFactoryTests extends OpenSearch
         ShardPath shardPath = createShardPath(tempDir);
         IndexSettings indexSettings = createIndexSettings();
 
-        DataFormatAwareStoreDirectory directory = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath.getShardId(), shardPath, createFsDirectoryFactory(), registry);
+        DataFormatAwareStoreDirectory directory = factory.newDataFormatAwareStoreDirectory(
+            indexSettings,
+            shardPath.getShardId(),
+            shardPath,
+            createFsDirectoryFactory(),
+            registry
+        );
 
         // Should not throw
         String[] files = directory.listAll();
@@ -128,8 +150,20 @@ public class DefaultDataFormatAwareStoreDirectoryFactoryTests extends OpenSearch
         ShardPath shardPath2 = createShardPath(tempDir2);
         IndexSettings indexSettings = createIndexSettings();
 
-        DataFormatAwareStoreDirectory dir1 = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath1.getShardId(), shardPath1, createFsDirectoryFactory(), registry);
-        DataFormatAwareStoreDirectory dir2 = factory.newDataFormatAwareStoreDirectory(indexSettings, shardPath2.getShardId(), shardPath2, createFsDirectoryFactory(), registry);
+        DataFormatAwareStoreDirectory dir1 = factory.newDataFormatAwareStoreDirectory(
+            indexSettings,
+            shardPath1.getShardId(),
+            shardPath1,
+            createFsDirectoryFactory(),
+            registry
+        );
+        DataFormatAwareStoreDirectory dir2 = factory.newDataFormatAwareStoreDirectory(
+            indexSettings,
+            shardPath2.getShardId(),
+            shardPath2,
+            createFsDirectoryFactory(),
+            registry
+        );
 
         assertNotNull(dir1);
         assertNotNull(dir2);
@@ -158,7 +192,13 @@ public class DefaultDataFormatAwareStoreDirectoryFactoryTests extends OpenSearch
         // This should trigger the catch block which wraps the exception as IOException
         IOException exception = expectThrows(
             IOException.class,
-            () -> factory.newDataFormatAwareStoreDirectory(indexSettings, invalidShardPath.getShardId(), invalidShardPath, createFsDirectoryFactory(), registry)
+            () -> factory.newDataFormatAwareStoreDirectory(
+                indexSettings,
+                invalidShardPath.getShardId(),
+                invalidShardPath,
+                createFsDirectoryFactory(),
+                registry
+            )
         );
         assertTrue(
             "Exception message should mention shard, but was: " + exception.getMessage(),

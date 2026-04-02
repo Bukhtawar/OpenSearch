@@ -32,7 +32,12 @@ import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.unit.ByteSizeUnit;
-import org.opensearch.index.store.*;
+import org.opensearch.index.store.DataFormatAwareStoreDirectory;
+import org.opensearch.index.store.FileMetadata;
+import org.opensearch.index.store.RemoteDirectory;
+import org.opensearch.index.store.RemoteIndexInput;
+import org.opensearch.index.store.RemoteIndexOutput;
+import org.opensearch.index.store.RemoteSegmentStoreDirectory;
 import org.opensearch.plugins.PluginsService;
 
 import java.io.IOException;
@@ -620,8 +625,8 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
 
             RemoteTransferContainer.OffsetRangeInputStreamSupplier supplier = lowPriorityUpload
                 ? (size, position) -> lowPriorityUploadRateLimiter.apply(
-                new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
-            )
+                    new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
+                )
                 : (size, position) -> uploadRateLimiter.apply(new OffsetRangeIndexInputStream(indexInput.clone(), size, position));
 
             RemoteTransferContainer remoteTransferContainer = new RemoteTransferContainer(
@@ -677,8 +682,8 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
 
             RemoteTransferContainer.OffsetRangeInputStreamSupplier supplier = lowPriorityUpload
                 ? (size, position) -> lowPriorityUploadRateLimiter.apply(
-                new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
-            )
+                    new OffsetRangeIndexInputStream(indexInput.clone(), size, position)
+                )
                 : (size, position) -> uploadRateLimiter.apply(new OffsetRangeIndexInputStream(indexInput.clone(), size, position));
 
             RemoteTransferContainer remoteTransferContainer = new RemoteTransferContainer(

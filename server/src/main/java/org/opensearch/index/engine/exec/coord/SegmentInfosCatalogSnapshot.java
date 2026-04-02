@@ -17,12 +17,10 @@ import org.apache.lucene.store.ByteBuffersIndexOutput;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.core.common.io.stream.StreamInput;
-import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
 import org.opensearch.index.remote.RemoteStoreUtils;
-import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 
 import java.io.IOException;
 import java.util.Collection;

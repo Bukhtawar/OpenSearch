@@ -67,7 +67,12 @@ public class DefaultDataFormatAwareStoreDirectoryFactory implements DataFormatAw
             // Delegate local directory creation to the configured DirectoryFactory
             Directory delegate = localDirectoryFactory.newDirectory(indexSettings, shardPath);
 
-            DataFormatAwareStoreDirectory directory = new DataFormatAwareStoreDirectory(indexSettings, delegate, shardPath, dataFormatRegistry);
+            DataFormatAwareStoreDirectory directory = new DataFormatAwareStoreDirectory(
+                indexSettings,
+                delegate,
+                shardPath,
+                dataFormatRegistry
+            );
 
             if (logger.isDebugEnabled()) {
                 logger.debug(
