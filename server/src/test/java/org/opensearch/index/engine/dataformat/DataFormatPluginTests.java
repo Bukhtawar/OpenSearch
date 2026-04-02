@@ -30,6 +30,7 @@ import org.opensearch.index.engine.exec.coord.DataformatAwareCatalogSnapshot;
 import org.opensearch.index.mapper.MappedFieldType;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.checksum.ChecksumHandler;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.io.IOException;
@@ -333,6 +334,11 @@ public class DataFormatPluginTests extends OpenSearchTestCase {
             @Override
             public Set<FieldTypeCapabilities> supportedFields() {
                 return Set.of();
+            }
+
+            @Override
+            public Map<String, ChecksumHandler> checksumHandlers() {
+                return Map.of();
             }
         };
 
