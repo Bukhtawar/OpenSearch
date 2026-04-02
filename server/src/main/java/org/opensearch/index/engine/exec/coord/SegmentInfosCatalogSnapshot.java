@@ -45,6 +45,7 @@ public class SegmentInfosCatalogSnapshot extends CatalogSnapshot {
     private static final String CATALOG_SNAPSHOT_KEY = "_segment_infos_catalog_snapshot_";
 
     private final SegmentInfos segmentInfos;
+    private final Map<String, Integer> segmentFileVersionMap;
 
     /**
      * Constructs a new SegmentInfosCatalogSnapshot wrapping the given SegmentInfos.
@@ -54,6 +55,7 @@ public class SegmentInfosCatalogSnapshot extends CatalogSnapshot {
     public SegmentInfosCatalogSnapshot(SegmentInfos segmentInfos) {
         super(CATALOG_SNAPSHOT_KEY + segmentInfos.getGeneration(), segmentInfos.getGeneration(), segmentInfos.getVersion());
         this.segmentInfos = segmentInfos;
+        this.segmentFileVersionMap = buildSegmentToLuceneVersionMap();
     }
 
     /**
@@ -71,6 +73,7 @@ public class SegmentInfosCatalogSnapshot extends CatalogSnapshot {
             new BufferedChecksumIndexInput(new ByteArrayIndexInput("SegmentInfos", segmentInfosBytes)),
             0L
         );
+        this.segmentFileVersionMap = buildSegmentToLuceneVersionMap();
     }
 
     /**
@@ -154,8 +157,7 @@ public class SegmentInfosCatalogSnapshot extends CatalogSnapshot {
      */
     @Override
     public int getFormatVersionForFile(String file) {
-        Map<String, Integer> versionMap = buildSegmentToLuceneVersionMap();
-        Integer version = versionMap.get(file);
+        Integer version = segmentFileVersionMap.get(file);
         if (version != null) {
             return version;
         }
@@ -163,7 +165,7 @@ public class SegmentInfosCatalogSnapshot extends CatalogSnapshot {
             return segmentInfos.getCommitLuceneVersion().major;
         }
         String segmentInfoFileName = RemoteStoreUtils.getSegmentName(file) + ".si";
-        Integer siVersion = versionMap.get(segmentInfoFileName);
+        Integer siVersion = segmentFileVersionMap.get(segmentInfoFileName);
         if (siVersion != null) {
             return siVersion;
         }
