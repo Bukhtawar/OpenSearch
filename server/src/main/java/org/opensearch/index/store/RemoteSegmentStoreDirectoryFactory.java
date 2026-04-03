@@ -57,9 +57,10 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
         Supplier<RepositoriesService> repositoriesService,
         ThreadPool threadPool,
         String segmentsPathFixedPrefix
-    ){
+    ) {
         this(repositoriesService, threadPool, segmentsPathFixedPrefix, null);
     }
+
     public RemoteSegmentStoreDirectoryFactory(
         Supplier<RepositoriesService> repositoriesService,
         ThreadPool threadPool,
@@ -128,7 +129,16 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
         boolean isServerSideEncryptionEnabled,
         boolean isWarmIndex
     ) throws IOException {
-        return newDirectory( repositoryName, indexUUID, shardId, pathStrategy, indexFixedPrefix, isServerSideEncryptionEnabled, isWarmIndex, null);
+        return newDirectory(
+            repositoryName,
+            indexUUID,
+            shardId,
+            pathStrategy,
+            indexFixedPrefix,
+            isServerSideEncryptionEnabled,
+            isWarmIndex,
+            null
+        );
     }
 
     public Directory newDirectory(
@@ -162,29 +172,29 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
                 .build();
 
             BlobPath dataPath = pathStrategy.generatePath(dataPathInput);
-            RemoteDirectory dataDirectory = indexSettings!= null && indexSettings.isPluggableDataFormatEnabled()
+            RemoteDirectory dataDirectory = indexSettings != null && indexSettings.isPluggableDataFormatEnabled()
                 ? new DataFormatAwareRemoteDirectory(
-                blobStoreRepository.blobStore(isServerSideEncryptionEnabled),
-                dataPath,
-                blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
-                blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
-                blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
-                blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
-                pendingDownloadMergedSegments,
-                LogManager.getLogger("index.store.remote.composite." + shardId),
-                dataFormatRegistry,
-                indexSettings
-            )
+                    blobStoreRepository.blobStore(isServerSideEncryptionEnabled),
+                    dataPath,
+                    blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
+                    blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
+                    blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
+                    blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
+                    pendingDownloadMergedSegments,
+                    LogManager.getLogger("index.store.remote.composite." + shardId),
+                    dataFormatRegistry,
+                    indexSettings
+                )
                 : new RemoteDirectory(
-                blobStoreRepository.blobStore(isServerSideEncryptionEnabled).blobContainer(dataPath),
-                blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
-                blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
-                isWarmIndex
-                ? blobStoreRepository::maybeRateLimitRemoteDownloadTransfersForWarm
-                : blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
-                blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
-                pendingDownloadMergedSegments
-            );
+                    blobStoreRepository.blobStore(isServerSideEncryptionEnabled).blobContainer(dataPath),
+                    blobStoreRepository::maybeRateLimitRemoteUploadTransfers,
+                    blobStoreRepository::maybeRateLimitLowPriorityRemoteUploadTransfers,
+                    isWarmIndex
+                        ? blobStoreRepository::maybeRateLimitRemoteDownloadTransfersForWarm
+                        : blobStoreRepository::maybeRateLimitRemoteDownloadTransfers,
+                    blobStoreRepository::maybeRateLimitLowPriorityDownloadTransfers,
+                    pendingDownloadMergedSegments
+                );
 
             RemoteStorePathStrategy.ShardDataPathInput mdPathInput = RemoteStorePathStrategy.ShardDataPathInput.builder()
                 .basePath(repositoryBasePath)

@@ -250,11 +250,12 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
             out.writeString("to be deleted");
         }
-        assertTrue(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(fileIdentifier));
+        String serialized = "del_test.parquet" + FileMetadata.DELIMITER + "parquet";
+        assertTrue(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(serialized));
 
         FileMetadata fm = new FileMetadata("parquet", "del_test.parquet");
         dataFormatAwareStoreDirectory.deleteFile(fm);
-        assertFalse(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(fileIdentifier));
+        assertFalse(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(serialized));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -278,7 +279,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         String[] files = dataFormatAwareStoreDirectory.listAll();
         List<String> fileList = Arrays.asList(files);
         assertTrue(fileList.contains("_0.si"));
-        assertTrue(fileList.contains("parquet/data.parquet"));
+        assertTrue(fileList.contains("data.parquet" + FileMetadata.DELIMITER + "parquet"));
     }
 
     public void testListFileMetadata() throws IOException {
@@ -394,8 +395,10 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         FileMetadata dest = new FileMetadata("parquet", "rename_dest.parquet");
         dataFormatAwareStoreDirectory.rename(src, dest);
 
-        assertFalse(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains("parquet/rename_src.parquet"));
-        assertTrue(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains("parquet/rename_dest.parquet"));
+        String srcSerialized = "rename_src.parquet" + FileMetadata.DELIMITER + "parquet";
+        String destSerialized = "rename_dest.parquet" + FileMetadata.DELIMITER + "parquet";
+        assertFalse(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(srcSerialized));
+        assertTrue(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(destSerialized));
     }
 
     public void testRename_crossFormat_throws() {
@@ -585,8 +588,8 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         String[] files = dataFormatAwareStoreDirectory.listAll();
         List<String> fileList = Arrays.asList(files);
         assertTrue("Should contain lucene file", fileList.contains("_0.si"));
-        assertTrue("Should contain parquet file", fileList.contains("parquet/data.parquet"));
-        assertTrue("Should contain arrow file", fileList.contains("arrow/data.arrow"));
+        assertTrue("Should contain parquet file", fileList.contains("data.parquet" + FileMetadata.DELIMITER + "parquet"));
+        assertTrue("Should contain arrow file", fileList.contains("data.arrow" + FileMetadata.DELIMITER + "arrow"));
     }
 
     public void testListFileMetadata_multipleFormats() throws IOException {
@@ -1025,8 +1028,8 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         assertTrue("Lucene file listed as plain name", fileList.contains("_0.si"));
         assertFalse("Lucene file should NOT have lucene/ prefix", fileList.contains("lucene/_0.si"));
 
-        // Non-lucene files should appear with "format/" prefix
-        assertTrue("Parquet file listed with prefix", fileList.contains("parquet/data.parquet"));
+        // Non-lucene files should appear with serialized "file:::format" form
+        assertTrue("Parquet file listed with serialized form", fileList.contains("data.parquet" + FileMetadata.DELIMITER + "parquet"));
     }
 
     // --- getDataFormat comprehensive ---

@@ -16,6 +16,8 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.opensearch.Version;
+import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.blobstore.AsyncMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.BlobMetadata;
@@ -25,7 +27,10 @@ import org.opensearch.common.blobstore.exception.CorruptFileException;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.support.PlainBlobMetadata;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
+import org.opensearch.common.settings.Settings;
 import org.opensearch.core.action.ActionListener;
+import org.opensearch.index.IndexSettings;
+import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.store.DataFormatAwareStoreDirectory;
 import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.RemoteIndexOutput;
@@ -87,6 +92,20 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         UnaryOperator<InputStream> downloadRateLimiter = UnaryOperator.identity();
         UnaryOperator<InputStream> lowPriorityDownloadRateLimiter = UnaryOperator.identity();
 
+        // Mock DataFormatRegistry to register "parquet" format
+        DataFormatRegistry mockRegistry = mock(DataFormatRegistry.class);
+        Settings indexSettingsBuilder = Settings.builder()
+            .put(IndexMetadata.SETTING_VERSION_CREATED, Version.CURRENT)
+            .put(IndexMetadata.SETTING_INDEX_UUID, "test-uuid")
+            .build();
+        IndexMetadata metadata = IndexMetadata.builder("test-index")
+            .settings(indexSettingsBuilder)
+            .numberOfShards(1)
+            .numberOfReplicas(0)
+            .build();
+        IndexSettings indexSettings = new IndexSettings(metadata, Settings.EMPTY);
+        when(mockRegistry.getDataFormatNames(any(IndexSettings.class))).thenReturn(List.of("parquet"));
+
         directory = new DataFormatAwareRemoteDirectory(
             mockBlobStore,
             baseBlobPath,
@@ -96,8 +115,8 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             lowPriorityDownloadRateLimiter,
             new HashMap<>(),
             logger,
-            null, // no DataFormatRegistry in unit tests
-            null  // no IndexSettings in unit tests
+            mockRegistry,
+            indexSettings
         );
     }
 
@@ -135,19 +154,9 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         assertSame("parquet should route to parquet container", parquetBlobContainer, container);
     }
 
-    public void testGetBlobContainerForFormat_UnknownFormat_LazilyCreated() {
-        BlobContainer arrowContainer = mock(BlobContainer.class);
-        when(mockBlobStore.blobContainer(baseBlobPath.add("arrow"))).thenReturn(arrowContainer);
-
-        BlobContainer container = directory.getBlobContainerForFormat("arrow");
-        assertSame("arrow should create new container", arrowContainer, container);
-
-        // Second call should return cached container
-        BlobContainer containerAgain = directory.getBlobContainerForFormat("arrow");
-        assertSame("arrow should return cached container", arrowContainer, containerAgain);
-
-        // blobStore.blobContainer should only be called once for arrow
-        verify(mockBlobStore, times(1)).blobContainer(baseBlobPath.add("arrow"));
+    public void testGetBlobContainerForFormat_UnregisteredFormat_Throws() {
+        IllegalArgumentException ex = expectThrows(IllegalArgumentException.class, () -> directory.getBlobContainerForFormat("arrow"));
+        assertTrue(ex.getMessage().contains("No BlobContainer registered for format [arrow]"));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -161,8 +170,6 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         baseBlobs.put("_0.si__UUID2", new PlainBlobMetadata("_0.si__UUID2", 50));
         when(baseBlobContainer.listBlobs()).thenReturn(baseBlobs);
 
-        // Pre-register parquet container and add parquet files
-        directory.getBlobContainerForFormat("parquet");
         Map<String, BlobMetadata> parquetBlobs = new HashMap<>();
         parquetBlobs.put("_0.parquet__UUID3", new PlainBlobMetadata("_0.parquet__UUID3", 200));
         when(parquetBlobContainer.listBlobs()).thenReturn(parquetBlobs);
@@ -195,8 +202,6 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testDeleteFile_ParquetFile_WithFormatSuffix() throws IOException {
-        // Pre-register parquet container
-        directory.getBlobContainerForFormat("parquet");
 
         directory.deleteFile("_0.parquet:::parquet");
 
@@ -204,8 +209,6 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testDeleteFile_WithUploadedSegmentMetadata_Parquet() throws IOException {
-        // Pre-register parquet container
-        directory.getBlobContainerForFormat("parquet");
 
         // Use fromString() since constructor is package-private
         // Format: originalFilename::uploadedFilename::checksum::length::writtenByMajor
@@ -213,20 +216,19 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             "_0.parquet:::parquet::_0.parquet__UUID1::checksum123::200::10"
         );
 
-        directory.deleteFile(metadata);
+        directory.registerBlobFormat("_0.parquet__UUID1", "parquet");
+        directory.deleteFile(metadata.getUploadedFilename());
 
         verify(parquetBlobContainer).deleteBlobsIgnoringIfNotExists(Collections.singletonList("_0.parquet__UUID1"));
     }
 
     public void testDeleteFiles_BatchDelete_DeletesFromAllContainers() throws IOException {
-        // Pre-register parquet container
-        directory.getBlobContainerForFormat("parquet");
 
         List<String> names = List.of("_0.cfs__UUID1", "_0.parquet__UUID2");
         directory.deleteFiles(names);
 
-        // Should attempt from base AND parquet containers (since names have no format info)
-        verify(baseBlobContainer).deleteBlobsIgnoringIfNotExists(names);
+        // baseBlobContainer is called from super.deleteFiles + lucene format container (same instance)
+        verify(baseBlobContainer, times(2)).deleteBlobsIgnoringIfNotExists(names);
         verify(parquetBlobContainer).deleteBlobsIgnoringIfNotExists(names);
     }
 
@@ -252,7 +254,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         byte[] content = new byte[100];
         when(baseBlobContainer.readBlob("_0.cfs__UUID1")).thenReturn(new ByteArrayInputStream(content));
 
-        IndexInput input = directory.openInput(metadata, 100, IOContext.DEFAULT);
+        IndexInput input = directory.openInput(metadata.getUploadedFilename(), 100, IOContext.DEFAULT);
         assertNotNull(input);
         assertEquals(100, input.length());
         input.close();
@@ -262,8 +264,6 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testOpenInput_WithUploadedSegmentMetadata_Parquet() throws IOException {
-        // Pre-register parquet container
-        directory.getBlobContainerForFormat("parquet");
 
         UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString(
             "_0.parquet:::parquet::_0.parquet__UUID1::checksum456::200::10"
@@ -272,7 +272,8 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         byte[] content = new byte[200];
         when(parquetBlobContainer.readBlob("_0.parquet__UUID1")).thenReturn(new ByteArrayInputStream(content));
 
-        IndexInput input = directory.openInput(metadata, 200, IOContext.DEFAULT);
+        directory.registerBlobFormat("_0.parquet__UUID1", "parquet");
+        IndexInput input = directory.openInput(metadata.getUploadedFilename(), 200, IOContext.DEFAULT);
         assertNotNull(input);
         assertEquals(200, input.length());
         input.close();
@@ -289,7 +290,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString("_0.cfs::_0.cfs__UUID1::checksum123::100::10");
 
         // The openInput should succeed (it just wraps the stream), but we verify the pattern
-        IndexInput input = directory.openInput(metadata, 100, IOContext.DEFAULT);
+        IndexInput input = directory.openInput(metadata.getUploadedFilename(), 100, IOContext.DEFAULT);
         assertNotNull(input);
         input.close();
     }
@@ -307,8 +308,6 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testFileLength_ParquetFile() throws IOException {
-        // Pre-register parquet container
-        directory.getBlobContainerForFormat("parquet");
 
         List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.parquet", 5678));
         when(parquetBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.parquet"), eq(1), any())).thenReturn(blobList);
@@ -330,27 +329,21 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     // ═══════════════════════════════════════════════════════════════
 
     public void testDelete_DeletesAllContainers() throws IOException {
-        // Pre-register parquet container
-        directory.getBlobContainerForFormat("parquet");
 
         directory.delete();
 
+        // baseBlobContainer is used for both the "lucene" format and the inherited base container
         verify(parquetBlobContainer).delete();
-        verify(baseBlobContainer).delete();
+        verify(baseBlobContainer, times(2)).delete();
     }
 
     public void testClose_ClearsFormatContainers() throws IOException {
-        // Pre-register parquet container
-        directory.getBlobContainerForFormat("parquet");
 
         directory.close();
 
-        // After close, getting parquet format should create a NEW container
-        BlobContainer newParquetContainer = mock(BlobContainer.class);
-        when(mockBlobStore.blobContainer(baseBlobPath.add("parquet"))).thenReturn(newParquetContainer);
-
-        BlobContainer container = directory.getBlobContainerForFormat("parquet");
-        assertSame("Should create new container after close", newParquetContainer, container);
+        // After close, format containers are cleared; getting an unregistered format throws
+        IllegalArgumentException ex = expectThrows(IllegalArgumentException.class, () -> directory.getBlobContainerForFormat("parquet"));
+        assertTrue(ex.getMessage().contains("No BlobContainer registered for format [parquet]"));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -358,13 +351,23 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     // ═══════════════════════════════════════════════════════════════
 
     public void testConstructor_NullDataFormatRegistry() {
-        // Should not throw
-        assertNotNull(directory);
+        // Should not throw with null DataFormatRegistry and IndexSettings
+        DataFormatAwareRemoteDirectory dir = new DataFormatAwareRemoteDirectory(
+            mockBlobStore,
+            baseBlobPath,
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            UnaryOperator.identity(),
+            new HashMap<>(),
+            logger,
+            null,
+            null
+        );
+        assertNotNull(dir);
     }
 
     public void testToString() {
-        // Pre-register parquet container
-        directory.getBlobContainerForFormat("parquet");
 
         String str = directory.toString();
         assertTrue(str.contains("DataFormatAwareRemoteDirectory"));
@@ -406,8 +409,6 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testOpenInput_StringBased_ParquetFile_WithFormatSuffix() throws IOException {
-        // Pre-register parquet container
-        directory.getBlobContainerForFormat("parquet");
 
         byte[] content = new byte[200];
         when(parquetBlobContainer.readBlob("_0.parquet:::parquet")).thenReturn(new ByteArrayInputStream(content));
@@ -437,8 +438,6 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testCreateOutput_ParquetFormat() throws IOException {
-        // Pre-register parquet container
-        directory.getBlobContainerForFormat("parquet");
 
         RemoteIndexOutput output = directory.createOutput("test_file.parquet", "parquet", IOContext.DEFAULT);
         assertNotNull(output);
@@ -458,8 +457,6 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testFileLength_FileMetadata_Parquet() throws IOException {
-        directory.getBlobContainerForFormat("parquet");
-
         FileMetadata fm = new FileMetadata("parquet", "_0.parquet");
         List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.parquet", 5678));
         when(parquetBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.parquet"), eq(1), any())).thenReturn(blobList);
@@ -493,7 +490,6 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testOpenInput_FileMetadata_Parquet() throws IOException {
-        directory.getBlobContainerForFormat("parquet");
         FileMetadata fm = new FileMetadata("parquet", "_0.parquet");
         byte[] content = new byte[200];
         when(parquetBlobContainer.readBlob("_0.parquet")).thenReturn(new ByteArrayInputStream(content));
@@ -526,7 +522,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     public void testDeleteFile_WithUploadedSegmentMetadata_Lucene() throws IOException {
         UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString("_0.cfs::_0.cfs__UUID1::checksum123::100::10");
 
-        directory.deleteFile(metadata);
+        directory.deleteFile(metadata.getUploadedFilename());
 
         verify(baseBlobContainer).deleteBlobsIgnoringIfNotExists(Collections.singletonList("_0.cfs__UUID1"));
         verify(parquetBlobContainer, never()).deleteBlobsIgnoringIfNotExists(any());
@@ -573,12 +569,19 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     // ═══════════════════════════════════════════════════════════════
 
     public void testCopyFrom_FileMetadata_NonAsync_ReturnsFalse() throws IOException {
-        DataFormatAwareStoreDirectory mockComposite = mock(DataFormatAwareStoreDirectory.class);
-        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
-
         org.opensearch.core.action.ActionListener<Void> listener = mock(org.opensearch.core.action.ActionListener.class);
+        org.apache.lucene.store.Directory mockFrom = mock(org.apache.lucene.store.Directory.class);
 
-        boolean result = directory.copyFrom(mockComposite, fm, "_0.cfs__UUID", IOContext.DEFAULT, () -> {}, listener, false);
+        boolean result = directory.copyFrom(
+            mockFrom,
+            "_0.cfs:::lucene",
+            "_0.cfs__UUID",
+            IOContext.DEFAULT,
+            () -> {},
+            listener,
+            false,
+            null
+        );
 
         assertFalse("Should return false when base container is not AsyncMultiStreamBlobContainer", result);
     }
@@ -591,7 +594,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString("_0.cfs::_0.cfs__UUID1::checksum123::100::10");
         when(baseBlobContainer.readBlob("_0.cfs__UUID1")).thenThrow(new IOException("blob read failed"));
 
-        expectThrows(IOException.class, () -> directory.openInput(metadata, 100, IOContext.DEFAULT));
+        expectThrows(IOException.class, () -> directory.openInput(metadata.getUploadedFilename(), 100, IOContext.DEFAULT));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -622,8 +625,6 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testSyncCopyFrom_ParquetFile_CopiesToFormatContainer() throws IOException {
-        directory.getBlobContainerForFormat("parquet");
-
         Directory mockFrom = mock(Directory.class);
         IndexInput mockInput = mock(IndexInput.class);
         when(mockInput.length()).thenReturn(20L);
@@ -657,6 +658,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             UnaryOperator.identity(),
             new HashMap<>(),
             logger,
+            null,
             null
         );
 
@@ -706,64 +708,6 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         storeDirectory.close();
     }
 
-    public void testAsyncCopyFrom_ParquetFormat_WithAsyncContainer_ReturnsTrue() throws Exception {
-        AsyncMultiStreamBlobContainer asyncParquetContainer = mock(AsyncMultiStreamBlobContainer.class);
-        when(asyncParquetContainer.remoteIntegrityCheckSupported()).thenReturn(false);
-        when(asyncParquetContainer.path()).thenReturn(baseBlobPath.add("parquet"));
-
-        BlobStore asyncBlobStore = mock(BlobStore.class);
-        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(baseBlobContainer);
-        when(asyncBlobStore.blobContainer(baseBlobPath.add("parquet"))).thenReturn(asyncParquetContainer);
-
-        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
-            asyncBlobStore,
-            baseBlobPath,
-            UnaryOperator.identity(),
-            UnaryOperator.identity(),
-            UnaryOperator.identity(),
-            UnaryOperator.identity(),
-            new HashMap<>(),
-            logger,
-            null
-        );
-
-        Mockito.doAnswer(invocation -> {
-            ActionListener<Void> completionListener = invocation.getArgument(1);
-            completionListener.onResponse(null);
-            return null;
-        }).when(asyncParquetContainer).asyncBlobUpload(any(WriteContext.class), any());
-
-        // Use DataFormatAwareStoreDirectory mock to handle ":::parquet" convention properly
-        // The async copyFrom with format routing uses uploadBlob, which calls from.openInput(src, ...)
-        // and calculateChecksumOfChecksum(from, src). A plain Directory can't understand ":::parquet"
-        // so we use mock DataFormatAwareStoreDirectory + FileMetadata-based copyFrom instead.
-        DataFormatAwareStoreDirectory mockComposite = mock(DataFormatAwareStoreDirectory.class);
-        FileMetadata fm = new FileMetadata("parquet", "_0.pqt");
-
-        IndexInput mockInput = mock(IndexInput.class);
-        when(mockInput.length()).thenReturn(100L);
-        when(mockInput.clone()).thenReturn(mockInput);
-        when(mockComposite.openInput(eq(fm), any(IOContext.class))).thenReturn(mockInput);
-        when(mockComposite.calculateChecksum(fm)).thenReturn(67890L);
-
-        CountDownLatch latch = new CountDownLatch(1);
-
-        boolean result = asyncDir.copyFrom(mockComposite, fm, "_0.pqt__UUID", IOContext.DEFAULT, () -> {}, new ActionListener<>() {
-            @Override
-            public void onResponse(Void unused) {
-                latch.countDown();
-            }
-
-            @Override
-            public void onFailure(Exception e) {
-                fail("Should not fail: " + e.getMessage());
-            }
-        }, false);
-
-        assertTrue("Should return true for async parquet container", result);
-        assertTrue(latch.await(10, TimeUnit.SECONDS));
-    }
-
     public void testAsyncCopyFrom_ExceptionDuringUpload_CallsListenerOnFailure() throws Exception {
         AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
         when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
@@ -781,6 +725,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             UnaryOperator.identity(),
             new HashMap<>(),
             logger,
+            null,
             null
         );
 
@@ -818,125 +763,8 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // FileMetadata-based async copyFrom with AsyncMultiStreamBlobContainer
-    // ═══════════════════════════════════════════════════════════════
-
-    public void testCopyFrom_FileMetadata_Async_WithAsyncContainer_ReturnsTrue() throws Exception {
-        AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
-        when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
-        when(asyncContainer.path()).thenReturn(baseBlobPath);
-
-        BlobStore asyncBlobStore = mock(BlobStore.class);
-        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
-
-        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
-            asyncBlobStore,
-            baseBlobPath,
-            UnaryOperator.identity(),
-            UnaryOperator.identity(),
-            UnaryOperator.identity(),
-            UnaryOperator.identity(),
-            new HashMap<>(),
-            logger,
-            null
-        );
-
-        Mockito.doAnswer(invocation -> {
-            ActionListener<Void> completionListener = invocation.getArgument(1);
-            completionListener.onResponse(null);
-            return null;
-        }).when(asyncContainer).asyncBlobUpload(any(WriteContext.class), any());
-
-        DataFormatAwareStoreDirectory mockComposite = mock(DataFormatAwareStoreDirectory.class);
-        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
-
-        IndexInput mockInput = mock(IndexInput.class);
-        when(mockInput.length()).thenReturn(100L);
-        when(mockInput.clone()).thenReturn(mockInput);
-        when(mockComposite.openInput(eq(fm), any(IOContext.class))).thenReturn(mockInput);
-        when(mockComposite.calculateChecksum(fm)).thenReturn(12345L);
-
-        CountDownLatch latch = new CountDownLatch(1);
-
-        boolean result = asyncDir.copyFrom(mockComposite, fm, "_0.cfs__UUID", IOContext.DEFAULT, () -> {}, new ActionListener<>() {
-            @Override
-            public void onResponse(Void unused) {
-                latch.countDown();
-            }
-
-            @Override
-            public void onFailure(Exception e) {
-                fail("Should not fail: " + e.getMessage());
-            }
-        }, false);
-
-        assertTrue("Should return true for async container", result);
-        assertTrue(latch.await(10, TimeUnit.SECONDS));
-    }
-
-    public void testCopyFrom_FileMetadata_Async_ExceptionCallsListener() throws Exception {
-        AsyncMultiStreamBlobContainer asyncContainer = mock(AsyncMultiStreamBlobContainer.class);
-        when(asyncContainer.remoteIntegrityCheckSupported()).thenReturn(false);
-        when(asyncContainer.path()).thenReturn(baseBlobPath);
-
-        BlobStore asyncBlobStore = mock(BlobStore.class);
-        when(asyncBlobStore.blobContainer(baseBlobPath)).thenReturn(asyncContainer);
-
-        DataFormatAwareRemoteDirectory asyncDir = new DataFormatAwareRemoteDirectory(
-            asyncBlobStore,
-            baseBlobPath,
-            UnaryOperator.identity(),
-            UnaryOperator.identity(),
-            UnaryOperator.identity(),
-            UnaryOperator.identity(),
-            new HashMap<>(),
-            logger,
-            null
-        );
-
-        DataFormatAwareStoreDirectory mockComposite = mock(DataFormatAwareStoreDirectory.class);
-        FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
-        when(mockComposite.calculateChecksum(fm)).thenThrow(new IOException("checksum failed"));
-
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicReference<Exception> failureRef = new AtomicReference<>();
-
-        boolean result = asyncDir.copyFrom(mockComposite, fm, "_0.cfs__UUID", IOContext.DEFAULT, () -> {}, new ActionListener<>() {
-            @Override
-            public void onResponse(Void unused) {
-                fail("Should have failed");
-            }
-
-            @Override
-            public void onFailure(Exception e) {
-                failureRef.set(e);
-                latch.countDown();
-            }
-        }, false);
-
-        assertTrue("Should return true (handled)", result);
-        assertTrue(latch.await(10, TimeUnit.SECONDS));
-        assertNotNull(failureRef.get());
-    }
-
-    // ═══════════════════════════════════════════════════════════════
     // openInput exception close-on-failure (stream opened but readBlob fails)
     // ═══════════════════════════════════════════════════════════════
-
-    public void testOpenInput_UploadedSegmentMetadata_StreamClosedOnReadException() throws IOException {
-        InputStream mockStream = mock(InputStream.class);
-        when(baseBlobContainer.readBlob("_0.cfs__UUID1")).thenReturn(mockStream);
-        // Simulate the rate limiter wrapping failing by making read throw
-        when(mockStream.read(any(), anyInt(), anyInt())).thenThrow(new IOException("stream corrupted"));
-
-        UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString("_0.cfs::_0.cfs__UUID1::checksum123::100::10");
-
-        // openInput wraps the stream; the exception happens later during read
-        IndexInput input = directory.openInput(metadata, 100, IOContext.DEFAULT);
-        assertNotNull(input);
-        // Close the input - it should clean up properly
-        input.close();
-    }
 
     public void testOpenInput_FileMetadata_ExceptionClosesStream() throws IOException {
         FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
@@ -997,6 +825,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             lowPriorityRateLimiter,
             pendingMergedSegments,
             logger,
+            null,
             null
         );
 
@@ -1006,7 +835,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
 
         UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString("_0.cfs::_0.cfs__UUID_MERGED::checksum123::100::10");
 
-        IndexInput input = dirWithMerged.openInput(metadata, 100, IOContext.DEFAULT);
+        IndexInput input = dirWithMerged.openInput(metadata.getUploadedFilename(), 100, IOContext.DEFAULT);
         assertNotNull(input);
         assertEquals(100, input.length());
         input.close();
@@ -1033,6 +862,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             UnaryOperator.identity(),
             new HashMap<>(),
             logger,
+            null,
             null
         );
 
@@ -1089,6 +919,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             UnaryOperator.identity(),
             new HashMap<>(),
             logger,
+            null,
             null
         );
 
@@ -1155,6 +986,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             UnaryOperator.identity(),
             new HashMap<>(),
             logger,
+            null,
             null
         );
 
@@ -1221,6 +1053,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             UnaryOperator.identity(),
             new HashMap<>(),
             logger,
+            null,
             null
         );
 
@@ -1309,6 +1142,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             UnaryOperator.identity(),
             new HashMap<>(),
             logger,
+            null,
             null
         );
 
