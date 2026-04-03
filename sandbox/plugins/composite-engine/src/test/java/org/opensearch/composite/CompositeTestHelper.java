@@ -25,8 +25,6 @@ import org.opensearch.index.engine.dataformat.WriteResult;
 import org.opensearch.index.engine.dataformat.Writer;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
-import org.opensearch.index.store.checksum.ChecksumHandler;
-import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -103,11 +101,6 @@ final class CompositeTestHelper {
             @Override
             public Set<FieldTypeCapabilities> supportedFields() {
                 return fields;
-            }
-
-            @Override
-            public Map<String, ChecksumHandler> checksumHandlers() {
-                return Map.of(name, new GenericCRC32ChecksumHandler(name));
             }
 
             @Override

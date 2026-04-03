@@ -9,10 +9,7 @@
 package org.opensearch.index.engine.dataformat;
 
 import org.opensearch.common.annotation.ExperimentalApi;
-import org.opensearch.index.store.checksum.ChecksumHandler;
 
-import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -48,28 +45,6 @@ public abstract class DataFormat {
      * @return the supported field type capabilities
      */
     public abstract Set<FieldTypeCapabilities> supportedFields();
-
-    /**
-     * Returns a map of format name to checksum handler for all formats this data format covers.
-     * <p>
-     * Simple formats (e.g., Parquet) return a single-entry map. Composite formats iterate
-     * over their constituent formats and merge the results.
-     *
-     * @return map of format name to checksum handler
-     */
-    public abstract Map<String, ChecksumHandler> checksumHandlers();
-
-    /**
-     * Returns the list of data format names this format covers.
-     * <p>
-     * Simple formats return a single-element list containing their own name.
-     * Composite formats return the names of all constituent sub-formats.
-     *
-     * @return list of data format names
-     */
-    public List<String> getDataFormatNames() {
-        return List.of(name());
-    }
 
     @Override
     public final boolean equals(Object o) {

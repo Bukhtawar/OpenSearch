@@ -17,6 +17,7 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.index.IndexSettings;
+import org.opensearch.index.engine.dataformat.DataFormatDescriptor;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.store.checksum.ChecksumHandler;
@@ -25,6 +26,7 @@ import org.opensearch.index.store.checksum.LuceneChecksumHandler;
 
 import java.io.IOException;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -95,7 +97,11 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
     ) {
         super(new SubdirectoryAwareDirectory(delegate, shardPath));
         this.shardPath = shardPath;
-        this.checksumHandlers = new java.util.HashMap<>(dataFormatRegistry.getChecksumHandlers(indexSettings));
+        Map<String, DataFormatDescriptor> descriptors = dataFormatRegistry.getFormatDescriptors(indexSettings);
+        this.checksumHandlers = new HashMap<>();
+        for (Map.Entry<String, DataFormatDescriptor> entry : descriptors.entrySet()) {
+            this.checksumHandlers.put(entry.getKey(), entry.getValue().getChecksumHandler());
+        }
         this.checksumHandlers.put(DEFAULT_FORMAT, new LuceneChecksumHandler());
 
         logger.debug(

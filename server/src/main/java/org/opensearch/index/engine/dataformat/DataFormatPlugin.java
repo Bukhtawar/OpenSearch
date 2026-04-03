@@ -13,6 +13,8 @@ import org.opensearch.index.IndexSettings;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
 
+import java.util.Map;
+
 /**
  * Plugin interface for providing custom data format implementations.
  * Plugins implement this to register their data format (e.g., Parquet, Lucene)
@@ -39,4 +41,16 @@ public interface DataFormatPlugin {
      * @return the indexing execution engine instance
      */
     IndexingExecutionEngine<?, ?> indexingEngine(MapperService mapperService, ShardPath shardPath, IndexSettings indexSettings);
+
+    /**
+     * Returns format descriptors for this plugin, filtered by the given index settings.
+     * Each entry maps a format name to its {@link DataFormatDescriptor} containing the
+     * checksum handler and format name.
+     *
+     * @param indexSettings the index settings used to determine active formats
+     * @return map of format name to descriptor
+     */
+    default Map<String, DataFormatDescriptor> getFormatDescriptors(IndexSettings indexSettings) {
+        return Map.of();
+    }
 }

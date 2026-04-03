@@ -12,8 +12,10 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.common.settings.Setting;
+import org.opensearch.common.settings.Settings;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.dataformat.DataFormat;
+import org.opensearch.index.engine.dataformat.DataFormatDescriptor;
 import org.opensearch.index.engine.dataformat.DataFormatPlugin;
 import org.opensearch.index.engine.dataformat.IndexingExecutionEngine;
 import org.opensearch.index.mapper.MapperService;
@@ -139,6 +141,26 @@ public class CompositeEnginePlugin extends Plugin implements ExtensiblePlugin, D
     @Override
     public IndexingExecutionEngine<?, ?> indexingEngine(MapperService mapperService, ShardPath shardPath, IndexSettings indexSettings) {
         return new CompositeIndexingExecutionEngine(dataFormatPlugins, indexSettings, mapperService, shardPath);
+    }
+
+    @Override
+    public Map<String, DataFormatDescriptor> getFormatDescriptors(IndexSettings indexSettings) {
+        Settings settings = indexSettings.getSettings();
+        String primaryFormatName = PRIMARY_DATA_FORMAT.get(settings);
+        List<String> secondaryFormatNames = SECONDARY_DATA_FORMATS.get(settings);
+
+        Map<String, DataFormatDescriptor> descriptors = new HashMap<>();
+        DataFormatPlugin primaryPlugin = dataFormatPlugins.get(primaryFormatName);
+        if (primaryPlugin != null) {
+            descriptors.putAll(primaryPlugin.getFormatDescriptors(indexSettings));
+        }
+        for (String secondaryName : secondaryFormatNames) {
+            DataFormatPlugin secondaryPlugin = dataFormatPlugins.get(secondaryName);
+            if (secondaryPlugin != null) {
+                descriptors.putAll(secondaryPlugin.getFormatDescriptors(indexSettings));
+            }
+        }
+        return Map.copyOf(descriptors);
     }
 
     /**

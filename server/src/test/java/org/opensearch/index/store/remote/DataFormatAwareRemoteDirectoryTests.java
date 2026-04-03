@@ -30,11 +30,13 @@ import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.index.IndexSettings;
+import org.opensearch.index.engine.dataformat.DataFormatDescriptor;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.store.DataFormatAwareStoreDirectory;
 import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.RemoteIndexOutput;
 import org.opensearch.index.store.RemoteSegmentStoreDirectory.UploadedSegmentMetadata;
+import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.io.ByteArrayInputStream;
@@ -104,7 +106,9 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             .numberOfReplicas(0)
             .build();
         IndexSettings indexSettings = new IndexSettings(metadata, Settings.EMPTY);
-        when(mockRegistry.getDataFormatNames(any(IndexSettings.class))).thenReturn(List.of("parquet"));
+        when(mockRegistry.getFormatDescriptors(any(IndexSettings.class))).thenReturn(
+            Map.of("parquet", new DataFormatDescriptor("parquet", new GenericCRC32ChecksumHandler("parquet")))
+        );
 
         directory = new DataFormatAwareRemoteDirectory(
             mockBlobStore,

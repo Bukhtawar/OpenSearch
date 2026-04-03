@@ -14,7 +14,6 @@ import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.exec.EngineReaderManager;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
-import org.opensearch.index.store.checksum.ChecksumHandler;
 import org.opensearch.plugins.PluginsService;
 import org.opensearch.plugins.SearchBackEndPlugin;
 
@@ -150,45 +149,25 @@ public class DataFormatRegistry {
     }
 
     /**
-     * Returns an unmodifiable map of format name to checksum handler for the given index.
-     * Resolves the data format from index settings, calls {@link DataFormat#checksumHandlers()},
-     * and adds the built-in Lucene handler.
-     *
-     * @param indexSettings the index settings used to determine the active data format
-     * @return unmodifiable map of format name to checksum handler
-     */
-    public Map<String, ChecksumHandler> getChecksumHandlers(IndexSettings indexSettings) {
-        Map<String, ChecksumHandler> handlers = new HashMap<>();
-        String dataformatName = indexSettings.getSettings().get(PLUGGABLE_DATAFORMAT_SETTING);
-        if (dataformatName != null) {
-            DataFormat format = dataFormats.get(dataformatName);
-            if (format != null) {
-                handlers.putAll(format.checksumHandlers());
-            }
-        }
-        return Map.copyOf(handlers);
-    }
-
-    /**
-     * Returns the list of data format names for the active data format of the given index.
+     * Returns format descriptors for the active data format of the given index.
      * Resolves the data format from index settings via the {@code pluggable_dataformat} setting,
-     * then delegates to {@link DataFormat#getDataFormatNames()}.
-     * For composite formats, this returns the individual sub-format names (e.g., "parquet").
-     * For simple formats, this returns a single-element list with the format name.
+     * then delegates to {@link DataFormatPlugin#getFormatDescriptors(IndexSettings)}.
      *
      * @param indexSettings the index settings used to determine the active data format
-     * @return list of data format names, or empty list if no pluggable data format is configured
+     * @return unmodifiable map of format name to descriptor, or empty map if no pluggable data format is configured
      */
-    public List<String> getDataFormatNames(IndexSettings indexSettings) {
+    public Map<String, DataFormatDescriptor> getFormatDescriptors(IndexSettings indexSettings) {
         String dataformatName = indexSettings.getSettings().get(PLUGGABLE_DATAFORMAT_SETTING);
         if (dataformatName != null) {
             DataFormat format = dataFormats.get(dataformatName);
             if (format != null) {
-                return format.getDataFormatNames();
+                DataFormatPlugin plugin = dataFormatPluginRegistry.get(format);
+                if (plugin != null) {
+                    return plugin.getFormatDescriptors(indexSettings);
+                }
             }
         }
-
-        return List.of();
+        return Map.of();
     }
 
     /**

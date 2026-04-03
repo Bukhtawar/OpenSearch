@@ -11,14 +11,10 @@ package org.opensearch.composite;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.dataformat.FieldTypeCapabilities;
-import org.opensearch.index.store.checksum.ChecksumHandler;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * A composite {@link DataFormat} that wraps multiple per-format {@link DataFormat} instances.
@@ -77,20 +73,6 @@ public class CompositeDataFormat extends DataFormat {
             return Set.of();
         }
         return dataFormats.get(0).supportedFields();
-    }
-
-    @Override
-    public Map<String, ChecksumHandler> checksumHandlers() {
-        Map<String, ChecksumHandler> handlers = new HashMap<>();
-        for (DataFormat format : dataFormats) {
-            handlers.putAll(format.checksumHandlers());
-        }
-        return Map.copyOf(handlers);
-    }
-
-    @Override
-    public List<String> getDataFormatNames() {
-        return dataFormats.stream().map(DataFormat::name).collect(Collectors.toUnmodifiableList());
     }
 
     @Override

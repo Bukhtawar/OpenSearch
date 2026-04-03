@@ -19,10 +19,12 @@ import org.opensearch.env.Environment;
 import org.opensearch.env.NodeEnvironment;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.dataformat.DataFormat;
+import org.opensearch.index.engine.dataformat.DataFormatDescriptor;
 import org.opensearch.index.engine.dataformat.DataFormatPlugin;
 import org.opensearch.index.engine.dataformat.IndexingExecutionEngine;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 import org.opensearch.parquet.engine.ParquetDataFormat;
 import org.opensearch.parquet.engine.ParquetIndexingEngine;
 import org.opensearch.parquet.fields.ArrowSchemaBuilder;
@@ -38,6 +40,7 @@ import org.opensearch.watcher.ResourceWatcherService;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 
 /**
@@ -96,6 +99,17 @@ public class ParquetDataFormatPlugin extends Plugin implements DataFormatPlugin 
             () -> ArrowSchemaBuilder.getSchema(mapperService),
             indexSettings,
             threadPool
+        );
+    }
+
+    @Override
+    public Map<String, DataFormatDescriptor> getFormatDescriptors(IndexSettings indexSettings) {
+        return Map.of(
+            ParquetDataFormat.PARQUET_DATA_FORMAT_NAME,
+            new DataFormatDescriptor(
+                ParquetDataFormat.PARQUET_DATA_FORMAT_NAME,
+                new GenericCRC32ChecksumHandler(ParquetDataFormat.PARQUET_DATA_FORMAT_NAME)
+            )
         );
     }
 

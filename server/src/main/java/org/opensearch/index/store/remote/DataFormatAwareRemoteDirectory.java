@@ -137,7 +137,7 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
         // Mirrors DataFormatAwareStoreDirectory's checksum handler initialization pattern:
         // resolve the active format from IndexSettings, then create per-format blob containers
         if (dataFormatRegistry != null && indexSettings != null) {
-            for (String formatName : dataFormatRegistry.getDataFormatNames(indexSettings)) {
+            for (String formatName : dataFormatRegistry.getFormatDescriptors(indexSettings).keySet()) {
                 if (!BASE_PATH_FORMATS.contains(formatName)) {
                     BlobPath formatPath = baseBlobPath.add(formatName.toLowerCase(java.util.Locale.ROOT));
                     formatBlobContainers.put(formatName, blobStore.blobContainer(formatPath));

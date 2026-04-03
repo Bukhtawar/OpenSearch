@@ -278,6 +278,7 @@ public class RemoteDirectory extends Directory {
             throw e;
         }
     }
+
     /**
      * Closes the remote directory. Currently, it is a no-op.
      * If remote directory maintains a state in future, we need to clean it before closing the directory
