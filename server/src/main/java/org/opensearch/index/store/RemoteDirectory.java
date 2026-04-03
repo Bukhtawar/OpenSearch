@@ -185,10 +185,6 @@ public class RemoteDirectory extends Directory {
         blobContainer.deleteBlobsIgnoringIfNotExists(Collections.singletonList(name));
     }
 
-    public void deleteFile(RemoteSegmentStoreDirectory.UploadedSegmentMetadata uploadedSegmentMetadata) throws IOException {
-        deleteFile(uploadedSegmentMetadata.getUploadedFilename());
-    }
-
     /**
      * Removes multiple existing files in the directory in a batch operation.
      *
@@ -282,24 +278,6 @@ public class RemoteDirectory extends Directory {
             throw e;
         }
     }
-
-    /**
-     * Opens a stream for reading an existing file using UploadedSegmentMetadata.
-     * Default implementation delegates to openInput(String, long, IOContext) using the uploaded filename.
-     * DataFormatAwareRemoteDirectory overrides this for format-aware routing, extracting the data format
-     * from originalFilename to determine which BlobContainer to read from.
-     *
-     * @param metadata   the uploaded segment metadata containing original and uploaded filenames
-     * @param fileLength the length of the file
-     * @param context    desired {@link IOContext} context
-     * @return the {@link IndexInput} for reading the file
-     * @throws IOException in case of I/O error
-     */
-    public IndexInput openInput(RemoteSegmentStoreDirectory.UploadedSegmentMetadata metadata, long fileLength, IOContext context)
-        throws IOException {
-        return openInput(metadata.getUploadedFilename(), fileLength, context);
-    }
-
     /**
      * Closes the remote directory. Currently, it is a no-op.
      * If remote directory maintains a state in future, we need to clean it before closing the directory

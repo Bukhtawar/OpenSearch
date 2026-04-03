@@ -96,7 +96,8 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             lowPriorityDownloadRateLimiter,
             new HashMap<>(),
             logger,
-            null // no plugins service in unit tests
+            null, // no DataFormatRegistry in unit tests
+            null  // no IndexSettings in unit tests
         );
     }
 
@@ -356,7 +357,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     // Edge Case Tests
     // ═══════════════════════════════════════════════════════════════
 
-    public void testConstructor_NullPluginsService() {
+    public void testConstructor_NullDataFormatRegistry() {
         // Should not throw
         assertNotNull(directory);
     }

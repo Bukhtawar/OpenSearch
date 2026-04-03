@@ -471,7 +471,8 @@ public class IndicesService extends AbstractLifecycleComponent
         FileCache fileCache,
         CompositeIndexSettings compositeIndexSettings,
         Consumer<IndexShard> replicator,
-        Function<ShardId, ReplicationStats> segmentReplicationStatsProvider
+        Function<ShardId, ReplicationStats> segmentReplicationStatsProvider,
+        DataFormatRegistry dataFormatRegistry
     ) {
         this.settings = settings;
         this.threadPool = threadPool;
@@ -614,7 +615,7 @@ public class IndicesService extends AbstractLifecycleComponent
                 MergeSchedulerConfig.CLUSTER_MAX_FORCE_MERGE_MB_PER_SEC_SETTING,
                 this::onClusterLevelForceMergeMBPerSecUpdate
             );
-        this.dataFormatRegistry = new DataFormatRegistry(pluginsService);
+        this.dataFormatRegistry = dataFormatRegistry;
     }
 
     @InternalApi
@@ -684,7 +685,8 @@ public class IndicesService extends AbstractLifecycleComponent
             null,
             null,
             null,
-            null
+            null,
+            new DataFormatRegistry(pluginsService)
         );
     }
 

@@ -164,6 +164,7 @@ import org.opensearch.index.autoforcemerge.AutoForceMergeMetrics;
 import org.opensearch.index.compositeindex.CompositeIndexSettings;
 import org.opensearch.index.engine.EngineFactory;
 import org.opensearch.index.engine.MergedSegmentWarmerFactory;
+import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.mapper.MappingTransformerRegistry;
 import org.opensearch.index.recovery.RemoteStoreRestoreService;
 import org.opensearch.index.remote.RemoteIndexPathUploader;
@@ -963,11 +964,13 @@ public class Node implements Closeable {
 
             final CompositeIndexSettings compositeIndexSettings = new CompositeIndexSettings(settings, settingsModule.getClusterSettings());
 
+            final DataFormatRegistry dataFormatRegistry = new DataFormatRegistry(pluginsService);
+
             final IndexStorePlugin.DirectoryFactory remoteDirectoryFactory = new RemoteSegmentStoreDirectoryFactory(
                 repositoriesServiceReference::get,
                 threadPool,
                 remoteStoreSettings.getSegmentsPathFixedPrefix(),
-                pluginsService
+                dataFormatRegistry
             );
 
             final TaskResourceTrackingService taskResourceTrackingService = new TaskResourceTrackingService(
@@ -1022,7 +1025,8 @@ public class Node implements Closeable {
                 fileCache,
                 compositeIndexSettings,
                 segmentReplicator::startReplication,
-                segmentReplicator::getSegmentReplicationStats
+                segmentReplicator::getSegmentReplicationStats,
+                dataFormatRegistry
             );
 
             final IngestService ingestService = new IngestService(

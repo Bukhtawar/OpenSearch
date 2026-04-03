@@ -35,6 +35,9 @@ import java.util.stream.Collectors;
 @ExperimentalApi
 public class DataFormatRegistry {
 
+    /** Index setting name that specifies the active pluggable data format. */
+    public static final String PLUGGABLE_DATAFORMAT_SETTING = "pluggable_dataformat";
+
     /** Map from data format to the plugin that provides its indexing engine. */
     private final Map<DataFormat, DataFormatPlugin> dataFormatPluginRegistry;
 
@@ -156,7 +159,7 @@ public class DataFormatRegistry {
      */
     public Map<String, ChecksumHandler> getChecksumHandlers(IndexSettings indexSettings) {
         Map<String, ChecksumHandler> handlers = new HashMap<>();
-        String dataformatName = indexSettings.getSettings().get("pluggable_dataformat");
+        String dataformatName = indexSettings.getSettings().get(PLUGGABLE_DATAFORMAT_SETTING);
         if (dataformatName != null) {
             DataFormat format = dataFormats.get(dataformatName);
             if (format != null) {
@@ -164,6 +167,28 @@ public class DataFormatRegistry {
             }
         }
         return Map.copyOf(handlers);
+    }
+
+    /**
+     * Returns the list of data format names for the active data format of the given index.
+     * Resolves the data format from index settings via the {@code pluggable_dataformat} setting,
+     * then delegates to {@link DataFormat#getDataFormatNames()}.
+     * For composite formats, this returns the individual sub-format names (e.g., "parquet").
+     * For simple formats, this returns a single-element list with the format name.
+     *
+     * @param indexSettings the index settings used to determine the active data format
+     * @return list of data format names, or empty list if no pluggable data format is configured
+     */
+    public List<String> getDataFormatNames(IndexSettings indexSettings) {
+        String dataformatName = indexSettings.getSettings().get(PLUGGABLE_DATAFORMAT_SETTING);
+        if (dataformatName != null) {
+            DataFormat format = dataFormats.get(dataformatName);
+            if (format != null) {
+                return format.getDataFormatNames();
+            }
+        }
+
+        return List.of();
     }
 
     /**

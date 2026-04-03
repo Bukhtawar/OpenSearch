@@ -168,7 +168,12 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
 
     @Override
     public String[] listAll() throws IOException {
-        return in.listAll();
+        String[] allFiles = in.listAll();
+        for (int i = 0; i < allFiles.length; i++) {
+            FileMetadata fm = toFileMetadata(allFiles[i]);
+            allFiles[i] = isDefaultFormat(fm.dataFormat()) ? fm.file() : fm.serialize();
+        }
+        return allFiles;
     }
 
     // ═══════════════════════════════════════════════════════════════

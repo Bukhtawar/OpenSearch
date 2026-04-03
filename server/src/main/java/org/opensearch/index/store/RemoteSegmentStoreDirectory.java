@@ -576,14 +576,6 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      */
     @Override
     public IndexInput openInput(String name, IOContext context) throws IOException {
-        // Use UploadedSegmentMetadata-based openInput for format-aware routing.
-        // DataFormatAwareRemoteDirectory.openInput(UploadedSegmentMetadata) extracts the format
-        // from originalFilename to route to the correct format-specific BlobContainer.
-        if (segmentsUploadedToRemoteStore.containsKey(name)) {
-            UploadedSegmentMetadata metadata = segmentsUploadedToRemoteStore.get(name);
-            return remoteDataDirectory.openInput(metadata, metadata.getLength(), context);
-        }
-        // Fallback for pending merged segments or other cases
         String remoteFilename = getExistingRemoteFilename(name);
         long fileLength = fileLength(name);
         if (remoteFilename != null) {
