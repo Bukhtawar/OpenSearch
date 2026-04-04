@@ -188,24 +188,14 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
 
     /**
      * Parses a file identifier string into a {@link FileMetadata} object.
+     * Uses the same "format/file" convention as {@link FileMetadata} (e.g., "parquet/_0.pqt").
+     * Plain filenames without a "/" prefix default to the lucene format.
      *
      * @param fileIdentifier the file path string (with optional format prefix separated by '/')
      * @return FileMetadata with parsed dataFormat and filename
      */
     public FileMetadata toFileMetadata(String fileIdentifier) {
-        // Handle "file:::format" convention (serialized FileMetadata from UploaderService)
-        if (fileIdentifier.contains(FileMetadata.DELIMITER)) {
-            return new FileMetadata(fileIdentifier);
-        }
-        // Handle "format/file" convention
-        int slash = fileIdentifier.indexOf('/');
-        if (slash >= 0) {
-            String format = fileIdentifier.substring(0, slash);
-            String file = fileIdentifier.substring(slash + 1);
-            return new FileMetadata(format, file);
-        }
-        // No prefix → Lucene/index file
-        return new FileMetadata(DEFAULT_FORMAT, fileIdentifier);
+        return new FileMetadata(fileIdentifier);
     }
 
     /**

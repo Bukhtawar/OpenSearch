@@ -237,7 +237,7 @@ public abstract class CatalogSnapshot implements Writeable, Cloneable {
      * <ul>
      *   <li>{@link SegmentInfosCatalogSnapshot}: plain Lucene file names (e.g., {@code "_0.cfe"})</li>
      *   <li>{@link DataformatAwareCatalogSnapshot}: serialized format-aware names
-     *       (e.g., {@code "data.parquet:::parquet"}) for non-lucene files</li>
+     *       (e.g., {@code "parquet/data.parquet"}) for non-lucene files</li>
      * </ul>
      *
      * @return collection of file name strings ready for upload

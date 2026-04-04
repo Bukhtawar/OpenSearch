@@ -1455,13 +1455,13 @@ public class RemoteSegmentStoreDirectoryTests extends BaseRemoteSegmentStoreDire
 
     public void testUploadedSegmentMetadataFromString_WithFormatDelimiter() {
         // Format: originalFilename::uploadedFilename::checksum::length::writtenByMajor
-        // Where originalFilename contains ":::" (e.g., "_0.parquet:::parquet")
-        String metadataString = "_0.parquet:::parquet::_0.parquet__UUID1::checksum456::200::" + Version.LATEST.major;
+        // Where originalFilename uses "/" convention (e.g., "parquet/_0.parquet")
+        String metadataString = "parquet/_0.parquet::_0.parquet__UUID1::checksum456::200::" + Version.LATEST.major;
         RemoteSegmentStoreDirectory.UploadedSegmentMetadata metadata = RemoteSegmentStoreDirectory.UploadedSegmentMetadata.fromString(
             metadataString
         );
 
-        assertEquals("_0.parquet:::parquet", metadata.getOriginalFilename());
+        assertEquals("parquet/_0.parquet", metadata.getOriginalFilename());
         assertEquals("_0.parquet__UUID1", metadata.getUploadedFilename());
         assertEquals("checksum456", metadata.getChecksum());
         assertEquals(200, metadata.getLength());
@@ -1469,7 +1469,7 @@ public class RemoteSegmentStoreDirectoryTests extends BaseRemoteSegmentStoreDire
 
     public void testUploadedSegmentMetadataToString_WithFormatDelimiter() {
         RemoteSegmentStoreDirectory.UploadedSegmentMetadata metadata = new RemoteSegmentStoreDirectory.UploadedSegmentMetadata(
-            "_0.parquet:::parquet",
+            "parquet/_0.parquet",
             "_0.parquet__UUID1",
             "checksum456",
             200
@@ -1477,12 +1477,12 @@ public class RemoteSegmentStoreDirectoryTests extends BaseRemoteSegmentStoreDire
         metadata.setWrittenByMajor(Version.LATEST.major);
 
         String result = metadata.toString();
-        assertTrue("toString should contain :::parquet", result.contains(":::parquet"));
+        assertTrue("toString should contain parquet/", result.contains("parquet/_0.parquet"));
         assertTrue("toString should contain uploaded filename", result.contains("_0.parquet__UUID1"));
 
         // Verify round-trip
         RemoteSegmentStoreDirectory.UploadedSegmentMetadata parsed = RemoteSegmentStoreDirectory.UploadedSegmentMetadata.fromString(result);
-        assertEquals("_0.parquet:::parquet", parsed.getOriginalFilename());
+        assertEquals("parquet/_0.parquet", parsed.getOriginalFilename());
         assertEquals("_0.parquet__UUID1", parsed.getUploadedFilename());
     }
 

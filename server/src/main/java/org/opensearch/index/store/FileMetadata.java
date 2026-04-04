@@ -23,9 +23,11 @@ import java.util.Objects;
 public class FileMetadata {
 
     /**
-     * Delimiter used to separate filename and data format in serialized form.
+     * Delimiter used to separate data format and filename in serialized form.
+     * Uses "/" to match the subdirectory convention (e.g., "parquet/_0.pqt").
      */
-    public static final String DELIMITER = ":::";
+    public static final String DELIMITER = "/";
+    private static final String DEFAULT_FORMAT = "lucene";
     private static final String METADATA_KEY = "metadata";
 
     private final String file;
@@ -44,29 +46,36 @@ public class FileMetadata {
 
     /**
      * Constructs a FileMetadata by parsing a serialized data-format-aware filename.
-     * The format is "filename:::dataFormat". If no delimiter is present and the filename
-     * starts with "metadata", it's treated as a metadata file. Otherwise, defaults to "lucene".
+     * The format is "format/file" (e.g., "parquet/_0.pqt"). If no delimiter is present,
+     * files starting with "metadata" are treated as metadata format, otherwise defaults to "lucene".
      *
-     * @param dataFormatAwareFile the serialized filename with optional data format
+     * @param dataFormatAwareFile the serialized filename with optional data format prefix
      */
     public FileMetadata(String dataFormatAwareFile) {
-        if (!dataFormatAwareFile.contains(DELIMITER) && dataFormatAwareFile.startsWith(METADATA_KEY)) {
-            this.dataFormat = "metadata";
+        int slash = dataFormatAwareFile.indexOf(DELIMITER);
+        if (slash >= 0) {
+            this.dataFormat = dataFormatAwareFile.substring(0, slash);
+            this.file = dataFormatAwareFile.substring(slash + 1);
+        } else if (dataFormatAwareFile.startsWith(METADATA_KEY)) {
+            this.dataFormat = METADATA_KEY;
             this.file = dataFormatAwareFile;
-            return;
+        } else {
+            this.dataFormat = DEFAULT_FORMAT;
+            this.file = dataFormatAwareFile;
         }
-        String[] parts = dataFormatAwareFile.split(DELIMITER);
-        this.dataFormat = (parts.length == 1) ? "lucene" : parts[1];
-        this.file = parts[0];
     }
 
     /**
-     * Serializes this FileMetadata to a string in the format "filename:::dataFormat".
+     * Serializes this FileMetadata to a string in the format "format/file".
+     * For the default lucene format, returns just the filename (no prefix).
      *
      * @return the serialized representation
      */
     public String serialize() {
-        return file + DELIMITER + dataFormat;
+        if (DEFAULT_FORMAT.equals(dataFormat)) {
+            return file;
+        }
+        return dataFormat + DELIMITER + file;
     }
 
     @Override

@@ -250,7 +250,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput(fileIdentifier, IOContext.DEFAULT)) {
             out.writeString("to be deleted");
         }
-        String serialized = "del_test.parquet" + FileMetadata.DELIMITER + "parquet";
+        String serialized = new FileMetadata("parquet", "del_test.parquet").serialize();
         assertTrue(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(serialized));
 
         FileMetadata fm = new FileMetadata("parquet", "del_test.parquet");
@@ -279,7 +279,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         String[] files = dataFormatAwareStoreDirectory.listAll();
         List<String> fileList = Arrays.asList(files);
         assertTrue(fileList.contains("_0.si"));
-        assertTrue(fileList.contains("data.parquet" + FileMetadata.DELIMITER + "parquet"));
+        assertTrue(fileList.contains("parquet/data.parquet"));
     }
 
     public void testListFileMetadata() throws IOException {
@@ -395,8 +395,8 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         FileMetadata dest = new FileMetadata("parquet", "rename_dest.parquet");
         dataFormatAwareStoreDirectory.rename(src, dest);
 
-        String srcSerialized = "rename_src.parquet" + FileMetadata.DELIMITER + "parquet";
-        String destSerialized = "rename_dest.parquet" + FileMetadata.DELIMITER + "parquet";
+        String srcSerialized = new FileMetadata("parquet", "rename_src.parquet").serialize();
+        String destSerialized = new FileMetadata("parquet", "rename_dest.parquet").serialize();
         assertFalse(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(srcSerialized));
         assertTrue(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(destSerialized));
     }
@@ -457,9 +457,9 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
             out.writeBytes(data, data.length);
         }
 
-        // Now access it using a serialized FileMetadata string (with ":::" delimiter)
+        // Now access it using a serialized FileMetadata string (with "/" delimiter)
         FileMetadata fm = new FileMetadata("parquet", "delimited_test.parquet");
-        String serialized = fm.serialize(); // "delimited_test.parquet:::parquet"
+        String serialized = fm.serialize(); // "parquet/delimited_test.parquet"
 
         // The resolveFileName method should handle the delimiter and resolve correctly
         long length = dataFormatAwareStoreDirectory.fileLength(serialized);
@@ -588,8 +588,8 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         String[] files = dataFormatAwareStoreDirectory.listAll();
         List<String> fileList = Arrays.asList(files);
         assertTrue("Should contain lucene file", fileList.contains("_0.si"));
-        assertTrue("Should contain parquet file", fileList.contains("data.parquet" + FileMetadata.DELIMITER + "parquet"));
-        assertTrue("Should contain arrow file", fileList.contains("data.arrow" + FileMetadata.DELIMITER + "arrow"));
+        assertTrue("Should contain parquet file", fileList.contains("parquet/data.parquet"));
+        assertTrue("Should contain arrow file", fileList.contains("arrow/data.arrow"));
     }
 
     public void testListFileMetadata_multipleFormats() throws IOException {
@@ -795,8 +795,8 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testPathMapping_metadataFormat_getDataFormat() {
-        // A plain metadata filename (no slash) defaults to "lucene"
-        assertEquals("lucene", dataFormatAwareStoreDirectory.getDataFormat("metadata__1__2__3"));
+        // A plain metadata filename (no slash) starting with "metadata" is treated as metadata format
+        assertEquals("metadata", dataFormatAwareStoreDirectory.getDataFormat("metadata__1__2__3"));
     }
 
     // --- Parquet files: "parquet/" prefix, stored in <shard>/parquet/ ---
@@ -846,7 +846,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         assertTrue("Custom file should be in custom subdir", Files.exists(shardDataPath.resolve("custom").resolve("myfile.dat")));
     }
 
-    // --- resolveFileName: serialized FileMetadata (with :::) → "/" identifier ---
+    // --- resolveFileName: serialized FileMetadata (with /) → native "/" identifier ---
 
     public void testResolveFileName_luceneSerialized() throws IOException {
         // Write using plain name
@@ -854,8 +854,8 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
             out.writeString("lucene data");
         }
 
-        // Access using serialized FileMetadata ":::lucene"
-        String serialized = "_0.si:::lucene";
+        // Access using serialized FileMetadata — lucene serializes to plain name
+        String serialized = new FileMetadata("lucene", "_0.si").serialize();
         long length = dataFormatAwareStoreDirectory.fileLength(serialized);
         assertTrue("Should resolve serialized lucene name", length > 0);
     }
@@ -866,8 +866,8 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
             out.writeString("parquet data");
         }
 
-        // Access using serialized FileMetadata ":::parquet"
-        String serialized = "data.parquet:::parquet";
+        // Access using serialized FileMetadata "parquet/data.parquet"
+        String serialized = new FileMetadata("parquet", "data.parquet").serialize();
         long length = dataFormatAwareStoreDirectory.fileLength(serialized);
         assertTrue("Should resolve serialized parquet name", length > 0);
     }
@@ -878,8 +878,8 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
             out.writeString("metadata content");
         }
 
-        // Access using serialized FileMetadata ":::metadata"
-        String serialized = "metadata__1__2__3:::metadata";
+        // Access using serialized FileMetadata "metadata/metadata__1__2__3"
+        String serialized = new FileMetadata("metadata", "metadata__1__2__3").serialize();
         long length = dataFormatAwareStoreDirectory.fileLength(serialized);
         assertTrue("Should resolve serialized metadata name", length > 0);
     }
@@ -1028,8 +1028,8 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         assertTrue("Lucene file listed as plain name", fileList.contains("_0.si"));
         assertFalse("Lucene file should NOT have lucene/ prefix", fileList.contains("lucene/_0.si"));
 
-        // Non-lucene files should appear with serialized "file:::format" form
-        assertTrue("Parquet file listed with serialized form", fileList.contains("data.parquet" + FileMetadata.DELIMITER + "parquet"));
+        // Non-lucene files should appear with serialized "format/file" form
+        assertTrue("Parquet file listed with serialized form", fileList.contains("parquet/data.parquet"));
     }
 
     // --- getDataFormat comprehensive ---

@@ -40,13 +40,14 @@ public class FileMetadataTests extends OpenSearchTestCase {
     }
 
     public void testConstructorSingleArg_withDelimiter() {
-        FileMetadata fm = new FileMetadata("_0_1.parquet:::parquet");
+        FileMetadata fm = new FileMetadata("parquet/_0_1.parquet");
         assertEquals("parquet", fm.dataFormat());
         assertEquals("_0_1.parquet", fm.file());
     }
 
     public void testConstructorSingleArg_withDelimiterLucene() {
-        FileMetadata fm = new FileMetadata("_0.si:::lucene");
+        // Plain lucene files don't have a prefix, so single-arg defaults to "lucene"
+        FileMetadata fm = new FileMetadata("_0.si");
         assertEquals("lucene", fm.dataFormat());
         assertEquals("_0.si", fm.file());
     }
@@ -60,7 +61,7 @@ public class FileMetadataTests extends OpenSearchTestCase {
 
     public void testConstructorSingleArg_metadataKeyWithDelimiter() {
         // If it contains delimiter, parse normally even if it starts with "metadata"
-        FileMetadata fm = new FileMetadata("metadata__1__2__3:::metadata");
+        FileMetadata fm = new FileMetadata("metadata/metadata__1__2__3");
         assertEquals("metadata", fm.dataFormat());
         assertEquals("metadata__1__2__3", fm.file());
     }
@@ -71,12 +72,12 @@ public class FileMetadataTests extends OpenSearchTestCase {
 
     public void testSerialize() {
         FileMetadata fm = new FileMetadata("parquet", "_0_1.parquet");
-        assertEquals("_0_1.parquet:::parquet", fm.serialize());
+        assertEquals("parquet/_0_1.parquet", fm.serialize());
     }
 
     public void testSerialize_lucene() {
         FileMetadata fm = new FileMetadata("lucene", "_0.si");
-        assertEquals("_0.si:::lucene", fm.serialize());
+        assertEquals("_0.si", fm.serialize());
     }
 
     public void testToStringEqualsSerialized() {
@@ -134,7 +135,7 @@ public class FileMetadataTests extends OpenSearchTestCase {
 
     public void testEquals_differentType() {
         FileMetadata fm = new FileMetadata("lucene", "_0.si");
-        assertNotEquals("_0.si:::lucene", fm);
+        assertNotEquals("_0.si", fm);
     }
 
     public void testEquals_self() {
@@ -147,7 +148,7 @@ public class FileMetadataTests extends OpenSearchTestCase {
     // ═══════════════════════════════════════════════════════════════
 
     public void testDelimiterConstant() {
-        assertEquals(":::", FileMetadata.DELIMITER);
+        assertEquals("/", FileMetadata.DELIMITER);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -169,13 +170,13 @@ public class FileMetadataTests extends OpenSearchTestCase {
     }
 
     public void testConstructorSingleArg_arrowWithDelimiter() {
-        FileMetadata fm = new FileMetadata("data.arrow:::arrow");
+        FileMetadata fm = new FileMetadata("arrow/data.arrow");
         assertEquals("arrow", fm.dataFormat());
         assertEquals("data.arrow", fm.file());
     }
 
     public void testConstructorSingleArg_customFormat() {
-        FileMetadata fm = new FileMetadata("data.custom:::myformat");
+        FileMetadata fm = new FileMetadata("myformat/data.custom");
         assertEquals("myformat", fm.dataFormat());
         assertEquals("data.custom", fm.file());
     }
@@ -187,7 +188,7 @@ public class FileMetadataTests extends OpenSearchTestCase {
     public void testRoundtrip_metadata() {
         FileMetadata original = new FileMetadata("metadata", "metadata__1__2__3");
         String serialized = original.serialize();
-        assertEquals("metadata__1__2__3:::metadata", serialized);
+        assertEquals("metadata/metadata__1__2__3", serialized);
         FileMetadata deserialized = new FileMetadata(serialized);
         assertEquals(original, deserialized);
     }

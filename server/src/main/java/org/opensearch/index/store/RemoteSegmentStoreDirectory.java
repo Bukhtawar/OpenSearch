@@ -365,29 +365,16 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         public long getLength() {
             return this.length;
         }
-
-        /**
-         * Parses an UploadedSegmentMetadata from its string representation.
-         *
-         * Format: originalFilename::uploadedFilename::checksum::length::writtenByMajor
-         *
-         * For format-aware files, originalFilename contains ":::" (e.g., "_0.pqt:::parquet").
-         * We mask ":::" before splitting on "::" to avoid incorrect splits, then restore it.
-         */
-        public static UploadedSegmentMetadata fromString(String str) {
-            // Mask ":::" so split("::") doesn't break format-aware originalFilenames
-            String masked = str.replace(FileMetadata.DELIMITER, "\0");
-            String[] values = masked.split(SEPARATOR);
-            // Restore ":::" in originalFilename
-            values[0] = values[0].replace("\0", FileMetadata.DELIMITER);
-
+        
+        public static UploadedSegmentMetadata fromString(String uploadedFilename) {
+            String[] values = uploadedFilename.split(SEPARATOR);
             UploadedSegmentMetadata metadata = new UploadedSegmentMetadata(values[0], values[1], values[2], Long.parseLong(values[3]));
             if (values.length < 5) {
-                staticLogger.error("Lucene version is missing for UploadedSegmentMetadata: " + values[0]);
-                // Throw to maintain backward compatibility — callers expect this to fail for incomplete metadata
-                throw new ArrayIndexOutOfBoundsException("Missing writtenByMajor in UploadedSegmentMetadata: " + str);
+                staticLogger.error("Lucene version is missing for UploadedSegmentMetadata: " + uploadedFilename);
             }
+
             metadata.setWrittenByMajor(Integer.parseInt(values[4]));
+
             return metadata;
         }
 
@@ -997,10 +984,10 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     // pendingDownloadMergedSegments must go through these methods.
     // ═══════════════════════════════════════════════════════════════
 
-    /** Extract format from originalFilename. Returns "lucene" if no :::format present. */
+    /** Extract format from originalFilename. Returns "lucene" if no format prefix present. */
     private static String extractFormat(String originalFilename) {
         if (originalFilename != null && originalFilename.contains(FileMetadata.DELIMITER)) {
-            return originalFilename.split(FileMetadata.DELIMITER)[1];
+            return new FileMetadata(originalFilename).dataFormat();
         }
         return "lucene";
     }
@@ -1064,12 +1051,10 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     }
 
     private String getNewRemoteSegmentFilename(String localFilename) {
-        // Strip :::format suffix if present before appending UUID.
-        // For optimized indices, localFilename may be "filename:::format" (e.g., "_0.pqt:::parquet").
-        // The blob key should be "filename__UUID" (e.g., "_0.pqt__UUID"), not "filename:::format__UUID".
-        String plainFilename = localFilename.contains(FileMetadata.DELIMITER)
-            ? localFilename.split(FileMetadata.DELIMITER)[0]
-            : localFilename;
+        // Strip format prefix if present before appending UUID.
+        // For optimized indices, localFilename may be "format/filename" (e.g., "parquet/_0.pqt").
+        // The blob key should be "filename__UUID" (e.g., "_0.pqt__UUID"), not "parquet/_0.pqt__UUID".
+        String plainFilename = localFilename.contains(FileMetadata.DELIMITER) ? new FileMetadata(localFilename).file() : localFilename;
         return plainFilename + SEGMENT_NAME_UUID_SEPARATOR + UUIDs.base64UUID();
     }
 

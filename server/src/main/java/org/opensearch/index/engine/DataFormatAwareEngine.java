@@ -59,6 +59,10 @@ public class DataFormatAwareEngine implements IndexReaderProvider, Closeable {
         this.catalogSnapshotManager = catalogSnapshotManager;
     }
 
+    public boolean hasCatalogSnapshotManager() {
+        return catalogSnapshotManager != null;
+    }
+
     public EngineReaderManager<?> getReaderManager(DataFormat format) {
         return readerManagers.get(format);
     }

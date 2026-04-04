@@ -206,10 +206,11 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testDeleteFile_ParquetFile_WithFormatSuffix() throws IOException {
+        // Register format in cache since DFARD receives plain blob keys
+        directory.registerBlobFormat("_0.parquet", "parquet");
+        directory.deleteFile("_0.parquet");
 
-        directory.deleteFile("_0.parquet:::parquet");
-
-        verify(parquetBlobContainer).deleteBlobsIgnoringIfNotExists(Collections.singletonList("_0.parquet:::parquet"));
+        verify(parquetBlobContainer).deleteBlobsIgnoringIfNotExists(Collections.singletonList("_0.parquet"));
     }
 
     public void testDeleteFile_WithUploadedSegmentMetadata_Parquet() throws IOException {
@@ -217,7 +218,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         // Use fromString() since constructor is package-private
         // Format: originalFilename::uploadedFilename::checksum::length::writtenByMajor
         UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString(
-            "_0.parquet:::parquet::_0.parquet__UUID1::checksum123::200::10"
+            "parquet/_0.parquet::_0.parquet__UUID1::checksum123::200::10"
         );
 
         directory.registerBlobFormat("_0.parquet__UUID1", "parquet");
@@ -270,7 +271,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     public void testOpenInput_WithUploadedSegmentMetadata_Parquet() throws IOException {
 
         UploadedSegmentMetadata metadata = UploadedSegmentMetadata.fromString(
-            "_0.parquet:::parquet::_0.parquet__UUID1::checksum456::200::10"
+            "parquet/_0.parquet::_0.parquet__UUID1::checksum456::200::10"
         );
 
         byte[] content = new byte[200];
@@ -415,14 +416,16 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     public void testOpenInput_StringBased_ParquetFile_WithFormatSuffix() throws IOException {
 
         byte[] content = new byte[200];
-        when(parquetBlobContainer.readBlob("_0.parquet:::parquet")).thenReturn(new ByteArrayInputStream(content));
+        when(parquetBlobContainer.readBlob("_0.parquet")).thenReturn(new ByteArrayInputStream(content));
 
-        IndexInput input = directory.openInput("_0.parquet:::parquet", 200, IOContext.DEFAULT);
+        // Register format in cache since DFARD receives plain blob keys
+        directory.registerBlobFormat("_0.parquet", "parquet");
+        IndexInput input = directory.openInput("_0.parquet", 200, IOContext.DEFAULT);
         assertNotNull(input);
         assertEquals(200, input.length());
         input.close();
 
-        verify(parquetBlobContainer).readBlob("_0.parquet:::parquet");
+        verify(parquetBlobContainer).readBlob("_0.parquet");
         verify(baseBlobContainer, never()).readBlob(anyString());
     }
 

@@ -56,15 +56,20 @@ import java.util.function.UnaryOperator;
 /**
  * DataFormatAwareRemoteDirectory extends RemoteDirectory with format-aware blob routing.
  *
- * <p>This directory routes file operations to format-specific BlobContainers based on the
- * data format encoded in the filename (using the "filename:::format" convention from FileMetadata).
+ * <p>This directory routes file operations to format-specific BlobContainers. Format resolution
+ * depends on the caller:
+ * <ul>
+ *   <li>Remote blob operations (deleteFile, openInput, fileLength, openBlockInput): receive plain
+ *       blob keys (e.g., "_0.pqt__UUID") from RSSD and resolve format via {@code blobFormatCache}</li>
+ *   <li>Upload operations (copyFrom): receive local filenames with "format/file" convention
+ *       (e.g., "parquet/_0.pqt") and parse format directly via {@link FileMetadata}</li>
+ *   <li>FileMetadata-based APIs: receive format explicitly via the FileMetadata object</li>
+ * </ul>
  *
- * <p>Key design decisions:
+ * <p>Blob container routing:
  * <ul>
  *   <li>"lucene" format (or no format) → inherited blobContainer at baseBlobPath (same as RemoteDirectory)</li>
  *   <li>Non-lucene formats (e.g., "parquet") → baseBlobPath/formatName/ sub-path</li>
- *   <li>String-based overrides parse "filename:::format" to route to the correct BlobContainer</li>
- *   <li>UploadedSegmentMetadata-based overrides extract format from originalFilename for delete/open</li>
  * </ul>
  *
  * @opensearch.api
@@ -85,7 +90,6 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
     private final DownloadRateLimiterProvider downloadRateLimiterProvider;
 
     private final Map<String, BlobContainer> formatBlobContainers;
-    private final BlobStore blobStore;
     private final BlobPath baseBlobPath;
     private final Logger logger;
 
@@ -122,7 +126,6 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
             pendingDownloadMergedSegments
         );
         this.formatBlobContainers = new ConcurrentHashMap<>();
-        this.blobStore = blobStore;
         this.baseBlobPath = baseBlobPath;
         this.uploadRateLimiter = uploadRateLimiter;
         this.lowPriorityUploadRateLimiter = lowPriorityUploadRateLimiter;
@@ -175,29 +178,18 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
     }
 
     /**
-     * Resolve the data format for a given name/blob key.
+     * Resolve the data format for a plain blob key using the format cache.
+     * Used by remote blob operations (deleteFile, openInput, fileLength, openBlockInput)
+     * where names are always plain blob keys (e.g., "_0.pqt__UUID") without format prefix.
      *
-     * <p>Priority:
-     * <ol>
-     *   <li>If name contains ":::format" delimiter → parse it (e.g., copyFrom paths)</li>
-     *   <li>If name is in blobFormatCache → use cached format (e.g., plain blob keys from RSSD)</li>
-     *   <li>Default → "lucene"</li>
-     * </ol>
-     *
-     * @param name the filename or blob key to resolve format for
-     * @return the resolved data format name
+     * @param name the blob key to resolve format for
+     * @return the resolved data format name, defaults to "lucene"
      */
     private String resolveFormat(String name) {
-        // 1. Inline format info (e.g., "_0.pqt:::parquet")
-        if (name.contains(FileMetadata.DELIMITER)) {
-            return new FileMetadata(name).dataFormat();
-        }
-        // 2. Cached lookup (e.g., "_0.pqt__UUID" → "parquet")
         String cached = blobFormatCache.get(name);
         if (cached != null) {
             return cached;
         }
-        // 3. Warn if this looks like a UUID-suffixed blob key — it should have been in cache
         if (name.contains(RemoteSegmentStoreDirectory.SEGMENT_NAME_UUID_SEPARATOR)) {
             logger.warn("Format cache miss for blob key [{}], defaulting to lucene", name);
         }
@@ -259,13 +251,11 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
      * Format-aware deleteFile override.
      *
      * <p>Uses {@link #resolveFormat(String)} to determine which BlobContainer to delete from.
-     * For names with ":::format" suffix, parses the format inline. For plain blob keys
-     * (e.g., "_0.pqt__UUID"), looks up the format from the blobFormatCache populated by RSSD.
+     * Name is always a plain blob key (e.g., "_0.pqt__UUID") from RSSD, resolved via blobFormatCache.
      * Falls back to "lucene" (base container) if no format info is available.
      */
     @Override
     public void deleteFile(String name) throws IOException {
-        // name is always a plain blob key (e.g., "_0.pqt__UUID") from RSSD — never contains ":::format"
         String format = resolveFormat(name);
         BlobContainer container = getBlobContainerForFormat(format);
         container.deleteBlobsIgnoringIfNotExists(Collections.singletonList(name));
@@ -296,23 +286,22 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
 
     // ═══════════════════════════════════════════════════════════════
     // String-based overrides — called by RemoteSegmentStoreDirectory
-    // These parse "filename:::format" from the src string
+    // These parse "format/file" from the src string
     // ═══════════════════════════════════════════════════════════════
 
     /**
      * Sync copyFrom override that properly handles format-aware local files.
      *
      * <p>When AsyncMultiStreamBlobContainer is not available (e.g., FS-based blob store in tests),
-     * this fallback is used. The src string may contain ":::format" (e.g., "_0.pqt:::parquet")
+     * this fallback is used. The src string may contain "format/" prefix (e.g., "parquet/_0.pqt")
      * which the source DataFormatAwareStoreDirectory handles via parseFilePath().
-     * which performs the same format-aware routing.
      */
     @Override
     public void copyFrom(Directory from, String src, String dest, IOContext context) throws IOException {
         logger.debug("Sync copyFrom: src={}, dest={}", src, dest);
         FileMetadata fileMetadata = new FileMetadata(src);
         BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
-        // Read from local directory (DataFormatAwareStoreDirectory handles ":::format" in src)
+        // Read from local directory (DataFormatAwareStoreDirectory handles "format/file" in src)
         // Write to format-specific BlobContainer (lucene→base, parquet→parquet sub-path, etc.)
         try (IndexInput is = from.openInput(src, context); IndexOutput os = new RemoteIndexOutput(dest, container)) {
             os.copyBytes(is, is.length());
@@ -322,8 +311,8 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
     /**
      * Format-aware async copyFrom override.
      *
-     * <p>Parses the src string (e.g., "_0.pqt:::parquet") to determine format routing.
-     * Opens local file using src as-is (DataFormatAwareStoreDirectory handles ::: parsing).
+     * <p>Parses the src string (e.g., "parquet/_0.pqt") to determine format routing.
+     * Opens local file using src as-is (DataFormatAwareStoreDirectory handles format/file parsing).
      * Uploads to the format-specific BlobContainer using remoteFileName as the blob key.
      */
     @Override
@@ -365,12 +354,11 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
     /**
      * Format-aware fileLength override.
      *
-     * <p>Uses {@link #resolveFormat(String)} for format resolution. For names with ":::format",
-     * parses inline. For plain blob keys, looks up from blobFormatCache. Falls back to "lucene".
+     * <p>Receives a plain blob key (e.g., "_0.pqt__UUID") from RSSD and uses
+     * {@link #resolveFormat(String)} to look up the format from blobFormatCache.
      */
     @Override
     public long fileLength(String name) throws IOException {
-        // name is always a plain blob key (e.g., "_0.pqt__UUID") from RSSD — never contains ":::format"
         String format = resolveFormat(name);
         BlobContainer container = getBlobContainerForFormat(format);
 
@@ -575,7 +563,8 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
      * Opens a stream for reading the existing file and returns {@link RemoteIndexInput} enclosing
      * the stream.
      *
-     * <p>Uses {@link #resolveFormat(String)} for format resolution: inline ":::format" → cache → default "lucene".
+     * <p>Receives a plain blob key (e.g., "_0.pqt__UUID") from RSSD and uses
+     * {@link #resolveFormat(String)} to look up the format from blobFormatCache.
      *
      * @param name the name of an existing file.
      * @param fileLength file length
@@ -610,9 +599,8 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
     /**
      * Format-aware openBlockInput override.
      *
-     * <p>Uses {@link #resolveFormat(String)} to determine which BlobContainer to read the block from.
-     * This is critical for non-lucene files accessed via plain blob keys (e.g., from CompositeDirectory
-     * warm/searchable snapshot reads through RSSD's openBlockInput).
+     * <p>Receives a plain blob key (e.g., "_0.pqt__UUID") from RSSD and uses
+     * {@link #resolveFormat(String)} to look up the format from blobFormatCache.
      *
      * @param name the name of an existing file (blob key).
      * @param position block start position
