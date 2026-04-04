@@ -17,6 +17,10 @@ import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
+import org.opensearch.index.store.DataFormatAwareStoreDirectory;
+import org.opensearch.index.store.FileMetadata;
+import org.opensearch.index.store.Store;
+import org.opensearch.index.store.StoreFileMetadata;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -214,5 +218,35 @@ public class DataformatAwareCatalogSnapshot extends CatalogSnapshot {
     @Override
     public Object getReader(DataFormat dataFormat) {
         throw new UnsupportedOperationException("Not implemented");
+    }
+
+    @Override
+    public Collection<String> getUploadFileNames() throws IOException {
+        List<String> fileNames = new ArrayList<>();
+        for (Segment segment : segments) {
+            for (Map.Entry<String, WriterFileSet> entry : segment.dfGroupedSearchableFiles().entrySet()) {
+                String formatName = entry.getKey();
+                for (String file : entry.getValue().files()) {
+                    fileNames.add(new FileMetadata(formatName, file).serialize());
+                }
+            }
+        }
+        return fileNames;
+    }
+
+    @Override
+    public Map<String, StoreFileMetadata> getStoreFileMetadataMap(Store store) throws IOException {
+        DataFormatAwareStoreDirectory dfasd = DataFormatAwareStoreDirectory.unwrap(store.directory());
+        if (dfasd == null) {
+            throw new IllegalStateException("DataFormatAwareStoreDirectory required for format-aware metadata");
+        }
+        Map<String, StoreFileMetadata> metadataMap = new java.util.HashMap<>();
+        for (String uploadName : getUploadFileNames()) {
+            FileMetadata fm = dfasd.toFileMetadata(uploadName);
+            long length = dfasd.fileLength(fm);
+            String checksum = dfasd.calculateUploadChecksum(fm);
+            metadataMap.put(uploadName, new StoreFileMetadata(fm.file(), length, checksum, org.apache.lucene.util.Version.LATEST));
+        }
+        return metadataMap;
     }
 }

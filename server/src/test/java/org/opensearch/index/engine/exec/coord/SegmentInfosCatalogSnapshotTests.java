@@ -51,7 +51,7 @@ public class SegmentInfosCatalogSnapshotTests extends OpenSearchTestCase {
 
             SegmentInfosCatalogSnapshot cloned = snapshot.clone();
             assertNotSame(snapshot, cloned);
-            assertSame(segmentInfos, cloned.getSegmentInfos());
+            assertNotSame(segmentInfos, cloned.getSegmentInfos());
             assertEquals(snapshot.getGeneration(), cloned.getGeneration());
             assertEquals(snapshot.getVersion(), cloned.getVersion());
         }

@@ -16,6 +16,8 @@ import org.opensearch.core.common.io.stream.Writeable;
 import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
+import org.opensearch.index.store.Store;
+import org.opensearch.index.store.StoreFileMetadata;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -228,4 +230,33 @@ public abstract class CatalogSnapshot implements Writeable, Cloneable {
      * @throws IOException in case of I/O error
      */
     public abstract byte[] serialize() throws IOException;
+
+    /**
+     * Returns the canonical file names for upload to remote store.
+     * Each subclass formats names appropriately for its data format:
+     * <ul>
+     *   <li>{@link SegmentInfosCatalogSnapshot}: plain Lucene file names (e.g., {@code "_0.cfe"})</li>
+     *   <li>{@link DataformatAwareCatalogSnapshot}: serialized format-aware names
+     *       (e.g., {@code "data.parquet:::parquet"}) for non-lucene files</li>
+     * </ul>
+     *
+     * @return collection of file name strings ready for upload
+     * @throws IOException in case of I/O error
+     */
+    public abstract Collection<String> getUploadFileNames() throws IOException;
+
+    /**
+     * Builds a map of file name to {@link StoreFileMetadata} for replication checkpoint computation.
+     * Each subclass resolves checksums and file lengths using the appropriate mechanism:
+     * <ul>
+     *   <li>{@link SegmentInfosCatalogSnapshot}: delegates to {@link Store#getSegmentMetadataMap}</li>
+     *   <li>{@link DataformatAwareCatalogSnapshot}: uses format-aware checksum handlers via
+     *       the DataFormatAwareStoreDirectory</li>
+     * </ul>
+     *
+     * @param store the store providing access to the directory for checksum/length computation
+     * @return map of file name to store file metadata
+     * @throws IOException in case of I/O error
+     */
+    public abstract Map<String, StoreFileMetadata> getStoreFileMetadataMap(Store store) throws IOException;
 }

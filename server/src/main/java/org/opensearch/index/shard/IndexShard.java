@@ -146,7 +146,10 @@ import org.opensearch.index.engine.SafeCommitInfo;
 import org.opensearch.index.engine.Segment;
 import org.opensearch.index.engine.SegmentsStats;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
+import org.opensearch.index.engine.exec.IndexReaderProvider;
 import org.opensearch.index.engine.exec.Indexer;
+import org.opensearch.index.engine.exec.coord.CatalogSnapshot;
+import org.opensearch.index.engine.exec.coord.SegmentInfosCatalogSnapshot;
 import org.opensearch.index.fielddata.FieldDataStats;
 import org.opensearch.index.fielddata.ShardFieldData;
 import org.opensearch.index.flush.FlushStats;
@@ -5888,6 +5891,60 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             return indexer.getEngine().getSegmentInfosSnapshot();
         }
         throw new IllegalStateException("Cannot request SegmentInfos directly on IndexShard");
+    }
+
+    /**
+     * Returns a reference-counted {@link CatalogSnapshot} for the current shard state.
+     * If a {@link DataFormatAwareEngine} is present,
+     * acquires from there. Otherwise wraps the SegmentInfos into a {@link SegmentInfosCatalogSnapshot}.
+     *
+     * @return a {@link GatedCloseable} wrapping the catalog snapshot
+     */
+    public GatedCloseable<CatalogSnapshot> getCatalogSnapshot() {
+        DataFormatAwareEngine compositeEngine = getCompositeEngine();
+        if (compositeEngine != null) {
+            try {
+                GatedCloseable<IndexReaderProvider.Reader> readerRef = compositeEngine.acquireReader();
+                CatalogSnapshot snapshot = readerRef.get().catalogSnapshot();
+                return new GatedCloseable<>(snapshot, readerRef::close);
+            } catch (IllegalStateException e) {
+                // CatalogSnapshotManager not set yet — fall through to SegmentInfos path
+            } catch (IOException e) {
+                throw new OpenSearchException("Failed to acquire catalog snapshot from DataFormatAwareEngine", e);
+            }
+        }
+        GatedCloseable<SegmentInfos> segmentInfosRef = getSegmentInfosSnapshot();
+        SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfosRef.get());
+        return new GatedCloseable<>(snapshot, segmentInfosRef::close);
+    }
+
+    /**
+     * Computes a {@link ReplicationCheckpoint} from a {@link CatalogSnapshot}.
+     * Delegates to the snapshot's polymorphic {@link CatalogSnapshot#getStoreFileMetadataMap} for
+     * format-aware metadata resolution.
+     */
+    ReplicationCheckpoint computeReplicationCheckpoint(CatalogSnapshot catalogSnapshot) throws IOException {
+        if (catalogSnapshot == null) {
+            return ReplicationCheckpoint.empty(shardId);
+        }
+        final ReplicationCheckpoint latestReplicationCheckpoint = getLatestReplicationCheckpoint();
+        if (latestReplicationCheckpoint.getSegmentInfosVersion() == catalogSnapshot.getVersion()
+            && latestReplicationCheckpoint.getSegmentsGen() == catalogSnapshot.getGeneration()
+            && latestReplicationCheckpoint.getPrimaryTerm() == getOperationPrimaryTerm()) {
+            return latestReplicationCheckpoint;
+        }
+        final Map<String, StoreFileMetadata> metadataMap = catalogSnapshot.getStoreFileMetadataMap(store);
+        final ReplicationCheckpoint checkpoint = new ReplicationCheckpoint(
+            this.shardId,
+            getOperationPrimaryTerm(),
+            catalogSnapshot.getGeneration(),
+            catalogSnapshot.getVersion(),
+            metadataMap.values().stream().mapToLong(StoreFileMetadata::length).sum(),
+            getIndexer().config().getCodec().getName(),
+            metadataMap
+        );
+        logger.trace("Recomputed ReplicationCheckpoint from CatalogSnapshot for shard {}", checkpoint);
+        return checkpoint;
     }
 
     private TimeValue getRemoteTranslogUploadBufferInterval(Supplier<TimeValue> clusterRemoteTranslogBufferIntervalSupplier) {
