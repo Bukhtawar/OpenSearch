@@ -365,7 +365,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         public long getLength() {
             return this.length;
         }
-        
+
         public static UploadedSegmentMetadata fromString(String uploadedFilename) {
             String[] values = uploadedFilename.split(SEPARATOR);
             UploadedSegmentMetadata metadata = new UploadedSegmentMetadata(values[0], values[1], values[2], Long.parseLong(values[3]));
