@@ -138,6 +138,39 @@ public class RemoteSegmentStoreDirectoryTests extends BaseRemoteSegmentStoreDire
         );
     }
 
+    public void testUploadedSegmentMetadataFromStringWithFormatSlash() {
+        // Format-aware originalFilename uses "/" delimiter: "parquet/_0.pqt"
+        String input = "parquet/_0.pqt::_0.pqt__uuidxyz::4567::372000::" + Version.LATEST.major;
+        RemoteSegmentStoreDirectory.UploadedSegmentMetadata metadata = RemoteSegmentStoreDirectory.UploadedSegmentMetadata.fromString(
+            input
+        );
+        assertEquals("parquet/_0.pqt", metadata.getOriginalFilename());
+        assertEquals("_0.pqt__uuidxyz", metadata.getUploadedFilename());
+        assertEquals("4567", metadata.getChecksum());
+        assertEquals(372000L, metadata.getLength());
+        assertEquals(input, metadata.toString());
+    }
+
+    public void testUploadedSegmentMetadataRoundTripWithFormatSlash() {
+        // Create metadata with format-aware originalFilename, serialize, deserialize
+        RemoteSegmentStoreDirectory.UploadedSegmentMetadata metadata = new RemoteSegmentStoreDirectory.UploadedSegmentMetadata(
+            "parquet/_0.pqt",
+            "_0.pqt__uuid123",
+            "9999",
+            5000
+        );
+        metadata.setWrittenByMajor(Version.LATEST.major);
+        String serialized = metadata.toString();
+        RemoteSegmentStoreDirectory.UploadedSegmentMetadata deserialized = RemoteSegmentStoreDirectory.UploadedSegmentMetadata.fromString(
+            serialized
+        );
+        assertEquals(metadata.getOriginalFilename(), deserialized.getOriginalFilename());
+        assertEquals(metadata.getUploadedFilename(), deserialized.getUploadedFilename());
+        assertEquals(metadata.getChecksum(), deserialized.getChecksum());
+        assertEquals(metadata.getLength(), deserialized.getLength());
+        assertEquals(serialized, deserialized.toString());
+    }
+
     public void testGetPrimaryTermGenerationUuid() {
         String[] filenameTokens = "abc__9223372036854775795__9223372036854775784__uuid_xyz".split(SEPARATOR);
         assertEquals(12, RemoteSegmentStoreDirectory.MetadataFilenameUtils.getPrimaryTerm(filenameTokens));

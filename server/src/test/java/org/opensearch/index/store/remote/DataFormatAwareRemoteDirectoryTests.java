@@ -1195,4 +1195,69 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         assertTrue(latch.await(10, TimeUnit.SECONDS));
         storeDirectory.close();
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Blob Format Cache Tests
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testReplaceBlobFormatCache() throws IOException {
+        // Initially no cache entries — deleteFile for a UUID key defaults to lucene (base container)
+        directory.deleteFile("_0.pqt__UUID1");
+        verify(baseBlobContainer).deleteBlobsIgnoringIfNotExists(eq(Collections.singletonList("_0.pqt__UUID1")));
+
+        // Replace cache with parquet mapping
+        directory.replaceBlobFormatCache(Map.of("_0.pqt__UUID1", "parquet"));
+        directory.deleteFile("_0.pqt__UUID1");
+        verify(parquetBlobContainer).deleteBlobsIgnoringIfNotExists(eq(Collections.singletonList("_0.pqt__UUID1")));
+    }
+
+    public void testUnregisterBlobFormat() throws IOException {
+        directory.registerBlobFormat("_0.pqt__UUID1", "parquet");
+        directory.deleteFile("_0.pqt__UUID1");
+        verify(parquetBlobContainer).deleteBlobsIgnoringIfNotExists(eq(Collections.singletonList("_0.pqt__UUID1")));
+
+        // Unregister — should fall back to lucene
+        directory.unregisterBlobFormat("_0.pqt__UUID1");
+        directory.deleteFile("_0.pqt__UUID1");
+        verify(baseBlobContainer).deleteBlobsIgnoringIfNotExists(eq(Collections.singletonList("_0.pqt__UUID1")));
+    }
+
+    public void testResolveFormat_CacheMiss_DefaultsToLucene() throws IOException {
+        // UUID-suffixed key not in cache — should warn and default to lucene
+        directory.deleteFile("_0.pqt__UUID_MISSING");
+        verify(baseBlobContainer).deleteBlobsIgnoringIfNotExists(eq(Collections.singletonList("_0.pqt__UUID_MISSING")));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // openBlockInput Tests
+    // ═══════════════════════════════════════════════════════════════
+
+    public void testOpenBlockInput_LuceneFile() throws IOException {
+        byte[] data = new byte[] { 1, 2, 3, 4, 5 };
+        InputStream stream = new ByteArrayInputStream(data);
+        when(baseBlobContainer.readBlob("_0.cfe__UUID1", 0, 5)).thenReturn(stream);
+
+        IndexInput input = directory.openBlockInput("_0.cfe__UUID1", 0, 5, 5, IOContext.DEFAULT);
+        assertNotNull(input);
+        input.close();
+    }
+
+    public void testOpenBlockInput_ParquetFile_WithCache() throws IOException {
+        directory.registerBlobFormat("_0.pqt__UUID1", "parquet");
+        byte[] data = new byte[] { 10, 20, 30 };
+        InputStream stream = new ByteArrayInputStream(data);
+        when(parquetBlobContainer.readBlob("_0.pqt__UUID1", 2, 3)).thenReturn(stream);
+
+        IndexInput input = directory.openBlockInput("_0.pqt__UUID1", 2, 3, 10, IOContext.DEFAULT);
+        assertNotNull(input);
+        input.close();
+    }
+
+    public void testOpenBlockInput_InvalidPosition_Throws() {
+        expectThrows(IllegalArgumentException.class, () -> directory.openBlockInput("_0.cfe__UUID1", -1, 5, 10, IOContext.DEFAULT));
+    }
+
+    public void testOpenBlockInput_LengthExceedsFileLength_Throws() {
+        expectThrows(IllegalArgumentException.class, () -> directory.openBlockInput("_0.cfe__UUID1", 5, 10, 10, IOContext.DEFAULT));
+    }
 }

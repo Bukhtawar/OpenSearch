@@ -13,6 +13,7 @@ import org.apache.lucene.util.Version;
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
 import org.opensearch.test.OpenSearchTestCase;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -70,6 +71,48 @@ public class SegmentInfosCatalogSnapshotTests extends OpenSearchTestCase {
         assertEquals(original.getGeneration(), copy.getGeneration());
         assertEquals(original.getVersion(), copy.getVersion());
         assertEquals(original.getUserData(), copy.getUserData());
+    }
+
+    public void testGetUploadFileNames() throws Exception {
+        SegmentInfos segmentInfos = randomSegmentInfos();
+        SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
+        Collection<String> uploadNames = snapshot.getUploadFileNames();
+        assertEquals(segmentInfos.files(true), new java.util.HashSet<>(uploadNames));
+    }
+
+    public void testSerializeProducesValidBytes() throws Exception {
+        SegmentInfos segmentInfos = randomSegmentInfos();
+        SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
+        byte[] bytes = snapshot.serialize();
+        assertNotNull(bytes);
+        assertTrue(bytes.length > 0);
+    }
+
+    public void testGetFormatVersionForUnmappedFileDefaultsToLatest() {
+        SegmentInfos segmentInfos = randomSegmentInfos();
+        SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
+        // File not in segmentFileVersionMap and not the segments file → falls through to LATEST.major
+        int version = snapshot.getFormatVersionForFile("nonexistent_file.xyz");
+        assertEquals(Version.LATEST.major, version);
+    }
+
+    public void testSetUserDataDelegatesToSegmentInfos() {
+        SegmentInfos segmentInfos = randomSegmentInfos();
+        SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
+        Map<String, String> newData = Map.of("key1", "val1", "key2", "val2");
+        snapshot.setUserData(newData);
+        assertEquals(newData, segmentInfos.getUserData());
+        assertEquals(newData, snapshot.getUserData());
+    }
+
+    public void testCloneNoAcquireReturnsIndependentCopy() {
+        SegmentInfos segmentInfos = randomSegmentInfos();
+        SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
+        CatalogSnapshot cloned = snapshot.cloneNoAcquire();
+        assertNotSame(snapshot, cloned);
+        assertNotSame(segmentInfos, ((SegmentInfosCatalogSnapshot) cloned).getSegmentInfos());
+        assertEquals(snapshot.getGeneration(), cloned.getGeneration());
+        assertEquals(snapshot.getVersion(), cloned.getVersion());
     }
 
     // --- helpers ---
