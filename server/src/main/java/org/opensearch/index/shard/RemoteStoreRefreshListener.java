@@ -511,15 +511,17 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
 
     private String getChecksumOfLocalFile(String file) throws IOException {
         if (!localSegmentChecksumMap.containsKey(file)) {
-            DataFormatAwareStoreDirectory dfasd = DataFormatAwareStoreDirectory.unwrap(storeDirectory);
-            if (dfasd != null) {
-                String checksum = dfasd.calculateUploadChecksum(file);
-                localSegmentChecksumMap.put(file, checksum);
-            } else {
-                try (IndexInput indexInput = storeDirectory.openInput(file, IOContext.READONCE)) {
-                    String checksum = Long.toString(CodecUtil.retrieveChecksum(indexInput));
+            if (indexShard.indexSettings().isPluggableDataFormatEnabled()) {
+                DataFormatAwareStoreDirectory dfasd = DataFormatAwareStoreDirectory.unwrap(storeDirectory);
+                if (dfasd != null) {
+                    String checksum = dfasd.calculateUploadChecksum(file);
                     localSegmentChecksumMap.put(file, checksum);
+                    return checksum;
                 }
+            }
+            try (IndexInput indexInput = storeDirectory.openInput(file, IOContext.READONCE)) {
+                String checksum = Long.toString(CodecUtil.retrieveChecksum(indexInput));
+                localSegmentChecksumMap.put(file, checksum);
             }
         }
         return localSegmentChecksumMap.get(file);

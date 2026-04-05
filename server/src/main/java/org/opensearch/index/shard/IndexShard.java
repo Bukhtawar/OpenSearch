@@ -5901,14 +5901,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @return a {@link GatedCloseable} wrapping the catalog snapshot
      */
     public GatedCloseable<CatalogSnapshot> getCatalogSnapshot() {
-        DataFormatAwareEngine compositeEngine = getCompositeEngine();
-        if (compositeEngine != null && compositeEngine.hasCatalogSnapshotManager()) {
-            try {
-                GatedCloseable<IndexReaderProvider.Reader> readerRef = compositeEngine.acquireReader();
-                CatalogSnapshot snapshot = readerRef.get().catalogSnapshot();
-                return new GatedCloseable<>(snapshot, readerRef::close);
-            } catch (IOException e) {
-                throw new OpenSearchException("Failed to acquire catalog snapshot from DataFormatAwareEngine", e);
+        if (indexSettings().isPluggableDataFormatEnabled()) {
+            DataFormatAwareEngine compositeEngine = getCompositeEngine();
+            if (compositeEngine != null && compositeEngine.hasCatalogSnapshotManager()) {
+                try {
+                    GatedCloseable<IndexReaderProvider.Reader> readerRef = compositeEngine.acquireReader();
+                    CatalogSnapshot snapshot = readerRef.get().catalogSnapshot();
+                    return new GatedCloseable<>(snapshot, readerRef::close);
+                } catch (IOException e) {
+                    throw new OpenSearchException("Failed to acquire catalog snapshot from DataFormatAwareEngine", e);
+                }
             }
         }
         GatedCloseable<SegmentInfos> segmentInfosRef = getSegmentInfosSnapshot();
