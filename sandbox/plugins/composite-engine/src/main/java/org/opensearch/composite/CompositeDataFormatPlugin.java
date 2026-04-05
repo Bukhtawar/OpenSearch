@@ -48,9 +48,9 @@ import java.util.Map;
  * @opensearch.experimental
  */
 @ExperimentalApi
-public class CompositeEnginePlugin extends Plugin implements ExtensiblePlugin, DataFormatPlugin {
+public class CompositeDataFormatPlugin extends Plugin implements ExtensiblePlugin, DataFormatPlugin {
 
-    private static final Logger logger = LogManager.getLogger(CompositeEnginePlugin.class);
+    private static final Logger logger = LogManager.getLogger(CompositeDataFormatPlugin.class);
 
     /**
      * Index setting that designates the primary data format for an index.
@@ -84,7 +84,7 @@ public class CompositeEnginePlugin extends Plugin implements ExtensiblePlugin, D
     private volatile Map<String, DataFormatPlugin> dataFormatPlugins = Map.of();
 
     /** Creates a new composite engine plugin. */
-    public CompositeEnginePlugin() {}
+    public CompositeDataFormatPlugin() {}
 
     @Override
     public void loadExtensions(ExtensionLoader loader) {

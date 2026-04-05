@@ -93,8 +93,8 @@ public class CompositeIndexingExecutionEngine implements IndexingExecutionEngine
 
         Settings settings = indexSettings.getSettings();
 
-        String primaryFormatName = CompositeEnginePlugin.PRIMARY_DATA_FORMAT.get(settings);
-        List<String> secondaryFormatNames = CompositeEnginePlugin.SECONDARY_DATA_FORMATS.get(settings);
+        String primaryFormatName = CompositeDataFormatPlugin.PRIMARY_DATA_FORMAT.get(settings);
+        List<String> secondaryFormatNames = CompositeDataFormatPlugin.SECONDARY_DATA_FORMATS.get(settings);
 
         validateFormatsRegistered(dataFormatPlugins, primaryFormatName, secondaryFormatNames);
 

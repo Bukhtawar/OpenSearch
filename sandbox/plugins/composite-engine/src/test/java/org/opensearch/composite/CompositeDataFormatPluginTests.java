@@ -21,35 +21,35 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Tests for {@link CompositeEnginePlugin}.
+ * Tests for {@link CompositeDataFormatPlugin}.
  */
-public class CompositeEnginePluginTests extends OpenSearchTestCase {
+public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
 
     public void testGetSettingsReturnsBothSettings() {
-        CompositeEnginePlugin plugin = new CompositeEnginePlugin();
+        CompositeDataFormatPlugin plugin = new CompositeDataFormatPlugin();
         List<Setting<?>> settings = plugin.getSettings();
         assertEquals(2, settings.size());
-        assertTrue(settings.contains(CompositeEnginePlugin.PRIMARY_DATA_FORMAT));
-        assertTrue(settings.contains(CompositeEnginePlugin.SECONDARY_DATA_FORMATS));
+        assertTrue(settings.contains(CompositeDataFormatPlugin.PRIMARY_DATA_FORMAT));
+        assertTrue(settings.contains(CompositeDataFormatPlugin.SECONDARY_DATA_FORMATS));
     }
 
     public void testPrimaryDataFormatDefaultsToLucene() {
         Settings settings = Settings.builder().build();
-        assertEquals("lucene", CompositeEnginePlugin.PRIMARY_DATA_FORMAT.get(settings));
+        assertEquals("lucene", CompositeDataFormatPlugin.PRIMARY_DATA_FORMAT.get(settings));
     }
 
     public void testSecondaryDataFormatsDefaultsToEmpty() {
         Settings settings = Settings.builder().build();
-        assertTrue(CompositeEnginePlugin.SECONDARY_DATA_FORMATS.get(settings).isEmpty());
+        assertTrue(CompositeDataFormatPlugin.SECONDARY_DATA_FORMATS.get(settings).isEmpty());
     }
 
     public void testGetDataFormatReturnsNull() {
-        CompositeEnginePlugin plugin = new CompositeEnginePlugin();
+        CompositeDataFormatPlugin plugin = new CompositeDataFormatPlugin();
         assertNull(plugin.getDataFormat());
     }
 
     public void testLoadExtensionsRegistersPlugins() {
-        CompositeEnginePlugin plugin = new CompositeEnginePlugin();
+        CompositeDataFormatPlugin plugin = new CompositeDataFormatPlugin();
         DataFormatPlugin lucenePlugin = CompositeTestHelper.stubPlugin("lucene", 1);
         DataFormatPlugin parquetPlugin = CompositeTestHelper.stubPlugin("parquet", 2);
 
@@ -71,7 +71,7 @@ public class CompositeEnginePluginTests extends OpenSearchTestCase {
     }
 
     public void testLoadExtensionsHigherPriorityWins() {
-        CompositeEnginePlugin plugin = new CompositeEnginePlugin();
+        CompositeDataFormatPlugin plugin = new CompositeDataFormatPlugin();
         DataFormatPlugin lowPriority = CompositeTestHelper.stubPlugin("lucene", 1);
         DataFormatPlugin highPriority = CompositeTestHelper.stubPlugin("lucene", 100);
 
@@ -93,7 +93,7 @@ public class CompositeEnginePluginTests extends OpenSearchTestCase {
     }
 
     public void testLoadExtensionsSkipsNullDataFormat() {
-        CompositeEnginePlugin plugin = new CompositeEnginePlugin();
+        CompositeDataFormatPlugin plugin = new CompositeDataFormatPlugin();
         DataFormatPlugin nullPlugin = new DataFormatPlugin() {
             @Override
             public DataFormat getDataFormat() {
@@ -125,7 +125,7 @@ public class CompositeEnginePluginTests extends OpenSearchTestCase {
     }
 
     public void testLoadExtensionsWithEmptyList() {
-        CompositeEnginePlugin plugin = new CompositeEnginePlugin();
+        CompositeDataFormatPlugin plugin = new CompositeDataFormatPlugin();
         plugin.loadExtensions(new ExtensiblePlugin.ExtensionLoader() {
             @Override
             public <T> List<T> loadExtensions(Class<T> extensionPointType) {
@@ -137,7 +137,7 @@ public class CompositeEnginePluginTests extends OpenSearchTestCase {
     }
 
     public void testGetFormatDescriptorsDelegatestoPlugins() {
-        CompositeEnginePlugin plugin = new CompositeEnginePlugin();
+        CompositeDataFormatPlugin plugin = new CompositeDataFormatPlugin();
 
         // Create a plugin that returns a descriptor
         DataFormatPlugin parquetPlugin = new DataFormatPlugin() {
@@ -200,7 +200,7 @@ public class CompositeEnginePluginTests extends OpenSearchTestCase {
     }
 
     public void testGetFormatDescriptorsEmptyWhenNoPluginsMatch() {
-        CompositeEnginePlugin plugin = new CompositeEnginePlugin();
+        CompositeDataFormatPlugin plugin = new CompositeDataFormatPlugin();
         plugin.loadExtensions(new ExtensiblePlugin.ExtensionLoader() {
             @Override
             public <T> List<T> loadExtensions(Class<T> extensionPointType) {
@@ -223,7 +223,7 @@ public class CompositeEnginePluginTests extends OpenSearchTestCase {
     }
 
     public void testGetDataFormatPluginsReturnsUnmodifiableMap() {
-        CompositeEnginePlugin plugin = new CompositeEnginePlugin();
+        CompositeDataFormatPlugin plugin = new CompositeDataFormatPlugin();
         plugin.loadExtensions(new ExtensiblePlugin.ExtensionLoader() {
             @Override
             @SuppressWarnings("unchecked")
