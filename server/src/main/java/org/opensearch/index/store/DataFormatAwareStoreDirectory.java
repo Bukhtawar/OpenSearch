@@ -24,7 +24,6 @@ import org.opensearch.index.store.checksum.ChecksumHandler;
 import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 import org.opensearch.index.store.checksum.LuceneChecksumHandler;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.HashMap;
@@ -180,7 +179,10 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
             // Normalize OS-dependent separators (e.g., "\" on Windows) to "/" before parsing,
             // since SubdirectoryAwareDirectory.listAll() returns Path.toString() which uses
             // the OS separator, but FileMetadata expects "/" as the format/file delimiter.
-            String normalized = allFiles[i].replace(File.separatorChar, '/');
+            String normalized = allFiles[i].replace(
+                org.opensearch.common.io.PathUtils.getDefaultFileSystem().getSeparator().charAt(0),
+                '/'
+            );
             FileMetadata fm = toFileMetadata(normalized);
             allFiles[i] = isDefaultFormat(fm.dataFormat()) ? fm.file() : fm.serialize();
         }
