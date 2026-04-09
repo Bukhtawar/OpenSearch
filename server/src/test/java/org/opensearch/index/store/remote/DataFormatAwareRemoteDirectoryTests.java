@@ -317,9 +317,9 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.parquet", 5678));
         when(parquetBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.parquet"), eq(1), any())).thenReturn(blobList);
 
-        // Use FileMetadata-based fileLength which routes by format directly
-        FileMetadata fm = new FileMetadata("parquet", "_0.parquet");
-        long length = directory.fileLength(fm.serialize());
+        // Register format so resolveFormat routes to parquet container
+        directory.registerBlobFormat("_0.parquet", "parquet");
+        long length = directory.fileLength("_0.parquet");
         assertEquals(5678, length);
     }
 
@@ -459,7 +459,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.cfs", 1234));
         when(baseBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.cfs"), eq(1), any())).thenReturn(blobList);
 
-        long length = directory.fileLength(fm.serialize());
+        long length = directory.fileLength(fm.file());
         assertEquals(1234, length);
     }
 
@@ -468,7 +468,8 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.parquet", 5678));
         when(parquetBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.parquet"), eq(1), any())).thenReturn(blobList);
 
-        long length = directory.fileLength(fm.serialize());
+        directory.registerBlobFormat("_0.parquet", "parquet");
+        long length = directory.fileLength(fm.file());
         assertEquals(5678, length);
     }
 
@@ -476,7 +477,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         FileMetadata fm = new FileMetadata("lucene", "nonexistent");
         when(baseBlobContainer.listBlobsByPrefixInSortedOrder(eq("nonexistent"), eq(1), any())).thenReturn(Collections.emptyList());
 
-        expectThrows(NoSuchFileException.class, () -> directory.fileLength(fm.serialize()));
+        expectThrows(NoSuchFileException.class, () -> directory.fileLength(fm.file()));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -488,7 +489,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         byte[] content = new byte[100];
         when(baseBlobContainer.readBlob("_0.cfs")).thenReturn(new ByteArrayInputStream(content));
 
-        IndexInput input = directory.openInput(fm.serialize(), 100, IOContext.DEFAULT);
+        IndexInput input = directory.openInput(fm.file(), 100, IOContext.DEFAULT);
         assertNotNull(input);
         assertEquals(100, input.length());
         input.close();
@@ -501,7 +502,8 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         byte[] content = new byte[200];
         when(parquetBlobContainer.readBlob("_0.parquet")).thenReturn(new ByteArrayInputStream(content));
 
-        IndexInput input = directory.openInput(fm.serialize(), 200, IOContext.DEFAULT);
+        directory.registerBlobFormat("_0.parquet", "parquet");
+        IndexInput input = directory.openInput(fm.file(), 200, IOContext.DEFAULT);
         assertNotNull(input);
         assertEquals(200, input.length());
         input.close();
@@ -517,7 +519,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         when(mockStream.read(any(), anyInt(), anyInt())).thenThrow(new IOException("read error"));
 
         // openInput wraps the stream, reading from it will fail
-        IndexInput input = directory.openInput(fm.serialize(), 100, IOContext.DEFAULT);
+        IndexInput input = directory.openInput(fm.file(), 100, IOContext.DEFAULT);
         assertNotNull(input);
         input.close();
     }
@@ -777,7 +779,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
         when(baseBlobContainer.readBlob("_0.cfs")).thenThrow(new IOException("blob read failed"));
 
-        expectThrows(IOException.class, () -> directory.openInput(fm.serialize(), 100, IOContext.DEFAULT));
+        expectThrows(IOException.class, () -> directory.openInput(fm.file(), 100, IOContext.DEFAULT));
     }
 
     public void testOpenInput_StringBased_StreamClosedWhenInputStreamReadFails() throws IOException {
@@ -808,7 +810,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.cfs_DIFFERENT", 1234));
         when(baseBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.cfs"), eq(1), any())).thenReturn(blobList);
 
-        expectThrows(NoSuchFileException.class, () -> directory.fileLength(fm.serialize()));
+        expectThrows(NoSuchFileException.class, () -> directory.fileLength(fm.file()));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1120,12 +1122,12 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
 
         IndexInput mockInput = mock(IndexInput.class);
         when(mockInput.length()).thenReturn(50L);
-        when(mockComposite.openInput(eq(fm.serialize()), eq(IOContext.READONCE))).thenReturn(mockInput);
+        when(mockComposite.openInput(eq(fm.serialize()), eq(IOContext.DEFAULT))).thenReturn(mockInput);
 
         // Should write to base container since format is "lucene"
         directory.copyFrom(mockComposite, fm.serialize(), "_0.cfs__UUID", IOContext.DEFAULT);
 
-        verify(mockComposite).openInput(eq(fm.serialize()), eq(IOContext.READONCE));
+        verify(mockComposite).openInput(eq(fm.serialize()), eq(IOContext.DEFAULT));
     }
 
     // ═══════════════════════════════════════════════════════════════

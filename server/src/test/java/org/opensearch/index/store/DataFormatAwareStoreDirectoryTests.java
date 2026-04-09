@@ -282,32 +282,6 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         assertTrue(fileList.contains("parquet/data.parquet"));
     }
 
-    public void testListFileMetadata() throws IOException {
-        try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput("_0.si", IOContext.DEFAULT)) {
-            out.writeString("data");
-        }
-        try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput("parquet/data.parquet", IOContext.DEFAULT)) {
-            out.writeString("parquet data");
-        }
-
-        FileMetadata[] metadataArray = dataFormatAwareStoreDirectory.listFileMetadata();
-        assertNotNull(metadataArray);
-        assertTrue(metadataArray.length >= 2);
-
-        boolean foundLucene = false;
-        boolean foundParquet = false;
-        for (FileMetadata fm : metadataArray) {
-            if ("lucene".equals(fm.dataFormat()) && "_0.si".equals(fm.file())) {
-                foundLucene = true;
-            }
-            if ("parquet".equals(fm.dataFormat()) && "data.parquet".equals(fm.file())) {
-                foundParquet = true;
-            }
-        }
-        assertTrue("Should find lucene file in metadata", foundLucene);
-        assertTrue("Should find parquet file in metadata", foundParquet);
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // Checksum - Lucene file (CodecUtil path)
     // ═══════════════════════════════════════════════════════════════
@@ -325,9 +299,9 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         // Verify it's a valid non-zero checksum (CodecUtil stores checksum in footer)
         assertTrue("Checksum should be a valid value", checksum != 0);
 
-        // Verify we get the same checksum via FileMetadata overload
+        // Verify we get the same checksum via string overload with serialized name
         FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata(fileName);
-        assertEquals(checksum, dataFormatAwareStoreDirectory.calculateChecksum(fm));
+        assertEquals(checksum, dataFormatAwareStoreDirectory.calculateChecksum(fm.serialize()));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -393,20 +367,12 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
 
         FileMetadata src = new FileMetadata("parquet", "rename_src.parquet");
         FileMetadata dest = new FileMetadata("parquet", "rename_dest.parquet");
-        dataFormatAwareStoreDirectory.rename(src, dest);
+        dataFormatAwareStoreDirectory.rename(src.serialize(), dest.serialize());
 
         String srcSerialized = new FileMetadata("parquet", "rename_src.parquet").serialize();
         String destSerialized = new FileMetadata("parquet", "rename_dest.parquet").serialize();
         assertFalse(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(srcSerialized));
         assertTrue(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(destSerialized));
-    }
-
-    public void testRename_crossFormat_throws() {
-        FileMetadata src = new FileMetadata("parquet", "data.parquet");
-        FileMetadata dest = new FileMetadata("arrow", "data.arrow");
-
-        IllegalArgumentException ex = expectThrows(IllegalArgumentException.class, () -> dataFormatAwareStoreDirectory.rename(src, dest));
-        assertTrue(ex.getMessage().contains("Cannot rename across formats"));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -478,7 +444,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
             out.writeBytes(testData, testData.length);
         }
 
-        try (IndexInput in = dataFormatAwareStoreDirectory.openInput(fm, IOContext.DEFAULT)) {
+        try (IndexInput in = dataFormatAwareStoreDirectory.openInput(fm.serialize(), IOContext.DEFAULT)) {
             byte[] readData = new byte[testData.length];
             in.readBytes(readData, 0, readData.length);
             assertArrayEquals(testData, readData);
@@ -493,7 +459,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
             out.writeBytes(testData, testData.length);
         }
 
-        try (IndexInput in = dataFormatAwareStoreDirectory.openInput(fm, IOContext.DEFAULT)) {
+        try (IndexInput in = dataFormatAwareStoreDirectory.openInput(fm.serialize(), IOContext.DEFAULT)) {
             byte[] readData = new byte[testData.length];
             in.readBytes(readData, 0, readData.length);
             assertArrayEquals(testData, readData);
@@ -526,9 +492,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         }
 
         long checksumFromString = dataFormatAwareStoreDirectory.calculateChecksum(fileIdentifier);
-        FileMetadata fm = new FileMetadata("parquet", "consistency.parquet");
-        long checksumFromFm = dataFormatAwareStoreDirectory.calculateChecksum(fm);
-        assertEquals(checksumFromString, checksumFromFm);
+        assertEquals(checksumFromString, dataFormatAwareStoreDirectory.calculateChecksum("parquet/consistency.parquet"));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -561,9 +525,9 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
             out.writeBytes(data, data.length);
         }
 
-        dataFormatAwareStoreDirectory.rename(src, dest);
+        dataFormatAwareStoreDirectory.rename(src.serialize(), dest.serialize());
 
-        try (IndexInput in = dataFormatAwareStoreDirectory.openInput(dest, IOContext.DEFAULT)) {
+        try (IndexInput in = dataFormatAwareStoreDirectory.openInput(dest.serialize(), IOContext.DEFAULT)) {
             byte[] readData = new byte[data.length];
             in.readBytes(readData, 0, readData.length);
             assertArrayEquals(data, readData);
@@ -590,29 +554,6 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         assertTrue("Should contain lucene file", fileList.contains("_0.si"));
         assertTrue("Should contain parquet file", fileList.contains("parquet/data.parquet"));
         assertTrue("Should contain arrow file", fileList.contains("arrow/data.arrow"));
-    }
-
-    public void testListFileMetadata_multipleFormats() throws IOException {
-        try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput("_0.si", IOContext.DEFAULT)) {
-            out.writeString("lucene");
-        }
-        try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput("parquet/data.parquet", IOContext.DEFAULT)) {
-            out.writeString("parquet");
-        }
-        try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput("arrow/data.arrow", IOContext.DEFAULT)) {
-            out.writeString("arrow");
-        }
-
-        FileMetadata[] metadataArray = dataFormatAwareStoreDirectory.listFileMetadata();
-        boolean foundLucene = false, foundParquet = false, foundArrow = false;
-        for (FileMetadata fm : metadataArray) {
-            if ("lucene".equals(fm.dataFormat()) && "_0.si".equals(fm.file())) foundLucene = true;
-            if ("parquet".equals(fm.dataFormat()) && "data.parquet".equals(fm.file())) foundParquet = true;
-            if ("arrow".equals(fm.dataFormat()) && "data.arrow".equals(fm.file())) foundArrow = true;
-        }
-        assertTrue("Should find lucene", foundLucene);
-        assertTrue("Should find parquet", foundParquet);
-        assertTrue("Should find arrow", foundArrow);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -927,7 +868,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
 
         // Read via FileMetadata
         FileMetadata fm = new FileMetadata("parquet", "rev_e2e.parquet");
-        try (IndexInput in = dataFormatAwareStoreDirectory.openInput(fm, IOContext.DEFAULT)) {
+        try (IndexInput in = dataFormatAwareStoreDirectory.openInput(fm.serialize(), IOContext.DEFAULT)) {
             byte[] readData = new byte[data.length];
             in.readBytes(readData, 0, readData.length);
             assertArrayEquals(data, readData);

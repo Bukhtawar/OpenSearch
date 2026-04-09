@@ -388,9 +388,9 @@ public class DataformatAwareCatalogSnapshotTests extends OpenSearchTestCase {
         expectThrows(UnsupportedOperationException.class, snapshot::serialize);
     }
 
-    public void testGetFormatVersionForFileReturnsLatestMajor() {
+    public void testGetFormatVersionForFileReturnsOpenSearchMajor() {
         DataformatAwareCatalogSnapshot snapshot = new DataformatAwareCatalogSnapshot(1L, 1L, 1L, List.of(), 0L, Map.of());
-        assertEquals(org.apache.lucene.util.Version.LATEST.major, snapshot.getFormatVersionForFile("any_file.pqt"));
+        assertEquals(org.opensearch.Version.CURRENT.major, snapshot.getFormatVersionForFile("any_file.pqt"));
     }
 
     public void testSetUserDataUpdatesAndReturns() {

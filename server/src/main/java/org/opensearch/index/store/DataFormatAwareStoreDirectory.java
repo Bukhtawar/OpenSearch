@@ -231,7 +231,7 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
      * Looks up the handler from the internal map by the file's data format,
      * falling back to {@link GenericCRC32ChecksumHandler} for unknown formats.
      */
-    public long calculateChecksum(FileMetadata fm) throws IOException {
+    private long calculateChecksum(FileMetadata fm) throws IOException {
         String fileIdentifier = toFileIdentifier(fm);
         ChecksumHandler handler = checksumHandlers.getOrDefault(fm.dataFormat(), DEFAULT_CHECKSUM_HANDLER);
         try (IndexInput input = openInput(fileIdentifier, IOContext.READONCE)) {
@@ -247,35 +247,8 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
         return Long.toString(calculateChecksum(name));
     }
 
-    public IndexInput openInput(FileMetadata fm, IOContext context) throws IOException {
-        return openInput(toFileIdentifier(fm), context);
-    }
-
     public IndexOutput createOutput(FileMetadata fm, IOContext context) throws IOException {
         return createOutput(toFileIdentifier(fm), context);
-    }
-
-    public void copyFrom(FileMetadata fm, Directory source, IOContext context) throws IOException {
-        String fileIdentifier = toFileIdentifier(fm);
-        try (IndexInput input = source.openInput(fm.serialize(), context); IndexOutput output = createOutput(fileIdentifier, context)) {
-            output.copyBytes(input, input.length());
-        }
-    }
-
-    public void rename(FileMetadata source, FileMetadata dest) throws IOException {
-        if (source.dataFormat().equals(dest.dataFormat()) == false) {
-            throw new IllegalArgumentException("Cannot rename across formats: " + source.dataFormat() + " -> " + dest.dataFormat());
-        }
-        rename(toFileIdentifier(source), toFileIdentifier(dest));
-    }
-
-    public FileMetadata[] listFileMetadata() throws IOException {
-        String[] allFiles = listAll();
-        FileMetadata[] result = new FileMetadata[allFiles.length];
-        for (int i = 0; i < allFiles.length; i++) {
-            result[i] = toFileMetadata(allFiles[i]);
-        }
-        return result;
     }
 
     public String getDataFormat(String fileIdentifier) {
