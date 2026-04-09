@@ -292,7 +292,7 @@ public class DefaultPlanExecutorTests extends OpenSearchTestCase {
         }
 
         @Override
-        public void setUserData(Map<String, String> userData) {}
+        public void setUserData(Map<String, String> userData, boolean commitData) {}
 
         @Override
         public Object getReader(DataFormat dataFormat) {
@@ -315,7 +315,7 @@ public class DefaultPlanExecutorTests extends OpenSearchTestCase {
         }
 
         @Override
-        public Collection<String> getFiles() {
+        public Collection<String> getFiles(boolean includeSegmentsFile) {
             return List.of();
         }
 

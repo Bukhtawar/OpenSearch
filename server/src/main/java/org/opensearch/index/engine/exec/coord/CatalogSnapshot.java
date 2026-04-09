@@ -192,8 +192,9 @@ public abstract class CatalogSnapshot implements Writeable, Cloneable {
      * Sets user-defined metadata for this catalog snapshot.
      *
      * @param userData map of user data key-value pairs
+     * @param commitData whether this is commit-level user data
      */
-    public abstract void setUserData(Map<String, String> userData);
+    public abstract void setUserData(Map<String, String> userData, boolean commitData);
 
     /**
      * Creates a deep copy of this catalog snapshot. The cloned snapshot starts with a fresh reference count of 1.
@@ -236,9 +237,10 @@ public abstract class CatalogSnapshot implements Writeable, Cloneable {
      *       (e.g., {@code "parquet/data.parquet"}) for non-lucene files</li>
      * </ul>
      *
+     * @param includeSegmentsFile whether to include the segments file in the returned collection
      * @return collection of file name strings ready for upload
      * @throws IOException in case of I/O error
      */
-    public abstract Collection<String> getFiles() throws IOException;
+    public abstract Collection<String> getFiles(boolean includeSegmentsFile) throws IOException;
 
 }

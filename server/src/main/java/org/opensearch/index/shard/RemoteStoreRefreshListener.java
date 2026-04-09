@@ -140,7 +140,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
             try {
                 segmentTracker.updateLocalRefreshTimeAndSeqNo();
                 try (GatedCloseable<CatalogSnapshot> catalogSnapshotRef = indexShard.getCatalogSnapshot()) {
-                    Collection<String> localSegmentsPostRefresh = catalogSnapshotRef.get().getFiles();
+                    Collection<String> localSegmentsPostRefresh = catalogSnapshotRef.get().getFiles(true);
                     updateLocalSizeMapAndTracker(localSegmentsPostRefresh);
                 }
             } catch (Throwable t) {
@@ -209,7 +209,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
      */
     boolean isRemoteSegmentStoreInSync() {
         try (GatedCloseable<CatalogSnapshot> catalogSnapshotRef = indexShard.getCatalogSnapshot()) {
-            return catalogSnapshotRef.get().getFiles().stream().allMatch(this::skipUpload);
+            return catalogSnapshotRef.get().getFiles(true).stream().allMatch(this::skipUpload);
         } catch (Throwable throwable) {
             logger.error("Throwable thrown during isRemoteSegmentStoreInSync", throwable);
         }
@@ -268,7 +268,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
                     // Capture replication checkpoint before uploading the segments as upload can take some time and checkpoint can
                     // move.
                     long lastRefreshedCheckpoint = indexShard.getIndexer().lastRefreshedCheckpoint();
-                    Collection<String> localSegmentsPostRefresh = catalogSnapshot.getFiles();
+                    Collection<String> localSegmentsPostRefresh = catalogSnapshot.getFiles(true);
 
                     // Create a map of file name to size and update the refresh segment tracker
                     Map<String, Long> localSegmentsSizeMap = updateLocalSizeMapAndTracker(localSegmentsPostRefresh).entrySet()
@@ -468,7 +468,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
         Map<String, String> userData = new HashMap<>(catalogSnapshotCloned.getUserData());
         userData.put(LOCAL_CHECKPOINT_KEY, String.valueOf(maxSeqNo));
         userData.put(SequenceNumbers.MAX_SEQ_NO, Long.toString(maxSeqNo));
-        catalogSnapshotCloned.setUserData(userData);
+        catalogSnapshotCloned.setUserData(userData, false);
 
         Translog.TranslogGeneration translogGeneration = indexShard.getIndexer().translogManager().getTranslogGeneration();
         if (translogGeneration == null) {

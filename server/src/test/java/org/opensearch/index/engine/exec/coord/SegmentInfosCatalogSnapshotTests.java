@@ -41,7 +41,7 @@ public class SegmentInfosCatalogSnapshotTests extends OpenSearchTestCase {
             expectThrows(UnsupportedOperationException.class, snapshot::serializeToString);
 
             // setUserData is a no-op, should not throw
-            snapshot.setUserData(Map.of("key", "value"));
+            snapshot.setUserData(Map.of("key", "value"), false);
         }
     }
 
@@ -76,7 +76,7 @@ public class SegmentInfosCatalogSnapshotTests extends OpenSearchTestCase {
     public void testGetFiles() throws Exception {
         SegmentInfos segmentInfos = randomSegmentInfos();
         SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
-        Collection<String> uploadNames = snapshot.getFiles();
+        Collection<String> uploadNames = snapshot.getFiles(true);
         assertEquals(segmentInfos.files(true), new java.util.HashSet<>(uploadNames));
     }
 
@@ -100,7 +100,7 @@ public class SegmentInfosCatalogSnapshotTests extends OpenSearchTestCase {
         SegmentInfos segmentInfos = randomSegmentInfos();
         SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
         Map<String, String> newData = Map.of("key1", "val1", "key2", "val2");
-        snapshot.setUserData(newData);
+        snapshot.setUserData(newData, false);
         assertEquals(newData, segmentInfos.getUserData());
         assertEquals(newData, snapshot.getUserData());
     }

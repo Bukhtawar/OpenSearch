@@ -135,7 +135,7 @@ public class DataformatAwareCatalogSnapshot extends CatalogSnapshot {
     }
 
     @Override
-    public void setUserData(Map<String, String> userData) {
+    public void setUserData(Map<String, String> userData, boolean commitData) {
         this.userData = Map.copyOf(userData);
     }
 
@@ -222,7 +222,7 @@ public class DataformatAwareCatalogSnapshot extends CatalogSnapshot {
     }
 
     @Override
-    public Collection<String> getFiles() throws IOException {
+    public Collection<String> getFiles(boolean includeSegmentsFile) throws IOException {
         List<String> fileNames = new ArrayList<>();
         for (Segment segment : segments) {
             for (Map.Entry<String, WriterFileSet> entry : segment.dfGroupedSearchableFiles().entrySet()) {

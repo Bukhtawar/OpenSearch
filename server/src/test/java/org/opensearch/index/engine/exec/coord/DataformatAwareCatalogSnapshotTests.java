@@ -353,7 +353,7 @@ public class DataformatAwareCatalogSnapshotTests extends OpenSearchTestCase {
         Segment segment = new Segment(1L, Map.of("parquet", parquetWfs, "lucene", luceneWfs));
         DataformatAwareCatalogSnapshot snapshot = new DataformatAwareCatalogSnapshot(1L, 1L, 1L, List.of(segment), 0L, Map.of());
 
-        Collection<String> uploadNames = snapshot.getFiles();
+        Collection<String> uploadNames = snapshot.getFiles(true);
 
         // Parquet files: "parquet/_0.pqt", "parquet/_1.pqt"
         // Lucene files: plain names "_0.cfe", "_0.si" (FileMetadata.serialize() omits "lucene/" prefix)
@@ -366,7 +366,7 @@ public class DataformatAwareCatalogSnapshotTests extends OpenSearchTestCase {
 
     public void testGetFilesEmptySegments() throws Exception {
         DataformatAwareCatalogSnapshot snapshot = new DataformatAwareCatalogSnapshot(1L, 1L, 1L, List.of(), 0L, Map.of());
-        Collection<String> uploadNames = snapshot.getFiles();
+        Collection<String> uploadNames = snapshot.getFiles(true);
         assertTrue(uploadNames.isEmpty());
     }
 
@@ -377,7 +377,7 @@ public class DataformatAwareCatalogSnapshotTests extends OpenSearchTestCase {
         Segment seg2 = new Segment(2L, Map.of("parquet", wfs2));
         DataformatAwareCatalogSnapshot snapshot = new DataformatAwareCatalogSnapshot(1L, 1L, 1L, List.of(seg1, seg2), 0L, Map.of());
 
-        Collection<String> uploadNames = snapshot.getFiles();
+        Collection<String> uploadNames = snapshot.getFiles(true);
         assertEquals(2, uploadNames.size());
         assertTrue(uploadNames.contains("parquet/_0.pqt"));
         assertTrue(uploadNames.contains("parquet/_1.pqt"));
@@ -396,7 +396,7 @@ public class DataformatAwareCatalogSnapshotTests extends OpenSearchTestCase {
     public void testSetUserDataUpdatesAndReturns() {
         DataformatAwareCatalogSnapshot snapshot = new DataformatAwareCatalogSnapshot(1L, 1L, 1L, List.of(), 0L, Map.of("a", "b"));
         assertEquals(Map.of("a", "b"), snapshot.getUserData());
-        snapshot.setUserData(Map.of("x", "y"));
+        snapshot.setUserData(Map.of("x", "y"), false);
         assertEquals(Map.of("x", "y"), snapshot.getUserData());
     }
 

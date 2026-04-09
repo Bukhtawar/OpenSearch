@@ -131,8 +131,8 @@ public class SegmentInfosCatalogSnapshot extends CatalogSnapshot {
     }
 
     @Override
-    public void setUserData(Map<String, String> userData) {
-        segmentInfos.setUserData(userData, false);
+    public void setUserData(Map<String, String> userData, boolean commitData) {
+        segmentInfos.setUserData(userData, commitData);
     }
 
     @Override
@@ -188,8 +188,8 @@ public class SegmentInfosCatalogSnapshot extends CatalogSnapshot {
     }
 
     @Override
-    public Collection<String> getFiles() throws IOException {
-        return segmentInfos.files(true);
+    public Collection<String> getFiles(boolean includeSegmentsFile) throws IOException {
+        return segmentInfos.files(includeSegmentsFile);
     }
 
     private Map<String, Integer> buildSegmentToLuceneVersionMap() {
