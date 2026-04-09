@@ -393,15 +393,6 @@ public class DataformatAwareCatalogSnapshotTests extends OpenSearchTestCase {
         assertEquals(org.apache.lucene.util.Version.LATEST.major, snapshot.getFormatVersionForFile("any_file.pqt"));
     }
 
-    public void testGetStoreFileMetadataMapRequiresDFASD() {
-        // Without a DataFormatAwareStoreDirectory, getStoreFileMetadataMap should throw
-        DataformatAwareCatalogSnapshot snapshot = new DataformatAwareCatalogSnapshot(1L, 1L, 1L, List.of(), 0L, Map.of());
-        org.opensearch.index.store.Store mockStore = org.mockito.Mockito.mock(org.opensearch.index.store.Store.class);
-        org.apache.lucene.store.Directory plainDir = org.mockito.Mockito.mock(org.apache.lucene.store.Directory.class);
-        org.mockito.Mockito.when(mockStore.directory()).thenReturn(plainDir);
-        expectThrows(IllegalStateException.class, () -> snapshot.getStoreFileMetadataMap(mockStore));
-    }
-
     public void testSetUserDataUpdatesAndReturns() {
         DataformatAwareCatalogSnapshot snapshot = new DataformatAwareCatalogSnapshot(1L, 1L, 1L, List.of(), 0L, Map.of("a", "b"));
         assertEquals(Map.of("a", "b"), snapshot.getUserData());

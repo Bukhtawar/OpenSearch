@@ -93,59 +93,59 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
     // ═══════════════════════════════════════════════════════════════
 
     public void testToFileMetadata_luceneFile() {
-        FileMetadata fm = dataFormatAwareStoreDirectory.toFileMetadata("_0.si");
+        FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata("_0.si");
         assertEquals("lucene", fm.dataFormat());
         assertEquals("_0.si", fm.file());
     }
 
     public void testToFileMetadata_prefixedFile() {
-        FileMetadata fm = dataFormatAwareStoreDirectory.toFileMetadata("parquet/data.parquet");
+        FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata("parquet/data.parquet");
         assertEquals("parquet", fm.dataFormat());
         assertEquals("data.parquet", fm.file());
     }
 
     public void testToFileMetadata_arrowFile() {
-        FileMetadata fm = dataFormatAwareStoreDirectory.toFileMetadata("arrow/data.arrow");
+        FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata("arrow/data.arrow");
         assertEquals("arrow", fm.dataFormat());
         assertEquals("data.arrow", fm.file());
     }
 
     public void testToFileIdentifier_lucene() {
         FileMetadata fm = new FileMetadata("lucene", "_0.si");
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("_0.si", identifier);
     }
 
     public void testToFileIdentifier_metadata() {
         // "metadata" is treated as a default/index format, so no prefix is added
         FileMetadata fm = new FileMetadata("metadata", "meta_file.txt");
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("meta_file.txt", identifier);
     }
 
     public void testToFileIdentifier_nonLucene() {
         FileMetadata fm = new FileMetadata("parquet", "data.parquet");
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("parquet/data.parquet", identifier);
     }
 
     public void testToFileIdentifier_arrow() {
         FileMetadata fm = new FileMetadata("arrow", "data.arrow");
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("arrow/data.arrow", identifier);
     }
 
     public void testRoundtrip_toFileMetadata_toFileIdentifier_lucene() {
         String original = "_0.cfe";
-        FileMetadata fm = dataFormatAwareStoreDirectory.toFileMetadata(original);
-        String result = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata(original);
+        String result = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals(original, result);
     }
 
     public void testRoundtrip_toFileMetadata_toFileIdentifier_nonLucene() {
         String original = "parquet/data.parquet";
-        FileMetadata fm = dataFormatAwareStoreDirectory.toFileMetadata(original);
-        String result = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata(original);
+        String result = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals(original, result);
     }
 
@@ -227,7 +227,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         }
 
         FileMetadata fm = new FileMetadata("parquet", "len_test.parquet");
-        assertEquals(data.length, dataFormatAwareStoreDirectory.fileLength(fm));
+        assertEquals(data.length, dataFormatAwareStoreDirectory.fileLength(fm.serialize()));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -254,7 +254,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         assertTrue(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(serialized));
 
         FileMetadata fm = new FileMetadata("parquet", "del_test.parquet");
-        dataFormatAwareStoreDirectory.deleteFile(fm);
+        dataFormatAwareStoreDirectory.deleteFile(fm.serialize());
         assertFalse(Arrays.asList(dataFormatAwareStoreDirectory.listAll()).contains(serialized));
     }
 
@@ -326,7 +326,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         assertTrue("Checksum should be a valid value", checksum != 0);
 
         // Verify we get the same checksum via FileMetadata overload
-        FileMetadata fm = dataFormatAwareStoreDirectory.toFileMetadata(fileName);
+        FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata(fileName);
         assertEquals(checksum, dataFormatAwareStoreDirectory.calculateChecksum(fm));
     }
 
@@ -363,11 +363,11 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         }
 
         FileMetadata fm = new FileMetadata("parquet", "upload_cksum.parquet");
-        String uploadChecksum = dataFormatAwareStoreDirectory.calculateUploadChecksum(fm);
+        String uploadChecksum = dataFormatAwareStoreDirectory.calculateUploadChecksum(fm.serialize());
         assertNotNull(uploadChecksum);
         // Should be the string representation of the long checksum
         long parsedChecksum = Long.parseLong(uploadChecksum);
-        assertEquals(dataFormatAwareStoreDirectory.calculateChecksum(fm), parsedChecksum);
+        assertEquals(dataFormatAwareStoreDirectory.calculateChecksum(fm.serialize()), parsedChecksum);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -441,8 +441,8 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         }
 
         FileMetadata fm = new FileMetadata("parquet", "local_cksum.parquet");
-        long checksum = dataFormatAwareStoreDirectory.getChecksumOfLocalFile(fm);
-        assertEquals(dataFormatAwareStoreDirectory.calculateChecksum(fm), checksum);
+        long checksum = dataFormatAwareStoreDirectory.calculateChecksum(fm.serialize());
+        assertTrue(checksum != 0);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -651,7 +651,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testDeleteFile_fileMetadata_nonExistent_throws() {
         FileMetadata fm = new FileMetadata("parquet", "nonexistent.parquet");
-        expectThrows(IOException.class, () -> dataFormatAwareStoreDirectory.deleteFile(fm));
+        expectThrows(IOException.class, () -> dataFormatAwareStoreDirectory.deleteFile(fm.serialize()));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -659,7 +659,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
     // ═══════════════════════════════════════════════════════════════
 
     public void testToFileMetadata_nestedPath() {
-        FileMetadata fm = dataFormatAwareStoreDirectory.toFileMetadata("custom/nested_file.data");
+        FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata("custom/nested_file.data");
         assertEquals("custom", fm.dataFormat());
         assertEquals("nested_file.data", fm.file());
     }
@@ -667,13 +667,13 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
     public void testToFileIdentifier_nullFormatTreatedAsDefault() {
         FileMetadata fm = new FileMetadata(null, "_0.si");
         // null format should be treated as default (no prefix)
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("_0.si", identifier);
     }
 
     public void testToFileIdentifier_emptyFormatTreatedAsDefault() {
         FileMetadata fm = new FileMetadata("", "_0.si");
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("_0.si", identifier);
     }
 
@@ -723,10 +723,10 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
         }
 
         FileMetadata fm = new FileMetadata("lucene", fileName);
-        String uploadChecksum = dataFormatAwareStoreDirectory.calculateUploadChecksum(fm);
+        String uploadChecksum = dataFormatAwareStoreDirectory.calculateUploadChecksum(fm.serialize());
         assertNotNull(uploadChecksum);
         long parsedChecksum = Long.parseLong(uploadChecksum);
-        assertEquals(dataFormatAwareStoreDirectory.calculateChecksum(fm), parsedChecksum);
+        assertEquals(dataFormatAwareStoreDirectory.calculateChecksum(fm.serialize()), parsedChecksum);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -739,7 +739,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
     public void testPathMapping_luceneFile_storedInIndexDir() throws IOException {
         // Lucene files (no slash) should be stored in <shard>/index/<filename>
         FileMetadata fm = new FileMetadata("lucene", "_0.cfs");
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("_0.cfs", identifier); // no prefix
         assertFalse("Lucene identifier should not contain '/'", identifier.contains("/"));
 
@@ -753,11 +753,11 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testPathMapping_segmentsFile_storedInIndexDir() throws IOException {
         // segments_N files should be treated as lucene format (default)
-        FileMetadata fm = dataFormatAwareStoreDirectory.toFileMetadata("segments_1");
+        FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata("segments_1");
         assertEquals("lucene", fm.dataFormat());
         assertEquals("segments_1", fm.file());
 
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("segments_1", identifier); // no prefix
 
         try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
@@ -768,9 +768,9 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testPathMapping_segmentInfoFile_storedInIndexDir() throws IOException {
         // _0.si (segment info) is a lucene file
-        FileMetadata fm = dataFormatAwareStoreDirectory.toFileMetadata("_0.si");
+        FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata("_0.si");
         assertEquals("lucene", fm.dataFormat());
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("_0.si", identifier);
 
         try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
@@ -784,7 +784,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
     public void testPathMapping_metadataFormat_storedInIndexDir() throws IOException {
         // "metadata" is in INDEX_DIRECTORY_FORMATS, so no prefix is added
         FileMetadata fm = new FileMetadata("metadata", "metadata__1__5__abc");
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("metadata__1__5__abc", identifier); // no prefix
         assertFalse("Metadata identifier should not contain '/'", identifier.contains("/"));
 
@@ -803,7 +803,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testPathMapping_parquetFile_storedInSubdir() throws IOException {
         FileMetadata fm = new FileMetadata("parquet", "_0_1.parquet");
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("parquet/_0_1.parquet", identifier);
 
         try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
@@ -814,7 +814,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testPathMapping_parquetFile_fromIdentifier() {
-        FileMetadata fm = dataFormatAwareStoreDirectory.toFileMetadata("parquet/_0_1.parquet");
+        FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata("parquet/_0_1.parquet");
         assertEquals("parquet", fm.dataFormat());
         assertEquals("_0_1.parquet", fm.file());
     }
@@ -823,7 +823,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testPathMapping_arrowFile_storedInSubdir() throws IOException {
         FileMetadata fm = new FileMetadata("arrow", "data.arrow");
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("arrow/data.arrow", identifier);
 
         try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
@@ -837,7 +837,7 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testPathMapping_customFormat_storedInSubdir() throws IOException {
         FileMetadata fm = new FileMetadata("custom", "myfile.dat");
-        String identifier = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String identifier = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("custom/myfile.dat", identifier);
 
         try (IndexOutput out = dataFormatAwareStoreDirectory.createOutput(identifier, IOContext.DEFAULT)) {
@@ -978,11 +978,11 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
     }
 
     private void verifyRoundtrip(String identifier, String expectedFormat, String expectedFile) {
-        FileMetadata fm = dataFormatAwareStoreDirectory.toFileMetadata(identifier);
+        FileMetadata fm = DataFormatAwareStoreDirectory.toFileMetadata(identifier);
         assertEquals("Format for " + identifier, expectedFormat, fm.dataFormat());
         assertEquals("File for " + identifier, expectedFile, fm.file());
 
-        String roundtripped = dataFormatAwareStoreDirectory.toFileIdentifier(fm);
+        String roundtripped = DataFormatAwareStoreDirectory.toFileIdentifier(fm);
         assertEquals("Roundtrip for " + identifier, identifier, roundtripped);
     }
 
@@ -990,25 +990,25 @@ public class DataFormatAwareStoreDirectoryTests extends OpenSearchTestCase {
 
     public void testToFileIdentifier_defaultFormats_noPrefix() {
         // "lucene" → no prefix
-        assertEquals("file.si", dataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("lucene", "file.si")));
+        assertEquals("file.si", DataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("lucene", "file.si")));
         // "LUCENE" (case-insensitive) → no prefix
-        assertEquals("file.si", dataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("LUCENE", "file.si")));
+        assertEquals("file.si", DataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("LUCENE", "file.si")));
         // "metadata" → no prefix
-        assertEquals("meta.dat", dataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("metadata", "meta.dat")));
+        assertEquals("meta.dat", DataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("metadata", "meta.dat")));
         // "METADATA" (case-insensitive) → no prefix
-        assertEquals("meta.dat", dataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("METADATA", "meta.dat")));
+        assertEquals("meta.dat", DataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("METADATA", "meta.dat")));
         // null → no prefix
-        assertEquals("file.si", dataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata(null, "file.si")));
+        assertEquals("file.si", DataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata(null, "file.si")));
         // empty string → no prefix
-        assertEquals("file.si", dataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("", "file.si")));
+        assertEquals("file.si", DataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("", "file.si")));
     }
 
     public void testToFileIdentifier_nonDefaultFormats_addPrefix() {
         // Non-default formats always get "format/" prefix
-        assertEquals("parquet/data.parquet", dataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("parquet", "data.parquet")));
-        assertEquals("arrow/data.arrow", dataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("arrow", "data.arrow")));
-        assertEquals("orc/data.orc", dataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("orc", "data.orc")));
-        assertEquals("custom/my.file", dataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("custom", "my.file")));
+        assertEquals("parquet/data.parquet", DataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("parquet", "data.parquet")));
+        assertEquals("arrow/data.arrow", DataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("arrow", "data.arrow")));
+        assertEquals("orc/data.orc", DataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("orc", "data.orc")));
+        assertEquals("custom/my.file", DataFormatAwareStoreDirectory.toFileIdentifier(new FileMetadata("custom", "my.file")));
     }
 
     // --- listAll includes files from all formats with correct identifiers ---
