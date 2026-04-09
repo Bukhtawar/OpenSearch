@@ -108,7 +108,7 @@ public class ParquetDataFormatPlugin extends Plugin implements DataFormatPlugin 
             ParquetDataFormat.PARQUET_DATA_FORMAT_NAME,
             new DataFormatDescriptor(
                 ParquetDataFormat.PARQUET_DATA_FORMAT_NAME,
-                new GenericCRC32ChecksumHandler(ParquetDataFormat.PARQUET_DATA_FORMAT_NAME)
+                () -> new GenericCRC32ChecksumHandler(ParquetDataFormat.PARQUET_DATA_FORMAT_NAME)
             )
         );
     }

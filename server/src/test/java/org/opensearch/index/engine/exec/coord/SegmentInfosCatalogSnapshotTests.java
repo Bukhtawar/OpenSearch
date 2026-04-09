@@ -73,10 +73,10 @@ public class SegmentInfosCatalogSnapshotTests extends OpenSearchTestCase {
         assertEquals(original.getUserData(), copy.getUserData());
     }
 
-    public void testGetUploadFileNames() throws Exception {
+    public void testGetFiles() throws Exception {
         SegmentInfos segmentInfos = randomSegmentInfos();
         SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfos);
-        Collection<String> uploadNames = snapshot.getUploadFileNames();
+        Collection<String> uploadNames = snapshot.getFiles();
         assertEquals(segmentInfos.files(true), new java.util.HashSet<>(uploadNames));
     }
 

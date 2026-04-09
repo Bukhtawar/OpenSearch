@@ -353,7 +353,7 @@ public class DataformatAwareCatalogSnapshotTests extends OpenSearchTestCase {
         Segment segment = new Segment(1L, Map.of("parquet", parquetWfs, "lucene", luceneWfs));
         DataformatAwareCatalogSnapshot snapshot = new DataformatAwareCatalogSnapshot(1L, 1L, 1L, List.of(segment), 0L, Map.of());
 
-        Collection<String> uploadNames = snapshot.getUploadFileNames();
+        Collection<String> uploadNames = snapshot.getFiles();
 
         // Parquet files: "parquet/_0.pqt", "parquet/_1.pqt"
         // Lucene files: plain names "_0.cfe", "_0.si" (FileMetadata.serialize() omits "lucene/" prefix)
@@ -364,20 +364,20 @@ public class DataformatAwareCatalogSnapshotTests extends OpenSearchTestCase {
         assertTrue(uploadNames.contains("_0.si"));
     }
 
-    public void testGetUploadFileNamesEmptySegments() throws Exception {
+    public void testGetFilesEmptySegments() throws Exception {
         DataformatAwareCatalogSnapshot snapshot = new DataformatAwareCatalogSnapshot(1L, 1L, 1L, List.of(), 0L, Map.of());
-        Collection<String> uploadNames = snapshot.getUploadFileNames();
+        Collection<String> uploadNames = snapshot.getFiles();
         assertTrue(uploadNames.isEmpty());
     }
 
-    public void testGetUploadFileNamesMultipleSegments() throws Exception {
+    public void testGetFilesMultipleSegments() throws Exception {
         WriterFileSet wfs1 = new WriterFileSet("/tmp/pq", 1L, Set.of("_0.pqt"), 10);
         WriterFileSet wfs2 = new WriterFileSet("/tmp/pq", 2L, Set.of("_1.pqt"), 20);
         Segment seg1 = new Segment(1L, Map.of("parquet", wfs1));
         Segment seg2 = new Segment(2L, Map.of("parquet", wfs2));
         DataformatAwareCatalogSnapshot snapshot = new DataformatAwareCatalogSnapshot(1L, 1L, 1L, List.of(seg1, seg2), 0L, Map.of());
 
-        Collection<String> uploadNames = snapshot.getUploadFileNames();
+        Collection<String> uploadNames = snapshot.getFiles();
         assertEquals(2, uploadNames.size());
         assertTrue(uploadNames.contains("parquet/_0.pqt"));
         assertTrue(uploadNames.contains("parquet/_1.pqt"));

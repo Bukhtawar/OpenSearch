@@ -17,10 +17,7 @@ import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
-import org.opensearch.index.store.DataFormatAwareStoreDirectory;
 import org.opensearch.index.store.FileMetadata;
-import org.opensearch.index.store.Store;
-import org.opensearch.index.store.StoreFileMetadata;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -194,7 +191,11 @@ public class DataformatAwareCatalogSnapshot extends CatalogSnapshot {
 
     @Override
     public int getFormatVersionForFile(String file) {
-        return org.apache.lucene.util.Version.LATEST.major;
+        // TODO: Return the actual format-specific version the file was written with.
+        // For lucene files, this should come from a per-segment version map populated
+        // by the composite engine (which has access to SegmentInfos). For non-lucene
+        // files, each DataFormat should provide its own version.
+        return org.opensearch.Version.CURRENT.major;
     }
 
     @Override
@@ -221,32 +222,16 @@ public class DataformatAwareCatalogSnapshot extends CatalogSnapshot {
     }
 
     @Override
-    public Collection<String> getUploadFileNames() throws IOException {
+    public Collection<String> getFiles() throws IOException {
         List<String> fileNames = new ArrayList<>();
         for (Segment segment : segments) {
             for (Map.Entry<String, WriterFileSet> entry : segment.dfGroupedSearchableFiles().entrySet()) {
                 String formatName = entry.getKey();
                 for (String file : entry.getValue().files()) {
-                    fileNames.add(new FileMetadata(formatName, file).serialize());
+                    fileNames.add(FileMetadata.serialize(formatName, file));
                 }
             }
         }
         return fileNames;
-    }
-
-    @Override
-    public Map<String, StoreFileMetadata> getStoreFileMetadataMap(Store store) throws IOException {
-        DataFormatAwareStoreDirectory dfasd = DataFormatAwareStoreDirectory.unwrap(store.directory());
-        if (dfasd == null) {
-            throw new IllegalStateException("DataFormatAwareStoreDirectory required for format-aware metadata");
-        }
-        Map<String, StoreFileMetadata> metadataMap = new java.util.HashMap<>();
-        for (String uploadName : getUploadFileNames()) {
-            FileMetadata fm = dfasd.toFileMetadata(uploadName);
-            long length = dfasd.fileLength(fm);
-            String checksum = dfasd.calculateUploadChecksum(fm);
-            metadataMap.put(uploadName, new StoreFileMetadata(fm.file(), length, checksum, org.apache.lucene.util.Version.LATEST));
-        }
-        return metadataMap;
     }
 }

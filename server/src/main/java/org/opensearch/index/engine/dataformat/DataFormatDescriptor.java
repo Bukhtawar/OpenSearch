@@ -11,6 +11,8 @@ package org.opensearch.index.engine.dataformat;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.index.store.checksum.ChecksumHandler;
 
+import java.util.function.Supplier;
+
 /**
  * Describes the runtime capabilities of a data format, including its checksum handler
  * and format name. Provided by {@link DataFormatPlugin} implementations and consumed
@@ -22,17 +24,17 @@ import org.opensearch.index.store.checksum.ChecksumHandler;
 public class DataFormatDescriptor {
 
     private final String formatName;
-    private final ChecksumHandler checksumHandler;
+    private final Supplier<ChecksumHandler> checksumHandlerSupplier;
 
     /**
      * Creates a new DataFormatDescriptor.
      *
-     * @param formatName      the format name (e.g., "parquet")
-     * @param checksumHandler the checksum handler for this format
+     * @param formatName              the format name (e.g., "parquet")
+     * @param checksumHandlerSupplier supplier for the checksum handler for this format
      */
-    public DataFormatDescriptor(String formatName, ChecksumHandler checksumHandler) {
+    public DataFormatDescriptor(String formatName, Supplier<ChecksumHandler> checksumHandlerSupplier) {
         this.formatName = formatName;
-        this.checksumHandler = checksumHandler;
+        this.checksumHandlerSupplier = checksumHandlerSupplier;
     }
 
     /**
@@ -45,11 +47,11 @@ public class DataFormatDescriptor {
     }
 
     /**
-     * Returns the checksum handler for this format.
+     * Returns a checksum handler for this format.
      *
      * @return the checksum handler
      */
     public ChecksumHandler getChecksumHandler() {
-        return checksumHandler;
+        return checksumHandlerSupplier.get();
     }
 }

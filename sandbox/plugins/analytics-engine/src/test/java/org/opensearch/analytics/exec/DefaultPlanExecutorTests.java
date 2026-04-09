@@ -317,13 +317,8 @@ public class DefaultPlanExecutorTests extends OpenSearchTestCase {
         }
 
         @Override
-        public Collection<String> getUploadFileNames() {
+        public Collection<String> getFiles() {
             return List.of();
-        }
-
-        @Override
-        public Map<String, StoreFileMetadata> getStoreFileMetadataMap(Store store) {
-            return Map.of();
         }
 
         @Override

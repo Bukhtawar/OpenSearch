@@ -16,8 +16,6 @@ import org.opensearch.core.common.io.stream.Writeable;
 import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
-import org.opensearch.index.store.Store;
-import org.opensearch.index.store.StoreFileMetadata;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -208,14 +206,12 @@ public abstract class CatalogSnapshot implements Writeable, Cloneable {
     public abstract Object getReader(DataFormat dataFormat);
 
     /**
-     * Returns the Lucene major version that wrote the given segment file.
-     * Each CatalogSnapshot subclass knows how to resolve this:
+     * Returns the major version of the format that wrote the given file.
+     * For Lucene files, this is the Lucene major version from SegmentInfo.
+     * For non-Lucene files (e.g., parquet), this is the format-specific version.
      *
-     * TODO: When CompositeEngineCatalogSnapshot is added, implement this method
-     *       returning Version.LATEST.major for all files.
-     *
-     * @param file the segment file name
-     * @return the Lucene major version
+     * @param file the file name
+     * @return the format major version
      */
     public abstract int getFormatVersionForFile(String file);
 
@@ -243,20 +239,6 @@ public abstract class CatalogSnapshot implements Writeable, Cloneable {
      * @return collection of file name strings ready for upload
      * @throws IOException in case of I/O error
      */
-    public abstract Collection<String> getUploadFileNames() throws IOException;
+    public abstract Collection<String> getFiles() throws IOException;
 
-    /**
-     * Builds a map of file name to {@link StoreFileMetadata} for replication checkpoint computation.
-     * Each subclass resolves checksums and file lengths using the appropriate mechanism:
-     * <ul>
-     *   <li>{@link SegmentInfosCatalogSnapshot}: delegates to {@link Store#getSegmentMetadataMap}</li>
-     *   <li>{@link DataformatAwareCatalogSnapshot}: uses format-aware checksum handlers via
-     *       the DataFormatAwareStoreDirectory</li>
-     * </ul>
-     *
-     * @param store the store providing access to the directory for checksum/length computation
-     * @return map of file name to store file metadata
-     * @throws IOException in case of I/O error
-     */
-    public abstract Map<String, StoreFileMetadata> getStoreFileMetadataMap(Store store) throws IOException;
 }

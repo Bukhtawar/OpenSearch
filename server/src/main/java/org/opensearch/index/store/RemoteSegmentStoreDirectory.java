@@ -986,10 +986,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
 
     /** Extract format from originalFilename. Returns "lucene" if no format prefix present. */
     private static String extractFormat(String originalFilename) {
-        if (originalFilename != null && originalFilename.contains(FileMetadata.DELIMITER)) {
-            return new FileMetadata(originalFilename).dataFormat();
-        }
-        return "lucene";
+        return FileMetadata.parseDataFormat(originalFilename);
     }
 
     /** Shared helper for single format registration. */
@@ -1054,7 +1051,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         // Strip format prefix if present before appending UUID.
         // For optimized indices, localFilename may be "format/filename" (e.g., "parquet/_0.pqt").
         // The blob key should be "filename__UUID" (e.g., "_0.pqt__UUID"), not "parquet/_0.pqt__UUID".
-        String plainFilename = localFilename.contains(FileMetadata.DELIMITER) ? new FileMetadata(localFilename).file() : localFilename;
+        String plainFilename = FileMetadata.parseFile(localFilename);
         return plainFilename + SEGMENT_NAME_UUID_SEPARATOR + UUIDs.base64UUID();
     }
 

@@ -22,8 +22,6 @@ import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
 import org.opensearch.index.remote.RemoteStoreUtils;
-import org.opensearch.index.store.Store;
-import org.opensearch.index.store.StoreFileMetadata;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -190,13 +188,8 @@ public class SegmentInfosCatalogSnapshot extends CatalogSnapshot {
     }
 
     @Override
-    public Collection<String> getUploadFileNames() throws IOException {
+    public Collection<String> getFiles() throws IOException {
         return segmentInfos.files(true);
-    }
-
-    @Override
-    public Map<String, StoreFileMetadata> getStoreFileMetadataMap(Store store) throws IOException {
-        return store.getSegmentMetadataMap(segmentInfos);
     }
 
     private Map<String, Integer> buildSegmentToLuceneVersionMap() {

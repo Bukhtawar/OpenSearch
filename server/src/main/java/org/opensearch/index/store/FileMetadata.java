@@ -66,16 +66,53 @@ public class FileMetadata {
     }
 
     /**
+     * Serializes a data format and filename into a format-aware string without creating an intermediate object.
+     * For the default lucene format, returns just the filename (no prefix).
+     *
+     * @param dataFormat the data format identifier (e.g., "lucene", "parquet")
+     * @param file the filename
+     * @return the serialized representation (e.g., "parquet/_0.parquet" or "_0.si" for lucene)
+     */
+    public static String serialize(String dataFormat, String file) {
+        if (DEFAULT_FORMAT.equals(dataFormat)) {
+            return file;
+        }
+        return dataFormat + DELIMITER + file;
+    }
+
+    /**
+     * Extracts the plain filename from a serialized format-aware filename without creating an intermediate object.
+     *
+     * @param serialized the serialized filename (e.g., "parquet/_0.parquet" or "_0.si")
+     * @return the plain filename (e.g., "_0.parquet" or "_0.si")
+     */
+    public static String parseFile(String serialized) {
+        int slash = serialized.indexOf(DELIMITER);
+        return slash >= 0 ? serialized.substring(slash + 1) : serialized;
+    }
+
+    /**
+     * Extracts the data format from a serialized format-aware filename without creating an intermediate object.
+     *
+     * @param serialized the serialized filename (e.g., "parquet/_0.parquet" or "_0.si")
+     * @return the data format (e.g., "parquet", "lucene", or "metadata")
+     */
+    public static String parseDataFormat(String serialized) {
+        int slash = serialized.indexOf(DELIMITER);
+        if (slash >= 0) {
+            return serialized.substring(0, slash);
+        }
+        return serialized.startsWith(METADATA_KEY) ? METADATA_KEY : DEFAULT_FORMAT;
+    }
+
+    /**
      * Serializes this FileMetadata to a string in the format "format/file".
      * For the default lucene format, returns just the filename (no prefix).
      *
      * @return the serialized representation
      */
     public String serialize() {
-        if (DEFAULT_FORMAT.equals(dataFormat)) {
-            return file;
-        }
-        return dataFormat + DELIMITER + file;
+        return serialize(dataFormat, file);
     }
 
     @Override

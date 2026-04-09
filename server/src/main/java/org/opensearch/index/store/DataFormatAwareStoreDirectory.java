@@ -24,6 +24,7 @@ import org.opensearch.index.store.checksum.ChecksumHandler;
 import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 import org.opensearch.index.store.checksum.LuceneChecksumHandler;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.HashMap;
@@ -176,7 +177,11 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
     public String[] listAll() throws IOException {
         String[] allFiles = in.listAll();
         for (int i = 0; i < allFiles.length; i++) {
-            FileMetadata fm = toFileMetadata(allFiles[i]);
+            // Normalize OS-dependent separators (e.g., "\" on Windows) to "/" before parsing,
+            // since SubdirectoryAwareDirectory.listAll() returns Path.toString() which uses
+            // the OS separator, but FileMetadata expects "/" as the format/file delimiter.
+            String normalized = allFiles[i].replace(File.separatorChar, '/');
+            FileMetadata fm = toFileMetadata(normalized);
             allFiles[i] = isDefaultFormat(fm.dataFormat()) ? fm.file() : fm.serialize();
         }
         return allFiles;
@@ -194,7 +199,7 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
      * @param fileIdentifier the file path string (with optional format prefix separated by '/')
      * @return FileMetadata with parsed dataFormat and filename
      */
-    public FileMetadata toFileMetadata(String fileIdentifier) {
+    public static FileMetadata toFileMetadata(String fileIdentifier) {
         return new FileMetadata(fileIdentifier);
     }
 
@@ -204,7 +209,7 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
      * @param fm the FileMetadata to convert
      * @return file identifier string suitable for Directory operations
      */
-    public String toFileIdentifier(FileMetadata fm) {
+    public static String toFileIdentifier(FileMetadata fm) {
         String format = fm.dataFormat();
         if (isDefaultFormat(format)) {
             return fm.file();
@@ -242,22 +247,6 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
         return Long.toString(calculateChecksum(name));
     }
 
-    public String calculateUploadChecksum(FileMetadata fm) throws IOException {
-        return Long.toString(calculateChecksum(fm));
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // FileMetadata-Based Convenience Operations
-    // ═══════════════════════════════════════════════════════════════
-
-    public long fileLength(FileMetadata fm) throws IOException {
-        return fileLength(toFileIdentifier(fm));
-    }
-
-    public void deleteFile(FileMetadata fm) throws IOException {
-        deleteFile(toFileIdentifier(fm));
-    }
-
     public IndexInput openInput(FileMetadata fm, IOContext context) throws IOException {
         return openInput(toFileIdentifier(fm), context);
     }
@@ -289,10 +278,6 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
         return result;
     }
 
-    public long getChecksumOfLocalFile(FileMetadata fm) throws IOException {
-        return calculateChecksum(fm);
-    }
-
     public String getDataFormat(String fileIdentifier) {
         return toFileMetadata(fileIdentifier).dataFormat();
     }
@@ -305,7 +290,7 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
     // Private Helpers
     // ═══════════════════════════════════════════════════════════════
 
-    private boolean isDefaultFormat(String format) {
+    private static boolean isDefaultFormat(String format) {
         return format == null || format.isEmpty() || INDEX_DIRECTORY_FORMATS.contains(format.toLowerCase(Locale.ROOT));
     }
 }

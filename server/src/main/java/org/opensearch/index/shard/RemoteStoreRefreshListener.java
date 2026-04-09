@@ -140,7 +140,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
             try {
                 segmentTracker.updateLocalRefreshTimeAndSeqNo();
                 try (GatedCloseable<CatalogSnapshot> catalogSnapshotRef = indexShard.getCatalogSnapshot()) {
-                    Collection<String> localSegmentsPostRefresh = catalogSnapshotRef.get().getUploadFileNames();
+                    Collection<String> localSegmentsPostRefresh = catalogSnapshotRef.get().getFiles();
                     updateLocalSizeMapAndTracker(localSegmentsPostRefresh);
                 }
             } catch (Throwable t) {
@@ -209,7 +209,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
      */
     boolean isRemoteSegmentStoreInSync() {
         try (GatedCloseable<CatalogSnapshot> catalogSnapshotRef = indexShard.getCatalogSnapshot()) {
-            return catalogSnapshotRef.get().getUploadFileNames().stream().allMatch(this::skipUpload);
+            return catalogSnapshotRef.get().getFiles().stream().allMatch(this::skipUpload);
         } catch (Throwable throwable) {
             logger.error("Throwable thrown during isRemoteSegmentStoreInSync", throwable);
         }
@@ -268,7 +268,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
                     // Capture replication checkpoint before uploading the segments as upload can take some time and checkpoint can
                     // move.
                     long lastRefreshedCheckpoint = indexShard.getIndexer().lastRefreshedCheckpoint();
-                    Collection<String> localSegmentsPostRefresh = catalogSnapshot.getUploadFileNames();
+                    Collection<String> localSegmentsPostRefresh = catalogSnapshot.getFiles();
 
                     // Create a map of file name to size and update the refresh segment tracker
                     Map<String, Long> localSegmentsSizeMap = updateLocalSizeMapAndTracker(localSegmentsPostRefresh).entrySet()
@@ -513,11 +513,12 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
         if (!localSegmentChecksumMap.containsKey(file)) {
             if (indexShard.indexSettings().isPluggableDataFormatEnabled()) {
                 DataFormatAwareStoreDirectory dfasd = DataFormatAwareStoreDirectory.unwrap(storeDirectory);
-                if (dfasd != null) {
-                    String checksum = dfasd.calculateUploadChecksum(file);
-                    localSegmentChecksumMap.put(file, checksum);
-                    return checksum;
+                if (dfasd == null) {
+                    throw new IllegalStateException("DataFormatAwareStoreDirectory expected when pluggable data format is enabled");
                 }
+                String checksum = dfasd.calculateUploadChecksum(file);
+                localSegmentChecksumMap.put(file, checksum);
+                return checksum;
             }
             try (IndexInput indexInput = storeDirectory.openInput(file, IOContext.READONCE)) {
                 String checksum = Long.toString(CodecUtil.retrieveChecksum(indexInput));

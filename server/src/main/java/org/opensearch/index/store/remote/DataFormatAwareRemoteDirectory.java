@@ -100,7 +100,7 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
      *
      * <p>Volatile for atomic reference swap in {@link #replaceBlobFormatCache(Map)}.
      */
-    private volatile ConcurrentHashMap<String, String> blobFormatCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> blobFormatCache = new ConcurrentHashMap<>();
 
     /**
      * Full constructor with all rate limiter parameters.
@@ -174,7 +174,8 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
     public void replaceBlobFormatCache(Map<String, String> blobKeyToFormat) {
         // Atomic reference swap — avoids clear+put race condition.
         // Safe because init() is called during shard startup before any concurrent uploads.
-        this.blobFormatCache = new ConcurrentHashMap<>(blobKeyToFormat != null ? blobKeyToFormat : Map.of());
+        this.blobFormatCache.clear();
+        this.blobFormatCache.putAll(blobKeyToFormat);
     }
 
     /**
@@ -373,86 +374,6 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
         throw new NoSuchFileException(name);
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // FileMetadata-based convenience methods
-    // Used by callers that have FileMetadata objects (e.g., DataFormatAwareStoreDirectory)
-    // ═══════════════════════════════════════════════════════════════
-
-    /**
-     * Copy from DataFormatAwareStoreDirectory using FileMetadata for synchronous upload.
-     */
-    public void copyFrom(DataFormatAwareStoreDirectory from, FileMetadata src, String dest, IOContext context) throws IOException {
-        boolean success = false;
-        try (IndexInput is = from.openInput(src, IOContext.READONCE); IndexOutput os = createOutput(dest, src.dataFormat(), context)) {
-            os.copyBytes(is, is.length());
-            success = true;
-        } finally {
-            if (!success) {
-                from.deleteFile(src);
-            }
-        }
-    }
-
-    /**
-     * Get file length using FileMetadata.
-     */
-    public long fileLength(FileMetadata fileMetadata) throws IOException {
-        BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
-
-        if (container == null) {
-            throw new NoSuchFileException(
-                String.format(java.util.Locale.ROOT, "No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file())
-            );
-        }
-
-        List<BlobMetadata> metadata = container.listBlobsByPrefixInSortedOrder(
-            fileMetadata.file(),
-            1,
-            BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC
-        );
-        if (metadata.size() == 1 && metadata.get(0).name().equals(fileMetadata.file())) {
-            return metadata.get(0).length();
-        }
-        throw new NoSuchFileException(fileMetadata.file());
-    }
-
-    /**
-     * Open input using FileMetadata.
-     */
-    public IndexInput openInput(FileMetadata fileMetadata, long fileLength, IOContext context) throws IOException {
-        BlobContainer container = getBlobContainerForFormat(fileMetadata.dataFormat());
-
-        if (container == null) {
-            throw new IOException(
-                String.format(java.util.Locale.ROOT, "No container for format %s, file %s", fileMetadata.dataFormat(), fileMetadata.file())
-            );
-        }
-
-        InputStream inputStream = null;
-        try {
-            inputStream = container.readBlob(fileMetadata.file());
-            UnaryOperator<InputStream> rateLimiter = downloadRateLimiterProvider.get(fileMetadata.file());
-            return new RemoteIndexInput(fileMetadata.file(), rateLimiter.apply(inputStream), fileLength);
-        } catch (Exception e) {
-            if (inputStream != null) {
-                try {
-                    inputStream.close();
-                } catch (Exception closeEx) {
-                    e.addSuppressed(closeEx);
-                }
-            }
-            logger.error(
-                () -> new ParameterizedMessage(
-                    "Exception reading blob: file={}, format={}",
-                    fileMetadata.file(),
-                    fileMetadata.dataFormat()
-                ),
-                e
-            );
-            throw e;
-        }
-    }
-
     /**
      * Create output for a specific format.
      */
@@ -481,7 +402,7 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
 
     @Override
     public void close() throws IOException {
-        blobFormatCache = new ConcurrentHashMap<>();
+        blobFormatCache.clear();
         formatBlobContainers.clear();
     }
 

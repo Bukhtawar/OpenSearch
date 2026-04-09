@@ -146,7 +146,6 @@ import org.opensearch.index.engine.SafeCommitInfo;
 import org.opensearch.index.engine.Segment;
 import org.opensearch.index.engine.SegmentsStats;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
-import org.opensearch.index.engine.exec.IndexReaderProvider;
 import org.opensearch.index.engine.exec.Indexer;
 import org.opensearch.index.engine.exec.coord.CatalogSnapshot;
 import org.opensearch.index.engine.exec.coord.SegmentInfosCatalogSnapshot;
@@ -2028,6 +2027,39 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             metadataMap
         );
         logger.trace("Recomputed ReplicationCheckpoint for shard {}", checkpoint);
+        return checkpoint;
+    }
+
+    /**
+     * Compute the latest {@link ReplicationCheckpoint} from a CatalogSnapshot.
+     * This function fetches a metadata snapshot from the store that comes with an IO cost.
+     * We will reuse the existing stored checkpoint if it is at the same SI version.
+     *
+     * @param catalogSnapshot {@link CatalogSnapshot} infos to use to compute.
+     * @return {@link ReplicationCheckpoint} Checkpoint computed from the infos.
+     * @throws IOException When there is an error computing segment metadata from the store.
+     */
+    ReplicationCheckpoint computeReplicationCheckpoint(CatalogSnapshot catalogSnapshot) throws IOException {
+        if (catalogSnapshot == null) {
+            return ReplicationCheckpoint.empty(shardId);
+        }
+        final ReplicationCheckpoint latestReplicationCheckpoint = getLatestReplicationCheckpoint();
+        if (latestReplicationCheckpoint.getSegmentInfosVersion() == catalogSnapshot.getVersion()
+            && latestReplicationCheckpoint.getSegmentsGen() == catalogSnapshot.getGeneration()
+            && latestReplicationCheckpoint.getPrimaryTerm() == getOperationPrimaryTerm()) {
+            return latestReplicationCheckpoint;
+        }
+        final Map<String, StoreFileMetadata> metadataMap = store.getSegmentMetadataMap(catalogSnapshot);
+        final ReplicationCheckpoint checkpoint = new ReplicationCheckpoint(
+            this.shardId,
+            getOperationPrimaryTerm(),
+            catalogSnapshot.getGeneration(),
+            catalogSnapshot.getVersion(),
+            metadataMap.values().stream().mapToLong(StoreFileMetadata::length).sum(),
+            getIndexer().config().getCodec().getName(),
+            metadataMap
+        );
+        logger.trace("Recomputed ReplicationCheckpoint from CatalogSnapshot for shard {}", checkpoint);
         return checkpoint;
     }
 
@@ -5901,50 +5933,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @return a {@link GatedCloseable} wrapping the catalog snapshot
      */
     public GatedCloseable<CatalogSnapshot> getCatalogSnapshot() {
-        if (indexSettings().isPluggableDataFormatEnabled()) {
-            DataFormatAwareEngine compositeEngine = getCompositeEngine();
-            if (compositeEngine != null && compositeEngine.hasCatalogSnapshotManager()) {
-                try {
-                    GatedCloseable<IndexReaderProvider.Reader> readerRef = compositeEngine.acquireReader();
-                    CatalogSnapshot snapshot = readerRef.get().catalogSnapshot();
-                    return new GatedCloseable<>(snapshot, readerRef::close);
-                } catch (IOException e) {
-                    throw new OpenSearchException("Failed to acquire catalog snapshot from DataFormatAwareEngine", e);
-                }
-            }
-        }
-        GatedCloseable<SegmentInfos> segmentInfosRef = getSegmentInfosSnapshot();
-        SegmentInfosCatalogSnapshot snapshot = new SegmentInfosCatalogSnapshot(segmentInfosRef.get());
-        return new GatedCloseable<>(snapshot, segmentInfosRef::close);
-    }
-
-    /**
-     * Computes a {@link ReplicationCheckpoint} from a {@link CatalogSnapshot}.
-     * Delegates to the snapshot's polymorphic {@link CatalogSnapshot#getStoreFileMetadataMap} for
-     * format-aware metadata resolution.
-     */
-    ReplicationCheckpoint computeReplicationCheckpoint(CatalogSnapshot catalogSnapshot) throws IOException {
-        if (catalogSnapshot == null) {
-            return ReplicationCheckpoint.empty(shardId);
-        }
-        final ReplicationCheckpoint latestReplicationCheckpoint = getLatestReplicationCheckpoint();
-        if (latestReplicationCheckpoint.getSegmentInfosVersion() == catalogSnapshot.getVersion()
-            && latestReplicationCheckpoint.getSegmentsGen() == catalogSnapshot.getGeneration()
-            && latestReplicationCheckpoint.getPrimaryTerm() == getOperationPrimaryTerm()) {
-            return latestReplicationCheckpoint;
-        }
-        final Map<String, StoreFileMetadata> metadataMap = catalogSnapshot.getStoreFileMetadataMap(store);
-        final ReplicationCheckpoint checkpoint = new ReplicationCheckpoint(
-            this.shardId,
-            getOperationPrimaryTerm(),
-            catalogSnapshot.getGeneration(),
-            catalogSnapshot.getVersion(),
-            metadataMap.values().stream().mapToLong(StoreFileMetadata::length).sum(),
-            getIndexer().config().getCodec().getName(),
-            metadataMap
-        );
-        logger.trace("Recomputed ReplicationCheckpoint from CatalogSnapshot for shard {}", checkpoint);
-        return checkpoint;
+        return getIndexer().acquireSnapshot();
     }
 
     private TimeValue getRemoteTranslogUploadBufferInterval(Supplier<TimeValue> clusterRemoteTranslogBufferIntervalSupplier) {

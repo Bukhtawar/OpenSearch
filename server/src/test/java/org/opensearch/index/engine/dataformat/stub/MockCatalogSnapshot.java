@@ -13,8 +13,6 @@ import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
 import org.opensearch.index.engine.exec.coord.CatalogSnapshot;
-import org.opensearch.index.store.Store;
-import org.opensearch.index.store.StoreFileMetadata;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -105,13 +103,8 @@ public class MockCatalogSnapshot extends CatalogSnapshot {
     }
 
     @Override
-    public Collection<String> getUploadFileNames() {
+    public Collection<String> getFiles() {
         return List.of();
-    }
-
-    @Override
-    public Map<String, StoreFileMetadata> getStoreFileMetadataMap(Store store) {
-        return Map.of();
     }
 
     @Override
