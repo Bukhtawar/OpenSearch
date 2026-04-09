@@ -10,6 +10,7 @@ package org.opensearch.index.engine.dataformat;
 
 import org.opensearch.common.annotation.ExperimentalApi;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.Map;
@@ -24,7 +25,7 @@ import java.util.Map;
  * @opensearch.experimental
  */
 @ExperimentalApi
-public interface IndexingExecutionEngine<T extends DataFormat, P extends DocumentInput<?>> {
+public interface IndexingExecutionEngine<T extends DataFormat, P extends DocumentInput<?>> extends Closeable {
     /**
      * Creates a new writer for the given writer generation.
      *
