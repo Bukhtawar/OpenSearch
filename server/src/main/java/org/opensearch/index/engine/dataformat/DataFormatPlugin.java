@@ -45,5 +45,5 @@ public interface DataFormatPlugin {
      * @param indexSettings the index settings
      * @return the indexing execution engine instance
      */
-    IndexingExecutionEngine<?, ?> indexingEngine(MapperService mapperService, ShardPath shardPath, IndexSettings indexSettings);
+    IndexingExecutionEngine<?, ?> indexingEngine(MapperService mapperService, ShardPath shardPath, IndexSettings indexSettings, DataFormatRegistry dataFormatRegistry);
 }

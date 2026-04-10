@@ -19,7 +19,6 @@ import org.opensearch.index.engine.dataformat.RefreshInput;
 import org.opensearch.index.engine.dataformat.RefreshResult;
 import org.opensearch.index.engine.dataformat.Writer;
 import org.opensearch.index.engine.exec.Segment;
-import org.opensearch.index.engine.exec.WriterFileSet;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.parquet.bridge.RustBridge;
 import org.opensearch.parquet.memory.ArrowBufferPool;
@@ -27,7 +26,6 @@ import org.opensearch.parquet.writer.ParquetDocumentInput;
 import org.opensearch.parquet.writer.ParquetWriter;
 import org.opensearch.threadpool.ThreadPool;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -92,6 +90,11 @@ public class ParquetIndexingEngine implements IndexingExecutionEngine<ParquetDat
         this.bufferPool = new ArrowBufferPool(settings);
         this.settings = settings;
         this.threadPool = threadPool;
+        try {
+            Files.createDirectory(shardPath.resolve("parquet"));
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Override
@@ -119,12 +122,10 @@ public class ParquetIndexingEngine implements IndexingExecutionEngine<ParquetDat
         if (refreshInput == null) {
             return new RefreshResult(List.of());
         }
-        List<Segment> segments = new ArrayList<>(refreshInput.existingSegments());
-        long gen = segments.stream().mapToLong(Segment::generation).max().orElse(-1) + 1;
-        for (WriterFileSet wfs : refreshInput.writerFiles()) {
-            segments.add(Segment.builder(gen++).addSearchableFiles(dataFormat, wfs).build());
-        }
-        return new RefreshResult(segments);
+        List<Segment> segments = new ArrayList<>();
+        segments.addAll(refreshInput.existingSegments());
+        segments.addAll(refreshInput.writerFiles());
+        return new RefreshResult(List.copyOf(segments));
     }
 
     @Override

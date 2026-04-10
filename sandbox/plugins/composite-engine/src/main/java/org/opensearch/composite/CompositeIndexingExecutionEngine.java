@@ -15,15 +15,7 @@ import org.opensearch.common.queue.LockablePool;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.index.IndexSettings;
-import org.opensearch.index.engine.dataformat.DataFormat;
-import org.opensearch.index.engine.dataformat.DataFormatPlugin;
-import org.opensearch.index.engine.dataformat.DocumentInput;
-import org.opensearch.index.engine.dataformat.FileInfos;
-import org.opensearch.index.engine.dataformat.IndexingExecutionEngine;
-import org.opensearch.index.engine.dataformat.Merger;
-import org.opensearch.index.engine.dataformat.RefreshInput;
-import org.opensearch.index.engine.dataformat.RefreshResult;
-import org.opensearch.index.engine.dataformat.Writer;
+import org.opensearch.index.engine.dataformat.*;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
 import org.opensearch.index.mapper.MapperService;
@@ -75,19 +67,17 @@ public class CompositeIndexingExecutionEngine implements IndexingExecutionEngine
      * The writer pool is created internally and initialized with a writer supplier
      * that creates {@link CompositeWriter} instances bound to this engine.
      *
-     * @param dataFormatPlugins the discovered data format plugins keyed by format name
      * @param indexSettings the index settings containing composite configuration
      * @param mapperService the mapper service for field mapping resolution
      * @param shardPath the shard path for file storage
      * @throws IllegalArgumentException if any configured format is not registered
      */
     public CompositeIndexingExecutionEngine(
-        Map<String, DataFormatPlugin> dataFormatPlugins,
         IndexSettings indexSettings,
         MapperService mapperService,
+        DataFormatRegistry dataFormatRegistry,
         ShardPath shardPath
     ) {
-        Objects.requireNonNull(dataFormatPlugins, "dataFormatPlugins must not be null");
         Objects.requireNonNull(indexSettings, "indexSettings must not be null");
 
         Settings settings = indexSettings.getSettings();
@@ -95,18 +85,15 @@ public class CompositeIndexingExecutionEngine implements IndexingExecutionEngine
         String primaryFormatName = CompositeEnginePlugin.PRIMARY_DATA_FORMAT.get(settings);
         List<String> secondaryFormatNames = CompositeEnginePlugin.SECONDARY_DATA_FORMATS.get(settings);
 
-        validateFormatsRegistered(dataFormatPlugins, primaryFormatName, secondaryFormatNames);
-
         List<DataFormat> allFormats = new ArrayList<>();
-        DataFormatPlugin primaryPlugin = dataFormatPlugins.get(primaryFormatName);
-        this.primaryEngine = primaryPlugin.indexingEngine(mapperService, shardPath, indexSettings);
-        allFormats.add(primaryPlugin.getDataFormat());
+        this.primaryEngine = dataFormatRegistry.getIndexingEngine(dataFormatRegistry.format(primaryFormatName), mapperService, shardPath, indexSettings);
+        allFormats.add(dataFormatRegistry.format(primaryFormatName));
 
         List<IndexingExecutionEngine<?, ?>> secondaries = new ArrayList<>();
         for (String secondaryName : secondaryFormatNames) {
-            DataFormatPlugin secondaryPlugin = dataFormatPlugins.get(secondaryName);
-            secondaries.add(secondaryPlugin.indexingEngine(mapperService, shardPath, indexSettings));
-            allFormats.add(secondaryPlugin.getDataFormat());
+            DataFormat secondaryFormat = dataFormatRegistry.format(secondaryName);
+            secondaries.add(dataFormatRegistry.getIndexingEngine(secondaryFormat, mapperService, shardPath, indexSettings));
+            allFormats.add(secondaryFormat);
         }
         this.secondaryEngines = Set.copyOf(secondaries);
 
@@ -174,7 +161,7 @@ public class CompositeIndexingExecutionEngine implements IndexingExecutionEngine
         for (IndexingExecutionEngine<?, ?> engine : secondaryEngines) {
             secResults.add(engine.refresh(refreshInput));
         }
-        return null;
+        return primary;
     }
 
     @Override

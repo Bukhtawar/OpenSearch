@@ -29,6 +29,7 @@ import org.opensearch.index.codec.CodecService;
 import org.opensearch.index.codec.CodecServiceConfig;
 import org.opensearch.index.codec.CodecServiceFactory;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
+import org.opensearch.index.engine.dataformat.commit.Committer;
 import org.opensearch.index.engine.dataformat.commit.CommitterFactory;
 import org.opensearch.index.mapper.DocumentMapperForType;
 import org.opensearch.index.mapper.MapperService;
@@ -42,15 +43,14 @@ import org.opensearch.plugins.EnginePlugin;
 import org.opensearch.plugins.PluginsService;
 import org.opensearch.threadpool.ThreadPool;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Optional;
+import java.io.IOException;
+import java.util.*;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
+
+import static org.opensearch.index.engine.Engine.HISTORY_UUID_KEY;
+import static org.opensearch.index.translog.Translog.TRANSLOG_UUID_KEY;
 
 /**
  * A factory to create an EngineConfig based on custom plugin overrides
@@ -139,8 +139,28 @@ public class EngineConfigFactory {
         }
 
         if (committerFactories.size() > 1 || (committerFactories.size() != 1 && idxSettings.isPluggableDataFormatenabled())) {
-            throw new IllegalStateException("Multiple committer factories detected: " + committerFactories);
+            committerFactories.add(new CommitterFactory() {
+                @Override
+                public Committer getCommitter(Store store) {
+                    return new Committer() {
+                        @Override
+                        public Map<String, String> readLastCommittedUserData() {
+                            try {
+                                return store.readLastCommittedSegmentsInfo().getUserData();
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+
+                        @Override
+                        public long getLastCommittedGeneration() {
+                            return 0;
+                        }
+                    };
+                }
+            });
         }
+
 
         final CodecService instance = codecService.orElse(null);
         this.codecServiceFactory = (instance != null) ? (config) -> instance : codecServiceFactory.orElse(null);

@@ -71,16 +71,6 @@ public class DataFormatRegistry {
             }
         }
 
-        if (!readerManagerBuilders.keySet().equals(dataFormatPlugiRegistry.keySet())) {
-            throw new IllegalStateException(
-                "Cannot build registry as data formats have missing indexing engine/reader managers"
-                    + " - formats with reader managers: "
-                    + readerManagerBuilders.keySet()
-                    + ", formats with plugins: "
-                    + dataFormatPlugiRegistry.keySet()
-            );
-        }
-
         this.dataFormatPluginRegistry = Map.copyOf(dataFormatPlugiRegistry);
         this.dataFormats = Map.copyOf(dataFormats);
         this.readerManagerBuilders = Map.copyOf(readerManagerBuilders);
@@ -106,7 +96,7 @@ public class DataFormatRegistry {
         if (plugin == null) {
             throw new IllegalArgumentException("No plugin registered for DataFormat [" + format.name() + "]");
         }
-        return plugin.indexingEngine(mapperService, shardPath, indexSettings);
+        return plugin.indexingEngine(mapperService, shardPath, indexSettings, this);
     }
 
     public DataFormat format(String name) {
