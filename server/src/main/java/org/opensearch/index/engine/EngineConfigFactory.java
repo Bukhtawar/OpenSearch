@@ -138,25 +138,20 @@ public class EngineConfigFactory {
             );
         }
 
-        if (committerFactories.size() > 1 || (committerFactories.size() != 1 && idxSettings.isPluggableDataFormatenabled())) {
-            committerFactories.add(new CommitterFactory() {
+        if (committerFactories.size() > 1 || (committerFactories.size() != 1 && idxSettings.isPluggableDataFormatEnabled())) {
+            committerFactories.add(store -> new Committer() {
                 @Override
-                public Committer getCommitter(Store store) {
-                    return new Committer() {
-                        @Override
-                        public Map<String, String> readLastCommittedUserData() {
-                            try {
-                                return store.readLastCommittedSegmentsInfo().getUserData();
-                            } catch (IOException e) {
-                                throw new RuntimeException(e);
-                            }
-                        }
+                public Map<String, String> readLastCommittedUserData() {
+                    try {
+                        return store.readLastCommittedSegmentsInfo().getUserData();
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
 
-                        @Override
-                        public long getLastCommittedGeneration() {
-                            return 0;
-                        }
-                    };
+                @Override
+                public long getLastCommittedGeneration() {
+                    return 0;
                 }
             });
         }
