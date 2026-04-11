@@ -9,7 +9,7 @@
 package org.opensearch.index.engine.dataformat;
 
 import org.opensearch.common.annotation.ExperimentalApi;
-import org.opensearch.index.store.checksum.ChecksumHandler;
+import org.opensearch.index.store.FormatChecksumStrategy;
 
 import java.util.function.Supplier;
 
@@ -24,17 +24,17 @@ import java.util.function.Supplier;
 public class DataFormatDescriptor {
 
     private final String formatName;
-    private final Supplier<ChecksumHandler> checksumHandlerSupplier;
+    private final Supplier<FormatChecksumStrategy> checksumStrategySupplier;
 
     /**
      * Creates a new DataFormatDescriptor.
      *
      * @param formatName              the format name (e.g., "parquet")
-     * @param checksumHandlerSupplier supplier for the checksum handler for this format
+     * @param checksumStrategySupplier supplier for the checksum strategy for this format
      */
-    public DataFormatDescriptor(String formatName, Supplier<ChecksumHandler> checksumHandlerSupplier) {
+    public DataFormatDescriptor(String formatName, Supplier<FormatChecksumStrategy> checksumStrategySupplier) {
         this.formatName = formatName;
-        this.checksumHandlerSupplier = checksumHandlerSupplier;
+        this.checksumStrategySupplier = checksumStrategySupplier;
     }
 
     /**
@@ -47,11 +47,11 @@ public class DataFormatDescriptor {
     }
 
     /**
-     * Returns a checksum handler for this format.
+     * Returns a checksum strategy for this format.
      *
-     * @return the checksum handler
+     * @return the checksum strategy
      */
-    public ChecksumHandler getChecksumHandler() {
-        return checksumHandlerSupplier.get();
+    public FormatChecksumStrategy getChecksumHandler() {
+        return checksumStrategySupplier.get();
     }
 }

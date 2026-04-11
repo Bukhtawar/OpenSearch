@@ -21,6 +21,8 @@ import org.opensearch.index.engine.dataformat.Writer;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.FormatChecksumStrategy;
+import org.opensearch.index.store.PrecomputedChecksumStrategy;
 import org.opensearch.parquet.bridge.RustBridge;
 import org.opensearch.parquet.memory.ArrowBufferPool;
 import org.opensearch.parquet.writer.ParquetDocumentInput;
@@ -67,6 +69,7 @@ public class ParquetIndexingEngine implements IndexingExecutionEngine<ParquetDat
     private final ArrowBufferPool bufferPool;
     private final Settings settings;
     private final ThreadPool threadPool;
+    private final FormatChecksumStrategy checksumStrategy;
 
     /**
      * Creates a new ParquetIndexingEngine.
@@ -92,6 +95,15 @@ public class ParquetIndexingEngine implements IndexingExecutionEngine<ParquetDat
         this.bufferPool = new ArrowBufferPool(settings);
         this.settings = settings;
         this.threadPool = threadPool;
+        this.checksumStrategy = new PrecomputedChecksumStrategy();
+    }
+
+    /**
+     * Returns the checksum strategy for this engine's Parquet files.
+     * Used by the upload path to retrieve pre-computed checksums.
+     */
+    public FormatChecksumStrategy getChecksumStrategy() {
+        return checksumStrategy;
     }
 
     @Override
@@ -101,7 +113,7 @@ public class ParquetIndexingEngine implements IndexingExecutionEngine<ParquetDat
             dataFormat.name(),
             FILE_NAME_PREFIX + "_" + writerGeneration + FILE_NAME_EXT
         );
-        return new ParquetWriter(filePath.toString(), writerGeneration, dataFormat, schemaSupplier.get(), bufferPool, settings, threadPool);
+        return new ParquetWriter(filePath.toString(), writerGeneration, dataFormat, schemaSupplier.get(), bufferPool, settings, threadPool, checksumStrategy);
     }
 
     @Override

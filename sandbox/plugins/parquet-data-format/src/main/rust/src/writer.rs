@@ -16,12 +16,52 @@ use parquet::file::properties::WriterProperties;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use parquet::format::FileMetaData as FormatFileMetaData;
 use std::fs::File;
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use crate::{log_info, log_error, log_debug};
 
+/// A write wrapper that computes CRC32 as bytes flow through.
+/// Wraps a File and tracks the running checksum without buffering.
+struct Crc32Writer {
+    inner: File,
+    hasher: crc32fast::Hasher,
+}
+
+impl Crc32Writer {
+    fn new(file: File) -> Self {
+        Self {
+            inner: file,
+            hasher: crc32fast::Hasher::new(),
+        }
+    }
+
+    /// Returns the CRC32 checksum of all bytes written so far.
+    fn checksum(&self) -> u32 {
+        self.hasher.clone().finalize()
+    }
+}
+
+impl Write for Crc32Writer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.hasher.update(&buf[..n]);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Result from finalizing a writer: Parquet metadata + whole-file CRC32.
+pub struct FinalizeResult {
+    pub metadata: FormatFileMetaData,
+    pub crc32: u32,
+}
+
 lazy_static! {
-    pub static ref WRITER_MANAGER: DashMap<String, Arc<Mutex<ArrowWriter<File>>>> = DashMap::new();
+    pub static ref WRITER_MANAGER: DashMap<String, Arc<Mutex<ArrowWriter<Crc32Writer>>>> = DashMap::new();
     pub static ref FILE_MANAGER: DashMap<String, File> = DashMap::new();
 }
 
@@ -54,7 +94,8 @@ impl NativeParquetWriter {
             .set_bloom_filter_fpp(0.1)
             .set_bloom_filter_ndv(100000)
             .build();
-        let writer = ArrowWriter::try_new(file, schema, Some(props))?;
+        let crc_writer = Crc32Writer::new(file);
+        let writer = ArrowWriter::try_new(crc_writer, schema, Some(props))?;
         WRITER_MANAGER.insert(filename, Arc::new(Mutex::new(writer)));
         Ok(())
     }
@@ -93,16 +134,22 @@ impl NativeParquetWriter {
         }
     }
 
-    pub fn finalize_writer(filename: String) -> Result<Option<FormatFileMetaData>, Box<dyn std::error::Error>> {
+    pub fn finalize_writer(filename: String) -> Result<Option<FinalizeResult>, Box<dyn std::error::Error>> {
         log_debug!("finalize_writer called for file: {}", filename);
 
         if let Some((_, writer_arc)) = WRITER_MANAGER.remove(&filename) {
             match Arc::try_unwrap(writer_arc) {
                 Ok(mutex) => {
                     let writer = mutex.into_inner().unwrap();
+                    // ArrowWriter::close() returns FileMetaData and gives back the inner writer
                     let file_metadata = writer.close()?;
                     log_debug!("Successfully closed writer for file: {}, num_rows={}", filename, file_metadata.num_rows);
-                    Ok(Some(file_metadata))
+                    // The Crc32Writer was consumed by ArrowWriter — we need to get the checksum
+                    // before close. Since ArrowWriter::close() consumes self and returns metadata
+                    // but not the inner writer, we read the checksum from the file after close.
+                    // TODO: Once arrow-rs exposes into_inner() on ArrowWriter, get checksum directly.
+                    let crc32 = compute_file_crc32(&filename)?;
+                    Ok(Some(FinalizeResult { metadata: file_metadata, crc32 }))
                 }
                 Err(_) => {
                     log_error!("ERROR: Writer still in use for file: {}", filename);
@@ -149,4 +196,22 @@ impl NativeParquetWriter {
         log_debug!("Metadata for {}: version={}, num_rows={}", filename, file_metadata.version(), file_metadata.num_rows());
         Ok(file_metadata)
     }
+}
+
+/// Compute CRC32 of an entire file by reading it in chunks.
+/// Used as a fallback when the Crc32Writer's checksum can't be extracted
+/// (because ArrowWriter::close() consumes the inner writer).
+fn compute_file_crc32(filename: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    use std::io::Read;
+    let mut file = File::open(filename)?;
+    let mut hasher = crc32fast::Hasher::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize())
 }

@@ -11,8 +11,8 @@ package org.opensearch.index.store.checksum;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.IOContext;
-import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.opensearch.index.store.FormatChecksumStrategy;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.io.IOException;
@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.zip.CRC32;
 
 /**
- * Unit tests for {@link ChecksumHandler} implementations:
+ * Unit tests for {@link FormatChecksumStrategy} implementations:
  * {@link LuceneChecksumHandler} and {@link GenericCRC32ChecksumHandler}.
  */
 public class ChecksumHandlerTests extends OpenSearchTestCase {
@@ -28,16 +28,6 @@ public class ChecksumHandlerTests extends OpenSearchTestCase {
     // ═══════════════════════════════════════════════════════════════
     // GenericCRC32ChecksumHandler Tests
     // ═══════════════════════════════════════════════════════════════
-
-    public void testGenericCRC32ChecksumHandler_DefaultFormatName() {
-        GenericCRC32ChecksumHandler handler = new GenericCRC32ChecksumHandler();
-        assertEquals("generic", handler.getFormatName());
-    }
-
-    public void testGenericCRC32ChecksumHandler_CustomFormatName() {
-        GenericCRC32ChecksumHandler handler = new GenericCRC32ChecksumHandler("parquet");
-        assertEquals("parquet", handler.getFormatName());
-    }
 
     public void testGenericCRC32ChecksumHandler_EmptyFile() throws IOException {
         GenericCRC32ChecksumHandler handler = new GenericCRC32ChecksumHandler();
@@ -47,11 +37,9 @@ public class ChecksumHandlerTests extends OpenSearchTestCase {
             // write nothing
         }
 
-        try (IndexInput input = dir.openInput("empty.dat", IOContext.READONCE)) {
-            long checksum = handler.calculateChecksum(input);
-            CRC32 crc32 = new CRC32();
-            assertEquals("CRC32 of empty file should match", crc32.getValue(), checksum);
-        }
+        long checksum = handler.computeChecksum(dir, "empty.dat");
+        CRC32 crc32 = new CRC32();
+        assertEquals("CRC32 of empty file should match", crc32.getValue(), checksum);
     }
 
     public void testGenericCRC32ChecksumHandler_LargeFile() throws IOException {
@@ -68,25 +56,18 @@ public class ChecksumHandlerTests extends OpenSearchTestCase {
             out.writeBytes(data, data.length);
         }
 
-        try (IndexInput input = dir.openInput("large.dat", IOContext.READONCE)) {
-            long checksum = handler.calculateChecksum(input);
+        long checksum = handler.computeChecksum(dir, "large.dat");
 
-            CRC32 crc32 = new CRC32();
-            crc32.update(data);
-            assertEquals("CRC32 of large file should match", crc32.getValue(), checksum);
-        }
+        CRC32 crc32 = new CRC32();
+        crc32.update(data);
+        assertEquals("CRC32 of large file should match", crc32.getValue(), checksum);
     }
 
     // ═══════════════════════════════════════════════════════════════
     // LuceneChecksumHandler Tests
     // ═══════════════════════════════════════════════════════════════
 
-    public void testLuceneChecksumHandler_FormatName() {
-        LuceneChecksumHandler handler = new LuceneChecksumHandler();
-        assertEquals("lucene", handler.getFormatName());
-    }
-
-    public void testLuceneChecksumHandler_CalculateChecksum() throws IOException {
+    public void testLuceneChecksumHandler_ComputeChecksum() throws IOException {
         LuceneChecksumHandler handler = new LuceneChecksumHandler();
         ByteBuffersDirectory dir = new ByteBuffersDirectory();
 
@@ -96,17 +77,15 @@ public class ChecksumHandlerTests extends OpenSearchTestCase {
             CodecUtil.writeFooter(out);
         }
 
-        try (IndexInput input = dir.openInput("lucene_test.si", IOContext.READONCE)) {
-            long checksum = handler.calculateChecksum(input);
-            assertTrue("Lucene checksum should be non-zero", checksum != 0);
-        }
+        long checksum = handler.computeChecksum(dir, "lucene_test.si");
+        assertTrue("Lucene checksum should be non-zero", checksum != 0);
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // ChecksumHandler default method Tests
+    // FormatChecksumStrategy default method Tests
     // ═══════════════════════════════════════════════════════════════
 
-    public void testChecksumHandlerDefaultUploadChecksum() throws IOException {
+    public void testComputeChecksum_UploadChecksumString() throws IOException {
         GenericCRC32ChecksumHandler handler = new GenericCRC32ChecksumHandler();
         ByteBuffersDirectory dir = new ByteBuffersDirectory();
         byte[] data = "test".getBytes(StandardCharsets.UTF_8);
@@ -115,11 +94,35 @@ public class ChecksumHandlerTests extends OpenSearchTestCase {
             out.writeBytes(data, data.length);
         }
 
-        try (IndexInput input = dir.openInput("default_upload.dat", IOContext.READONCE)) {
-            String uploadChecksum = handler.calculateUploadChecksum(input);
-            assertNotNull(uploadChecksum);
-            // Should be the string representation of the long checksum
-            Long.parseLong(uploadChecksum); // should not throw
+        long checksum = handler.computeChecksum(dir, "default_upload.dat");
+        String uploadChecksum = Long.toString(checksum);
+        assertNotNull(uploadChecksum);
+        Long.parseLong(uploadChecksum); // should not throw
+    }
+
+    public void testComputeChecksum_Idempotent() throws IOException {
+        GenericCRC32ChecksumHandler handler = new GenericCRC32ChecksumHandler();
+        ByteBuffersDirectory dir = new ByteBuffersDirectory();
+        byte[] data = "idempotent test".getBytes(StandardCharsets.UTF_8);
+
+        try (IndexOutput out = dir.createOutput("idem.dat", IOContext.DEFAULT)) {
+            out.writeBytes(data, data.length);
         }
+
+        long checksum1 = handler.computeChecksum(dir, "idem.dat");
+        long checksum2 = handler.computeChecksum(dir, "idem.dat");
+        assertEquals("Checksum should be the same on repeated calls", checksum1, checksum2);
+    }
+
+    public void testRegisterChecksum_DefaultNoOp() {
+        GenericCRC32ChecksumHandler handler = new GenericCRC32ChecksumHandler();
+        // Default registerChecksum is a no-op; should not throw
+        handler.registerChecksum("file.dat", 12345L, 1L);
+    }
+
+    public void testClearChecksums_DefaultNoOp() {
+        GenericCRC32ChecksumHandler handler = new GenericCRC32ChecksumHandler();
+        // Default clearChecksums is a no-op; should not throw
+        handler.clearChecksums();
     }
 }

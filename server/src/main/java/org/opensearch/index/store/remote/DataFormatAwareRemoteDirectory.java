@@ -39,18 +39,14 @@ import org.opensearch.index.store.FileMetadata;
 import org.opensearch.index.store.RemoteDirectory;
 import org.opensearch.index.store.RemoteIndexInput;
 import org.opensearch.index.store.RemoteIndexOutput;
-import org.opensearch.index.store.RemoteSegmentStoreDirectory;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.NoSuchFileException;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.UnaryOperator;
 
 /**
@@ -79,28 +75,12 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
 
     private static final String DEFAULT_FORMAT = "lucene";
 
-    /**
-     * Formats that should route to the base blobContainer (same path as RemoteDirectory).
-     * Mirrors DataFormatAwareStoreDirectory.INDEX_DIRECTORY_FORMATS.
-     */
-    private static final java.util.Set<String> BASE_PATH_FORMATS = java.util.Set.of("lucene", "LUCENE", "metadata");
-
     private final UnaryOperator<OffsetRangeInputStream> uploadRateLimiter;
     private final UnaryOperator<OffsetRangeInputStream> lowPriorityUploadRateLimiter;
     private final DownloadRateLimiterProvider downloadRateLimiterProvider;
 
-    private final Map<String, BlobContainer> formatBlobContainers;
-    private final BlobPath baseBlobPath;
+    private final FormatBlobRouter formatBlobRouter;
     private final Logger logger;
-
-    /**
-     * Format lookup cache: maps blob keys (e.g., "_0.pqt__UUID") to their data format (e.g., "parquet").
-     * Populated by RemoteSegmentStoreDirectory via registerBlobFormat/replaceBlobFormatCache at well-defined
-     * mutation points (init, postUpload, deleteFile, markMergedSegmentsPendingDownload, etc.).
-     *
-     * <p>Volatile for atomic reference swap in {@link #replaceBlobFormatCache(Map)}.
-     */
-    private final ConcurrentHashMap<String, String> blobFormatCache = new ConcurrentHashMap<>();
 
     /**
      * Full constructor with all rate limiter parameters.
@@ -125,108 +105,56 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
             lowPriorityDownloadRateLimiter,
             pendingDownloadMergedSegments
         );
-        this.formatBlobContainers = new ConcurrentHashMap<>();
-        this.baseBlobPath = baseBlobPath;
+        this.formatBlobRouter = new FormatBlobRouter(blobStore, baseBlobPath);
         this.uploadRateLimiter = uploadRateLimiter;
         this.lowPriorityUploadRateLimiter = lowPriorityUploadRateLimiter;
         this.downloadRateLimiterProvider = new DownloadRateLimiterProvider(downloadRateLimiter, lowPriorityDownloadRateLimiter);
         this.logger = logger;
 
-        // Always register the lucene blob container at baseBlobPath for backward compatibility
-        // with RemoteDirectory which uses a single blob container for lucene data
-        formatBlobContainers.put(DEFAULT_FORMAT, blobStore.blobContainer(baseBlobPath));
-
-        // Initialize format-specific BlobContainers from DataFormatRegistry
-        // Mirrors DataFormatAwareStoreDirectory's checksum handler initialization pattern:
-        // resolve the active format from IndexSettings, then create per-format blob containers
+        // Pre-register format-specific BlobContainers from DataFormatRegistry
         if (dataFormatRegistry != null && indexSettings != null) {
             for (String formatName : dataFormatRegistry.getFormatDescriptors(indexSettings).keySet()) {
-                if (!BASE_PATH_FORMATS.contains(formatName)) {
-                    BlobPath formatPath = baseBlobPath.add(formatName.toLowerCase(java.util.Locale.ROOT));
-                    formatBlobContainers.put(formatName, blobStore.blobContainer(formatPath));
-                }
+                formatBlobRouter.registerFormat(formatName);
             }
         }
 
-        logger.debug("Created DataFormatAwareRemoteDirectory with {} format BlobContainers", formatBlobContainers.size());
+        logger.debug("Created DataFormatAwareRemoteDirectory with formats: {}", formatBlobRouter.registeredFormats());
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Format registration — overrides from RemoteDirectory
-    // Maintains format lookup cache for plain blob key routing
+    // Format Routing — delegates to FormatBlobRouter
     // ═══════════════════════════════════════════════════════════════
-
-    @Override
-    public void registerBlobFormat(String blobKey, String format) {
-        if (blobKey != null && format != null) {
-            blobFormatCache.put(blobKey, format);
-        }
-    }
-
-    @Override
-    public void unregisterBlobFormat(String blobKey) {
-        if (blobKey != null) {
-            blobFormatCache.remove(blobKey);
-        }
-    }
-
-    @Override
-    public void replaceBlobFormatCache(Map<String, String> blobKeyToFormat) {
-        // Atomic reference swap — avoids clear+put race condition.
-        // Safe because init() is called during shard startup before any concurrent uploads.
-        this.blobFormatCache.clear();
-        this.blobFormatCache.putAll(blobKeyToFormat);
-    }
 
     /**
      * Resolve the data format for a plain blob key using the format cache.
-     * Used by remote blob operations (deleteFile, openInput, fileLength, openBlockInput)
-     * where names are always plain blob keys (e.g., "_0.pqt__UUID") without format prefix.
+     * Delegates to {@link FormatBlobRouter#resolveFormat(String)}.
      *
      * @param name the blob key to resolve format for
      * @return the resolved data format name, defaults to "lucene"
      */
     private String resolveFormat(String name) {
-        String cached = blobFormatCache.get(name);
-        if (cached != null) {
-            return cached;
-        }
-        if (name.contains(RemoteSegmentStoreDirectory.SEGMENT_NAME_UUID_SEPARATOR)) {
-            logger.warn("Format cache miss for blob key [{}], defaulting to lucene", name);
-        }
-        return DEFAULT_FORMAT;
+        return formatBlobRouter.resolveFormat(name);
     }
-
-    // ═══════════════════════════════════════════════════════════════
-    // Format Routing — the core routing logic
-    // ═══════════════════════════════════════════════════════════════
 
     /**
      * Get BlobContainer for a specific data format.
-     *
-     * <p>Critical invariant: "lucene" format (and null/empty) returns the inherited
-     * blobContainer at baseBlobPath — the exact same location a plain RemoteDirectory would use.
-     * This ensures backward compatibility with non-optimized indices.
-     *
-     * <p>Non-lucene formats are routed to baseBlobPath/formatName/ sub-paths.
+     * Delegates to {@link FormatBlobRouter#containerFor(String)}.
      *
      * @param format the data format name (e.g., "lucene", "parquet")
      * @return BlobContainer for the format
      */
     public BlobContainer getBlobContainerForFormat(String format) {
-        // null/empty defaults to lucene
-        if (format == null || format.isEmpty()) {
-            format = DEFAULT_FORMAT;
-        }
-        // "LUCENE", "metadata" also map to the default lucene container
-        if (BASE_PATH_FORMATS.contains(format)) {
-            format = DEFAULT_FORMAT;
-        }
-        BlobContainer container = formatBlobContainers.get(format);
-        if (container == null) {
-            throw new IllegalArgumentException("No BlobContainer registered for format [" + format + "]");
-        }
-        return container;
+        return formatBlobRouter.containerFor(format);
+    }
+
+    /**
+     * Returns the {@link FormatBlobRouter} for direct access by callers that need
+     * format-aware blob operations (e.g., listing all blobs across formats).
+     *
+     * @return the format blob router
+     */
+    public FormatBlobRouter getFormatBlobRouter() {
+        return formatBlobRouter;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -239,11 +167,8 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
      */
     @Override
     public String[] listAll() throws IOException {
-        Set<String> allBlobs = new LinkedHashSet<>(Arrays.asList(super.listAll()));
-        for (Map.Entry<String, BlobContainer> entry : formatBlobContainers.entrySet()) {
-            allBlobs.addAll(entry.getValue().listBlobs().keySet());
-        }
-        String[] result = allBlobs.toArray(new String[0]);
+        Map<String, BlobMetadata> allBlobs = formatBlobRouter.listAllBlobs();
+        String[] result = allBlobs.keySet().toArray(new String[0]);
         Arrays.sort(result);
         return result;
     }
@@ -280,8 +205,8 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
         // Broadcast delete to every format-specific container. This is intentionally speculative:
         // blob names are UUID-suffixed and globally unique, so at most one container holds each
         // blob.
-        for (BlobContainer container : formatBlobContainers.values()) {
-            container.deleteBlobsIgnoringIfNotExists(names);
+        for (String format : formatBlobRouter.registeredFormats()) {
+            formatBlobRouter.containerFor(format).deleteBlobsIgnoringIfNotExists(names);
         }
     }
 
@@ -392,8 +317,8 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
     @Override
     public void delete() throws IOException {
         // Delete all format-specific containers
-        for (BlobContainer container : formatBlobContainers.values()) {
-            container.delete();
+        for (String format : formatBlobRouter.registeredFormats()) {
+            formatBlobRouter.containerFor(format).delete();
         }
         // Also delete the base container (inherited from RemoteDirectory)
         super.delete();
@@ -402,13 +327,12 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
 
     @Override
     public void close() throws IOException {
-        blobFormatCache.clear();
-        formatBlobContainers.clear();
+        formatBlobRouter.clearBlobFormatCache();
     }
 
     @Override
     public String toString() {
-        return "DataFormatAwareRemoteDirectory{" + "formats=" + formatBlobContainers.keySet() + ", basePath=" + baseBlobPath + '}';
+        return "DataFormatAwareRemoteDirectory{" + "formats=" + formatBlobRouter.registeredFormats() + ", basePath=" + formatBlobRouter.basePath() + '}';
     }
 
     // ═══════════════════════════════════════════════════════════════

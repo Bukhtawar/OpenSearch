@@ -42,6 +42,8 @@ import org.opensearch.index.store.lockmanager.FileLockInfo;
 import org.opensearch.index.store.lockmanager.RemoteStoreCommitLevelLockManager;
 import org.opensearch.index.store.lockmanager.RemoteStoreLockManager;
 import org.opensearch.index.store.lockmanager.RemoteStoreMetadataLockManager;
+import org.opensearch.index.store.remote.DataFormatAwareRemoteDirectory;
+import org.opensearch.index.store.remote.FormatBlobRouter;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadataHandlerFactory;
 import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
@@ -115,9 +117,17 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      *
      * <p>IMPORTANT: All mutations to this map must go through the encapsulated APIs
      * ({@link #replaceUploadedSegments}, {@link #addUploadedSegment}, {@link #removeUploadedSegment})
-     * to keep the format cache in DataFormatAwareRemoteDirectory in sync.
+     * to keep the format cache in FormatBlobRouter in sync.
      */
     private Map<String, UploadedSegmentMetadata> segmentsUploadedToRemoteStore;
+
+    /**
+     * Format blob router for managing blob key → format reverse lookup cache.
+     * Non-null only when remoteDataDirectory is a DataFormatAwareRemoteDirectory.
+     * When null, format registration calls are no-ops (single-format index).
+     */
+    @Nullable
+    private final FormatBlobRouter formatBlobRouter;
 
     private static final VersionedCodecStreamWrapper<RemoteSegmentMetadata> metadataStreamWrapper = new VersionedCodecStreamWrapper<>(
         new RemoteSegmentMetadataHandlerFactory(),
@@ -167,6 +177,9 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         this.metadataFilePinnedTimestampMap = new HashMap<>();
         this.logger = Loggers.getLogger(getClass(), shardId);
         this.pendingDownloadMergedSegments = pendingDownloadMergedSegments;
+        this.formatBlobRouter = (remoteDataDirectory instanceof DataFormatAwareRemoteDirectory dfard)
+            ? dfard.getFormatBlobRouter()
+            : null;
         init();
     }
 
@@ -991,12 +1004,16 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
 
     /** Shared helper for single format registration. */
     private void registerFormatForBlob(String blobKey, String originalFilename) {
-        remoteDataDirectory.registerBlobFormat(blobKey, extractFormat(originalFilename));
+        if (formatBlobRouter != null) {
+            formatBlobRouter.registerBlobFormat(blobKey, extractFormat(originalFilename));
+        }
     }
 
     /** Shared helper for single format unregistration. */
     private void unregisterFormatForBlob(String blobKey) {
-        remoteDataDirectory.unregisterBlobFormat(blobKey);
+        if (formatBlobRouter != null) {
+            formatBlobRouter.unregisterBlobFormat(blobKey);
+        }
     }
 
     /**
@@ -1035,6 +1052,9 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      * Called after bulk replacement of segmentsUploadedToRemoteStore (init paths).
      */
     private void syncBlobFormatCache() {
+        if (formatBlobRouter == null) {
+            return;
+        }
         Map<String, String> blobKeyToFormat = new HashMap<>();
         for (UploadedSegmentMetadata metadata : segmentsUploadedToRemoteStore.values()) {
             blobKeyToFormat.put(metadata.getUploadedFilename(), extractFormat(metadata.getOriginalFilename()));
@@ -1044,7 +1064,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
                 blobKeyToFormat.put(entry.getValue(), extractFormat(entry.getKey()));
             }
         }
-        remoteDataDirectory.replaceBlobFormatCache(blobKeyToFormat);
+        formatBlobRouter.replaceBlobFormatCache(blobKeyToFormat);
     }
 
     private String getNewRemoteSegmentFilename(String localFilename) {

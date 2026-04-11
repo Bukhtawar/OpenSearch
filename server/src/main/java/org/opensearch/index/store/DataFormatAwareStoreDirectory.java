@@ -20,7 +20,6 @@ import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.dataformat.DataFormatDescriptor;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
 import org.opensearch.index.shard.ShardPath;
-import org.opensearch.index.store.checksum.ChecksumHandler;
 import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
 import org.opensearch.index.store.checksum.LuceneChecksumHandler;
 
@@ -78,8 +77,8 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
     private static final Set<String> INDEX_DIRECTORY_FORMATS = Set.of("lucene", "metadata");
 
     private final ShardPath shardPath;
-    private final Map<String, ChecksumHandler> checksumHandlers;
-    private static final ChecksumHandler DEFAULT_CHECKSUM_HANDLER = new GenericCRC32ChecksumHandler();
+    private final Map<String, FormatChecksumStrategy> checksumStrategies;
+    private static final FormatChecksumStrategy DEFAULT_CHECKSUM_STRATEGY = new GenericCRC32ChecksumHandler();
 
     /**
      * Constructs a DataFormatAwareStoreDirectory with a {@link DataFormatRegistry} for format-aware
@@ -98,16 +97,17 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
         super(new SubdirectoryAwareDirectory(delegate, shardPath));
         this.shardPath = shardPath;
         Map<String, DataFormatDescriptor> descriptors = dataFormatRegistry.getFormatDescriptors(indexSettings);
-        this.checksumHandlers = new HashMap<>();
+        this.checksumStrategies = new HashMap<>();
         for (Map.Entry<String, DataFormatDescriptor> entry : descriptors.entrySet()) {
-            this.checksumHandlers.put(entry.getKey(), entry.getValue().getChecksumHandler());
+            // ChecksumHandler extends FormatChecksumStrategy, so this works directly
+            this.checksumStrategies.put(entry.getKey(), entry.getValue().getChecksumHandler());
         }
-        this.checksumHandlers.put(DEFAULT_FORMAT, new LuceneChecksumHandler());
+        this.checksumStrategies.put(DEFAULT_FORMAT, new LuceneChecksumHandler());
 
         logger.debug(
-            "Created DataFormatAwareStoreDirectory for shard {} with checksum handlers for formats: {}",
+            "Created DataFormatAwareStoreDirectory for shard {} with checksum strategies for formats: {}",
             shardPath.getShardId(),
-            checksumHandlers.keySet()
+            checksumStrategies.keySet()
         );
     }
 
@@ -229,16 +229,14 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
     }
 
     /**
-     * Calculates checksum using the format-specific {@link ChecksumHandler}.
-     * Looks up the handler from the internal map by the file's data format,
-     * falling back to {@link GenericCRC32ChecksumHandler} for unknown formats.
+     * Calculates checksum using the format-specific {@link FormatChecksumStrategy}.
+     * Supports pre-computed checksums (O(1) for formats that register them during write)
+     * and falls back to file-based computation for formats that don't.
      */
     private long calculateChecksum(FileMetadata fm) throws IOException {
         String fileIdentifier = toFileIdentifier(fm);
-        ChecksumHandler handler = checksumHandlers.getOrDefault(fm.dataFormat(), DEFAULT_CHECKSUM_HANDLER);
-        try (IndexInput input = openInput(fileIdentifier, IOContext.READONCE)) {
-            return handler.calculateChecksum(input);
-        }
+        FormatChecksumStrategy strategy = checksumStrategies.getOrDefault(fm.dataFormat(), DEFAULT_CHECKSUM_STRATEGY);
+        return strategy.computeChecksum(this, fileIdentifier);
     }
 
     /**
@@ -247,6 +245,24 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
      */
     public String calculateUploadChecksum(String name) throws IOException {
         return Long.toString(calculateChecksum(name));
+    }
+
+    /**
+     * Registers a {@link FormatChecksumStrategy} for a data format.
+     * Overrides any existing strategy (including legacy {@link ChecksumHandler}) for that format.
+     *
+     * <p>Use this to register strategies that support pre-computed checksums (e.g.,
+     * {@link PrecomputedChecksumStrategy} for Parquet files whose CRC32 is computed
+     * during write by the Rust writer).
+     *
+     * @param format the data format name (e.g., "parquet")
+     * @param strategy the checksum strategy to use for this format
+     */
+    public void registerChecksumStrategy(String format, FormatChecksumStrategy strategy) {
+        if (format != null && strategy != null) {
+            checksumStrategies.put(format, strategy);
+            logger.debug("Registered FormatChecksumStrategy for format [{}]", format);
+        }
     }
 
     public IndexOutput createOutput(FileMetadata fm, IOContext context) throws IOException {

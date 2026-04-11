@@ -59,8 +59,8 @@ pub extern "system" fn Java_org_opensearch_parquet_bridge_RustBridge_finalizeWri
 ) -> jobject {
     let filename: String = env.get_string(&file).expect("Couldn't get java string!").into();
     match NativeParquetWriter::finalize_writer(filename) {
-        Ok(Some(metadata)) => {
-            match create_java_metadata(&mut env, &metadata) {
+        Ok(Some(result)) => {
+            match create_java_metadata(&mut env, &result.metadata, result.crc32 as i64) {
                 Ok(java_obj) => java_obj.into_raw(),
                 Err(e) => {
                     log_error!("ERROR: Failed to create Java metadata object: {:?}", e);
@@ -127,7 +127,7 @@ pub extern "system" fn Java_org_opensearch_parquet_bridge_RustBridge_getFileMeta
                 footer_signing_key_metadata: None,
                 column_orders: None,
             };
-            match create_java_metadata(&mut env, &format_metadata) {
+            match create_java_metadata(&mut env, &format_metadata, 0i64) {
                 Ok(java_obj) => java_obj.into_raw(),
                 Err(e) => {
                     log_error!("ERROR: Failed to create Java metadata: {:?}", e);
@@ -144,7 +144,7 @@ pub extern "system" fn Java_org_opensearch_parquet_bridge_RustBridge_getFileMeta
     }
 }
 
-fn create_java_metadata<'local>(env: &mut JNIEnv<'local>, metadata: &FormatFileMetaData) -> Result<JObject<'local>, Box<dyn std::error::Error>> {
+fn create_java_metadata<'local>(env: &mut JNIEnv<'local>, metadata: &FormatFileMetaData, crc32: i64) -> Result<JObject<'local>, Box<dyn std::error::Error>> {
     let class = env.find_class("org/opensearch/parquet/bridge/ParquetFileMetadata")?;
     let created_by_jstring = match &metadata.created_by {
         Some(created_by) => env.new_string(created_by)?,
@@ -152,11 +152,12 @@ fn create_java_metadata<'local>(env: &mut JNIEnv<'local>, metadata: &FormatFileM
     };
     let java_metadata = env.new_object(
         &class,
-        "(IJLjava/lang/String;)V",
+        "(IJLjava/lang/String;J)V",
         &[
             (metadata.version).into(),
             (metadata.num_rows).into(),
             (&created_by_jstring).into(),
+            crc32.into(),
         ],
     )?;
     Ok(java_metadata)

@@ -107,7 +107,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             .build();
         IndexSettings indexSettings = new IndexSettings(metadata, Settings.EMPTY);
         when(mockRegistry.getFormatDescriptors(any(IndexSettings.class))).thenReturn(
-            Map.of("parquet", new DataFormatDescriptor("parquet", () -> new GenericCRC32ChecksumHandler("parquet")))
+            Map.of("parquet", new DataFormatDescriptor("parquet", () -> new GenericCRC32ChecksumHandler()))
         );
 
         directory = new DataFormatAwareRemoteDirectory(
@@ -207,7 +207,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
 
     public void testDeleteFile_ParquetFile_WithFormatSuffix() throws IOException {
         // Register format in cache since DFARD receives plain blob keys
-        directory.registerBlobFormat("_0.parquet", "parquet");
+        directory.getFormatBlobRouter().registerBlobFormat("_0.parquet", "parquet");
         directory.deleteFile("_0.parquet");
 
         verify(parquetBlobContainer).deleteBlobsIgnoringIfNotExists(Collections.singletonList("_0.parquet"));
@@ -221,7 +221,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             "parquet/_0.parquet::_0.parquet__UUID1::checksum123::200::10"
         );
 
-        directory.registerBlobFormat("_0.parquet__UUID1", "parquet");
+        directory.getFormatBlobRouter().registerBlobFormat("_0.parquet__UUID1", "parquet");
         directory.deleteFile(metadata.getUploadedFilename());
 
         verify(parquetBlobContainer).deleteBlobsIgnoringIfNotExists(Collections.singletonList("_0.parquet__UUID1"));
@@ -277,7 +277,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         byte[] content = new byte[200];
         when(parquetBlobContainer.readBlob("_0.parquet__UUID1")).thenReturn(new ByteArrayInputStream(content));
 
-        directory.registerBlobFormat("_0.parquet__UUID1", "parquet");
+        directory.getFormatBlobRouter().registerBlobFormat("_0.parquet__UUID1", "parquet");
         IndexInput input = directory.openInput(metadata.getUploadedFilename(), 200, IOContext.DEFAULT);
         assertNotNull(input);
         assertEquals(200, input.length());
@@ -318,7 +318,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         when(parquetBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.parquet"), eq(1), any())).thenReturn(blobList);
 
         // Register format so resolveFormat routes to parquet container
-        directory.registerBlobFormat("_0.parquet", "parquet");
+        directory.getFormatBlobRouter().registerBlobFormat("_0.parquet", "parquet");
         long length = directory.fileLength("_0.parquet");
         assertEquals(5678, length);
     }
@@ -419,7 +419,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         when(parquetBlobContainer.readBlob("_0.parquet")).thenReturn(new ByteArrayInputStream(content));
 
         // Register format in cache since DFARD receives plain blob keys
-        directory.registerBlobFormat("_0.parquet", "parquet");
+        directory.getFormatBlobRouter().registerBlobFormat("_0.parquet", "parquet");
         IndexInput input = directory.openInput("_0.parquet", 200, IOContext.DEFAULT);
         assertNotNull(input);
         assertEquals(200, input.length());
@@ -468,7 +468,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         List<BlobMetadata> blobList = List.of(new PlainBlobMetadata("_0.parquet", 5678));
         when(parquetBlobContainer.listBlobsByPrefixInSortedOrder(eq("_0.parquet"), eq(1), any())).thenReturn(blobList);
 
-        directory.registerBlobFormat("_0.parquet", "parquet");
+        directory.getFormatBlobRouter().registerBlobFormat("_0.parquet", "parquet");
         long length = directory.fileLength(fm.file());
         assertEquals(5678, length);
     }
@@ -502,7 +502,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         byte[] content = new byte[200];
         when(parquetBlobContainer.readBlob("_0.parquet")).thenReturn(new ByteArrayInputStream(content));
 
-        directory.registerBlobFormat("_0.parquet", "parquet");
+        directory.getFormatBlobRouter().registerBlobFormat("_0.parquet", "parquet");
         IndexInput input = directory.openInput(fm.file(), 200, IOContext.DEFAULT);
         assertNotNull(input);
         assertEquals(200, input.length());
@@ -1208,18 +1208,18 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
         verify(baseBlobContainer).deleteBlobsIgnoringIfNotExists(eq(Collections.singletonList("_0.pqt__UUID1")));
 
         // Replace cache with parquet mapping
-        directory.replaceBlobFormatCache(Map.of("_0.pqt__UUID1", "parquet"));
+        directory.getFormatBlobRouter().replaceBlobFormatCache(Map.of("_0.pqt__UUID1", "parquet"));
         directory.deleteFile("_0.pqt__UUID1");
         verify(parquetBlobContainer).deleteBlobsIgnoringIfNotExists(eq(Collections.singletonList("_0.pqt__UUID1")));
     }
 
     public void testUnregisterBlobFormat() throws IOException {
-        directory.registerBlobFormat("_0.pqt__UUID1", "parquet");
+        directory.getFormatBlobRouter().registerBlobFormat("_0.pqt__UUID1", "parquet");
         directory.deleteFile("_0.pqt__UUID1");
         verify(parquetBlobContainer).deleteBlobsIgnoringIfNotExists(eq(Collections.singletonList("_0.pqt__UUID1")));
 
         // Unregister — should fall back to lucene
-        directory.unregisterBlobFormat("_0.pqt__UUID1");
+        directory.getFormatBlobRouter().unregisterBlobFormat("_0.pqt__UUID1");
         directory.deleteFile("_0.pqt__UUID1");
         verify(baseBlobContainer).deleteBlobsIgnoringIfNotExists(eq(Collections.singletonList("_0.pqt__UUID1")));
     }
@@ -1245,7 +1245,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
     }
 
     public void testOpenBlockInput_ParquetFile_WithCache() throws IOException {
-        directory.registerBlobFormat("_0.pqt__UUID1", "parquet");
+        directory.getFormatBlobRouter().registerBlobFormat("_0.pqt__UUID1", "parquet");
         byte[] data = new byte[] { 10, 20, 30 };
         InputStream stream = new ByteArrayInputStream(data);
         when(parquetBlobContainer.readBlob("_0.pqt__UUID1", 2, 3)).thenReturn(stream);

@@ -163,7 +163,7 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
                     "parquet",
                     new org.opensearch.index.engine.dataformat.DataFormatDescriptor(
                         "parquet",
-                        () -> new org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler("parquet")
+                        () -> new org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler()
                     )
                 );
             }

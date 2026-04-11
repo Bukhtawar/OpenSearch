@@ -9,13 +9,16 @@
 package org.opensearch.index.store.checksum;
 
 import org.apache.lucene.codecs.CodecUtil;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.opensearch.common.annotation.PublicApi;
+import org.opensearch.index.store.FormatChecksumStrategy;
 
 import java.io.IOException;
 
 /**
- * Checksum handler for Lucene segment files.
+ * Checksum strategy for Lucene segment files.
  *
  * <p>Reads the checksum from the Lucene codec footer — an O(1) operation
  * since it only reads the last 16 bytes of the file.</p>
@@ -23,17 +26,12 @@ import java.io.IOException;
  * @opensearch.api
  */
 @PublicApi(since = "3.0.0")
-public class LuceneChecksumHandler implements ChecksumHandler {
-
-    private static final String FORMAT_NAME = "lucene";
+public class LuceneChecksumHandler implements FormatChecksumStrategy {
 
     @Override
-    public String getFormatName() {
-        return FORMAT_NAME;
-    }
-
-    @Override
-    public long calculateChecksum(IndexInput input) throws IOException {
-        return CodecUtil.retrieveChecksum(input);
+    public long computeChecksum(Directory dir, String fileName) throws IOException {
+        try (IndexInput input = dir.openInput(fileName, IOContext.READONCE)) {
+            return CodecUtil.retrieveChecksum(input);
+        }
     }
 }
