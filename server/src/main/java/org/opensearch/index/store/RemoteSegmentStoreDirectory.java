@@ -177,9 +177,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         this.metadataFilePinnedTimestampMap = new HashMap<>();
         this.logger = Loggers.getLogger(getClass(), shardId);
         this.pendingDownloadMergedSegments = pendingDownloadMergedSegments;
-        this.formatBlobRouter = (remoteDataDirectory instanceof DataFormatAwareRemoteDirectory dfard)
-            ? dfard.getFormatBlobRouter()
-            : null;
+        this.formatBlobRouter = remoteDataDirectory.getFormatBlobRouter().get();
         init();
     }
 

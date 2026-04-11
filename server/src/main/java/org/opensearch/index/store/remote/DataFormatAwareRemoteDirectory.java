@@ -45,6 +45,7 @@ import java.io.InputStream;
 import java.nio.file.NoSuchFileException;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Optional;
 import java.util.List;
 import java.util.Map;
 import java.util.function.UnaryOperator;
@@ -153,8 +154,9 @@ public class DataFormatAwareRemoteDirectory extends RemoteDirectory {
      *
      * @return the format blob router
      */
-    public FormatBlobRouter getFormatBlobRouter() {
-        return formatBlobRouter;
+    @Override
+    public Optional<FormatBlobRouter> getFormatBlobRouter() {
+        return Optional.of(formatBlobRouter);
     }
 
     // ═══════════════════════════════════════════════════════════════

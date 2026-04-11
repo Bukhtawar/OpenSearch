@@ -33,6 +33,7 @@ import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.unit.ByteSizeUnit;
 import org.opensearch.index.store.exception.ChecksumCombinationException;
+import org.opensearch.index.store.remote.FormatBlobRouter;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -42,6 +43,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -380,6 +382,10 @@ public class RemoteDirectory extends Directory {
 
     public void delete() throws IOException {
         blobContainer.delete();
+    }
+
+    public Optional<FormatBlobRouter> getFormatBlobRouter() {
+        return Optional.empty();
     }
 
     public boolean copyFrom(
