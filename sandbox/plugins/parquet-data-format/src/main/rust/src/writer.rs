@@ -16,43 +16,9 @@ use parquet::file::properties::WriterProperties;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use parquet::format::FileMetaData as FormatFileMetaData;
 use std::fs::File;
-use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use crate::{log_info, log_error, log_debug};
-
-/// A write wrapper that computes CRC32 as bytes flow through.
-/// Wraps a File and tracks the running checksum without buffering.
-struct Crc32Writer {
-    inner: File,
-    hasher: crc32fast::Hasher,
-}
-
-impl Crc32Writer {
-    fn new(file: File) -> Self {
-        Self {
-            inner: file,
-            hasher: crc32fast::Hasher::new(),
-        }
-    }
-
-    /// Returns the CRC32 checksum of all bytes written so far.
-    fn checksum(&self) -> u32 {
-        self.hasher.clone().finalize()
-    }
-}
-
-impl Write for Crc32Writer {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let n = self.inner.write(buf)?;
-        self.hasher.update(&buf[..n]);
-        Ok(n)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
-    }
-}
 
 /// Result from finalizing a writer: Parquet metadata + whole-file CRC32.
 pub struct FinalizeResult {
@@ -61,7 +27,7 @@ pub struct FinalizeResult {
 }
 
 lazy_static! {
-    pub static ref WRITER_MANAGER: DashMap<String, Arc<Mutex<ArrowWriter<Crc32Writer>>>> = DashMap::new();
+    pub static ref WRITER_MANAGER: DashMap<String, Arc<Mutex<ArrowWriter<File>>>> = DashMap::new();
     pub static ref FILE_MANAGER: DashMap<String, File> = DashMap::new();
 }
 
@@ -94,8 +60,7 @@ impl NativeParquetWriter {
             .set_bloom_filter_fpp(0.1)
             .set_bloom_filter_ndv(100000)
             .build();
-        let crc_writer = Crc32Writer::new(file);
-        let writer = ArrowWriter::try_new(crc_writer, schema, Some(props))?;
+        let writer = ArrowWriter::try_new(file, schema, Some(props))?;
         WRITER_MANAGER.insert(filename, Arc::new(Mutex::new(writer)));
         Ok(())
     }
@@ -141,13 +106,13 @@ impl NativeParquetWriter {
             match Arc::try_unwrap(writer_arc) {
                 Ok(mutex) => {
                     let writer = mutex.into_inner().unwrap();
-                    // ArrowWriter::close() returns FileMetaData and gives back the inner writer
                     let file_metadata = writer.close()?;
                     log_debug!("Successfully closed writer for file: {}, num_rows={}", filename, file_metadata.num_rows);
-                    // The Crc32Writer was consumed by ArrowWriter — we need to get the checksum
-                    // before close. Since ArrowWriter::close() consumes self and returns metadata
-                    // but not the inner writer, we read the checksum from the file after close.
-                    // TODO: Once arrow-rs exposes into_inner() on ArrowWriter, get checksum directly.
+                    // Compute CRC32 over the finalized file. This is the single source of truth
+                    // for the checksum — computed after ArrowWriter::close() has written the
+                    // Parquet footer, so it covers the complete file contents.
+                    // When arrow-rs exposes into_inner() on ArrowWriter, we can switch to a
+                    // streaming CRC32 wrapper to avoid this re-read.
                     let crc32 = compute_file_crc32(&filename)?;
                     Ok(Some(FinalizeResult { metadata: file_metadata, crc32 }))
                 }
@@ -198,9 +163,14 @@ impl NativeParquetWriter {
     }
 }
 
-/// Compute CRC32 of an entire file by reading it in chunks.
-/// Used as a fallback when the Crc32Writer's checksum can't be extracted
-/// (because ArrowWriter::close() consumes the inner writer).
+/// Compute CRC32 of the finalized Parquet file.
+///
+/// This is the single source of truth for the file checksum. It reads the complete
+/// file after `ArrowWriter::close()` has written the Parquet footer, ensuring the
+/// checksum covers all bytes including metadata.
+///
+/// The value is passed to Java via JNI and cached in `PrecomputedChecksumStrategy`
+/// so the upload path can retrieve it in O(1) without re-reading the file.
 fn compute_file_crc32(filename: &str) -> Result<u32, Box<dyn std::error::Error>> {
     use std::io::Read;
     let mut file = File::open(filename)?;

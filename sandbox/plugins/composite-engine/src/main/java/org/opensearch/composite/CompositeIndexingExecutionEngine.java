@@ -27,6 +27,8 @@ import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.DataFormatAwareStoreDirectory;
+import org.opensearch.index.store.FormatChecksumStrategy;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -304,6 +306,35 @@ public class CompositeIndexingExecutionEngine implements IndexingExecutionEngine
      */
     public Set<IndexingExecutionEngine<?, ?>> getSecondaryDelegates() {
         return secondaryEngines;
+    }
+
+    /**
+     * Wires per-format engine checksum strategies into the given directory.
+     *
+     * <p>Each per-format engine may pre-compute checksums during write (e.g., Parquet
+     * computes CRC32 in the native Rust writer). This method registers those strategies
+     * into the directory so the upload path can retrieve pre-computed checksums in O(1)
+     * instead of re-reading the entire file.
+     *
+     * <p>Only engines that return a non-null {@link IndexingExecutionEngine#getChecksumStrategy()}
+     * are registered. Engines without pre-computed checksums (e.g., Lucene, which reads
+     * the codec footer) are left with the directory's default strategy.
+     *
+     * @param directory the directory to register checksum strategies into
+     */
+    public void wireChecksumStrategies(DataFormatAwareStoreDirectory directory) {
+        wireEngineChecksumStrategy(primaryEngine, directory);
+        for (IndexingExecutionEngine<?, ?> engine : secondaryEngines) {
+            wireEngineChecksumStrategy(engine, directory);
+        }
+    }
+
+    private static void wireEngineChecksumStrategy(IndexingExecutionEngine<?, ?> engine, DataFormatAwareStoreDirectory directory) {
+        FormatChecksumStrategy strategy = engine.getChecksumStrategy();
+        if (strategy != null) {
+            directory.registerChecksumStrategy(engine.getDataFormat().name(), strategy);
+            logger.debug("Wired checksum strategy from engine [{}] into directory", engine.getDataFormat().name());
+        }
     }
 
 }

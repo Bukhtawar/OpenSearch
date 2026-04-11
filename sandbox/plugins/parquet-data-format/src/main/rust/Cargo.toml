@@ -24,6 +24,7 @@ log = "0.4"
 parquet = "54.0.0"
 lazy_static = "1.4.0"
 dashmap = "6.1"
+crc32fast = "1.4"
 chrono = "0.4"
 mimalloc = { version = "0.1.48", default-features = false }
 tempfile = "3.0"

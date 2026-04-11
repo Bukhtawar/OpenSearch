@@ -24,7 +24,7 @@ import org.opensearch.index.engine.dataformat.DataFormatPlugin;
 import org.opensearch.index.engine.dataformat.IndexingExecutionEngine;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
-import org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler;
+import org.opensearch.index.store.PrecomputedChecksumStrategy;
 import org.opensearch.parquet.engine.ParquetDataFormat;
 import org.opensearch.parquet.engine.ParquetIndexingEngine;
 import org.opensearch.parquet.fields.ArrowSchemaBuilder;
@@ -108,7 +108,7 @@ public class ParquetDataFormatPlugin extends Plugin implements DataFormatPlugin 
             ParquetDataFormat.PARQUET_DATA_FORMAT_NAME,
             new DataFormatDescriptor(
                 ParquetDataFormat.PARQUET_DATA_FORMAT_NAME,
-                () -> new GenericCRC32ChecksumHandler()
+                PrecomputedChecksumStrategy::new
             )
         );
     }

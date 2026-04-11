@@ -249,7 +249,7 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
 
     /**
      * Registers a {@link FormatChecksumStrategy} for a data format.
-     * Overrides any existing strategy (including legacy {@link ChecksumHandler}) for that format.
+     * Overrides any existing strategy
      *
      * <p>Use this to register strategies that support pre-computed checksums (e.g.,
      * {@link PrecomputedChecksumStrategy} for Parquet files whose CRC32 is computed
