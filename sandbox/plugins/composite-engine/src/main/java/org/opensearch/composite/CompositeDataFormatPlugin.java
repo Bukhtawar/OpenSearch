@@ -83,6 +83,7 @@ public class CompositeDataFormatPlugin extends Plugin implements ExtensiblePlugi
      * {@link DataFormat#priority()} is retained.
      */
     private volatile Map<String, DataFormatPlugin> dataFormatPlugins = Map.of();
+    private volatile Map<String, DataFormatDescriptor> lastDescriptors = Map.of();
 
     /** Creates a new composite engine plugin. */
     public CompositeDataFormatPlugin() {}
@@ -146,7 +147,11 @@ public class CompositeDataFormatPlugin extends Plugin implements ExtensiblePlugi
         IndexSettings indexSettings,
         FormatChecksumStrategy checksumStrategy
     ) {
-        return new CompositeIndexingExecutionEngine(dataFormatPlugins, indexSettings, mapperService, shardPath, null);
+        Map<String, FormatChecksumStrategy> strategies = new HashMap<>();
+        for (Map.Entry<String, DataFormatDescriptor> entry : lastDescriptors.entrySet()) {
+            strategies.put(entry.getKey(), entry.getValue().getChecksumStrategy());
+        }
+        return new CompositeIndexingExecutionEngine(dataFormatPlugins, indexSettings, mapperService, shardPath, strategies);
     }
 
     @Override
@@ -166,26 +171,8 @@ public class CompositeDataFormatPlugin extends Plugin implements ExtensiblePlugi
                 descriptors.putAll(secondaryPlugin.getFormatDescriptors(indexSettings));
             }
         }
-        return Map.copyOf(descriptors);
-    }
-
-    private Map<String, DataFormatDescriptor> buildDescriptors(IndexSettings indexSettings) {
-        Settings settings = indexSettings.getSettings();
-        String primaryFormatName = PRIMARY_DATA_FORMAT.get(settings);
-        List<String> secondaryFormatNames = SECONDARY_DATA_FORMATS.get(settings);
-
-        Map<String, DataFormatDescriptor> descriptors = new HashMap<>();
-        DataFormatPlugin primaryPlugin = dataFormatPlugins.get(primaryFormatName);
-        if (primaryPlugin != null) {
-            descriptors.putAll(primaryPlugin.getFormatDescriptors(indexSettings));
-        }
-        for (String secondaryName : secondaryFormatNames) {
-            DataFormatPlugin secondaryPlugin = dataFormatPlugins.get(secondaryName);
-            if (secondaryPlugin != null) {
-                descriptors.putAll(secondaryPlugin.getFormatDescriptors(indexSettings));
-            }
-        }
-        return Map.copyOf(descriptors);
+        lastDescriptors = Map.copyOf(descriptors);
+        return lastDescriptors;
     }
 
     /**
