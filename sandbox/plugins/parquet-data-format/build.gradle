@@ -147,6 +147,9 @@ tasks.register('runNativeUnitTests', Exec) {
   }
 }
 
+// Wire Rust tests into the Gradle check lifecycle
+check.dependsOn runNativeUnitTests
+
 // Wire Rust build into Java build lifecycle
 compileJava.dependsOn copyNativeLib
 processResources.dependsOn copyNativeLib
