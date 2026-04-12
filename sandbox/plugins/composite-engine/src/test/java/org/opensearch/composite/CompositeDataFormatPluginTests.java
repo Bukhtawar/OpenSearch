@@ -104,7 +104,8 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
             public org.opensearch.index.engine.dataformat.IndexingExecutionEngine<?, ?> indexingEngine(
                 org.opensearch.index.mapper.MapperService mapperService,
                 org.opensearch.index.shard.ShardPath shardPath,
-                IndexSettings indexSettings
+                IndexSettings indexSettings,
+                org.opensearch.index.store.FormatChecksumStrategy checksumStrategy
             ) {
                 return null;
             }
@@ -150,7 +151,8 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
             public org.opensearch.index.engine.dataformat.IndexingExecutionEngine<?, ?> indexingEngine(
                 org.opensearch.index.mapper.MapperService mapperService,
                 org.opensearch.index.shard.ShardPath shardPath,
-                IndexSettings indexSettings
+                IndexSettings indexSettings,
+                org.opensearch.index.store.FormatChecksumStrategy checksumStrategy
             ) {
                 return null;
             }
@@ -163,7 +165,7 @@ public class CompositeDataFormatPluginTests extends OpenSearchTestCase {
                     "parquet",
                     new org.opensearch.index.engine.dataformat.DataFormatDescriptor(
                         "parquet",
-                        () -> new org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler()
+                        new org.opensearch.index.store.checksum.GenericCRC32ChecksumHandler()
                     )
                 );
             }

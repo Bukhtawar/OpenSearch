@@ -11,12 +11,15 @@ package org.opensearch.index.engine.dataformat;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.index.store.FormatChecksumStrategy;
 
-import java.util.function.Supplier;
-
 /**
- * Describes the runtime capabilities of a data format, including its checksum handler
- * and format name. Provided by {@link DataFormatPlugin} implementations and consumed
- * by DataFormatAwareStoreDirectory and DataFormatAwareRemoteDirectory.
+ * Describes the static capabilities of a data format, including its default checksum
+ * strategy and format name. Provided by {@link DataFormatPlugin} implementations and
+ * consumed by DataFormatAwareStoreDirectory and DataFormatAwareRemoteDirectory.
+ *
+ * <p>The checksum strategy here is the <em>default fallback</em> — a full-file scan.
+ * At runtime, the {@link IndexingExecutionEngine} may override this with a more
+ * efficient strategy (e.g., {@link org.opensearch.index.store.PrecomputedChecksumStrategy})
+ * via {@link org.opensearch.index.store.DataFormatAwareStoreDirectory#registerChecksumStrategy}.
  *
  * @opensearch.experimental
  */
@@ -24,17 +27,17 @@ import java.util.function.Supplier;
 public class DataFormatDescriptor {
 
     private final String formatName;
-    private final Supplier<FormatChecksumStrategy> checksumStrategySupplier;
+    private final FormatChecksumStrategy checksumStrategy;
 
     /**
      * Creates a new DataFormatDescriptor.
      *
-     * @param formatName              the format name (e.g., "parquet")
-     * @param checksumStrategySupplier supplier for the checksum strategy for this format
+     * @param formatName        the format name (e.g., "parquet")
+     * @param checksumStrategy  the default checksum strategy for this format
      */
-    public DataFormatDescriptor(String formatName, Supplier<FormatChecksumStrategy> checksumStrategySupplier) {
+    public DataFormatDescriptor(String formatName, FormatChecksumStrategy checksumStrategy) {
         this.formatName = formatName;
-        this.checksumStrategySupplier = checksumStrategySupplier;
+        this.checksumStrategy = checksumStrategy;
     }
 
     /**
@@ -47,11 +50,11 @@ public class DataFormatDescriptor {
     }
 
     /**
-     * Returns a checksum strategy for this format.
+     * Returns the default checksum strategy for this format.
      *
      * @return the checksum strategy
      */
-    public FormatChecksumStrategy getChecksumHandler() {
-        return checksumStrategySupplier.get();
+    public FormatChecksumStrategy getChecksumStrategy() {
+        return checksumStrategy;
     }
 }

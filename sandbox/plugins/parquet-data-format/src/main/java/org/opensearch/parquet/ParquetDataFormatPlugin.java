@@ -24,6 +24,7 @@ import org.opensearch.index.engine.dataformat.DataFormatPlugin;
 import org.opensearch.index.engine.dataformat.IndexingExecutionEngine;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.FormatChecksumStrategy;
 import org.opensearch.index.store.PrecomputedChecksumStrategy;
 import org.opensearch.parquet.engine.ParquetDataFormat;
 import org.opensearch.parquet.engine.ParquetIndexingEngine;
@@ -50,6 +51,13 @@ import java.util.function.Supplier;
  * data format framework. On node startup, captures cluster settings via
  * {@link #createComponents} and passes them to the per-shard
  * {@link ParquetIndexingEngine} instances created in {@link #indexingEngine}.
+ *
+ * <p>The descriptor provides a {@link PrecomputedChecksumStrategy} that the directory
+ * holds at construction time. The {@link ParquetIndexingEngine} receives the same
+ * strategy instance from the directory via
+ * {@link org.opensearch.index.store.DataFormatAwareStoreDirectory#getChecksumStrategy},
+ * so pre-computed CRC32 values registered during write are directly visible to the
+ * upload path — no post-construction wiring needed.
  *
  * <p>Registers plugin settings defined in {@link ParquetSettings}.
  */
@@ -91,14 +99,20 @@ public class ParquetDataFormatPlugin extends Plugin implements DataFormatPlugin 
     }
 
     @Override
-    public IndexingExecutionEngine<?, ?> indexingEngine(MapperService mapperService, ShardPath shardPath, IndexSettings indexSettings) {
+    public IndexingExecutionEngine<?, ?> indexingEngine(
+        MapperService mapperService,
+        ShardPath shardPath,
+        IndexSettings indexSettings,
+        FormatChecksumStrategy checksumStrategy
+    ) {
         return new ParquetIndexingEngine(
             settings,
             dataFormat,
             shardPath,
             () -> ArrowSchemaBuilder.getSchema(mapperService),
             indexSettings,
-            threadPool
+            threadPool,
+            checksumStrategy
         );
     }
 
@@ -106,10 +120,7 @@ public class ParquetDataFormatPlugin extends Plugin implements DataFormatPlugin 
     public Map<String, DataFormatDescriptor> getFormatDescriptors(IndexSettings indexSettings) {
         return Map.of(
             ParquetDataFormat.PARQUET_DATA_FORMAT_NAME,
-            new DataFormatDescriptor(
-                ParquetDataFormat.PARQUET_DATA_FORMAT_NAME,
-                PrecomputedChecksumStrategy::new
-            )
+            new DataFormatDescriptor(ParquetDataFormat.PARQUET_DATA_FORMAT_NAME, new PrecomputedChecksumStrategy())
         );
     }
 

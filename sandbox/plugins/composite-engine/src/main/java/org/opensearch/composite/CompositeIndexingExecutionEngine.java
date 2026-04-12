@@ -27,7 +27,6 @@ import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
-import org.opensearch.index.store.DataFormatAwareStoreDirectory;
 import org.opensearch.index.store.FormatChecksumStrategy;
 
 import java.io.IOException;
@@ -78,17 +77,20 @@ public class CompositeIndexingExecutionEngine implements IndexingExecutionEngine
      * The writer pool is created internally and initialized with a writer supplier
      * that creates {@link CompositeWriter} instances bound to this engine.
      *
-     * @param dataFormatPlugins the discovered data format plugins keyed by format name
-     * @param indexSettings the index settings containing composite configuration
-     * @param mapperService the mapper service for field mapping resolution
-     * @param shardPath the shard path for file storage
+     * @param dataFormatPlugins   the discovered data format plugins keyed by format name
+     * @param indexSettings       the index settings containing composite configuration
+     * @param mapperService       the mapper service for field mapping resolution
+     * @param shardPath           the shard path for file storage
+     * @param checksumStrategies  per-format checksum strategies from the directory, keyed by format name.
+     *                            May be null or empty if the directory is not yet available.
      * @throws IllegalArgumentException if any configured format is not registered
      */
     public CompositeIndexingExecutionEngine(
         Map<String, DataFormatPlugin> dataFormatPlugins,
         IndexSettings indexSettings,
         MapperService mapperService,
-        ShardPath shardPath
+        ShardPath shardPath,
+        Map<String, FormatChecksumStrategy> checksumStrategies
     ) {
         Objects.requireNonNull(dataFormatPlugins, "dataFormatPlugins must not be null");
         Objects.requireNonNull(indexSettings, "indexSettings must not be null");
@@ -100,15 +102,21 @@ public class CompositeIndexingExecutionEngine implements IndexingExecutionEngine
 
         validateFormatsRegistered(dataFormatPlugins, primaryFormatName, secondaryFormatNames);
 
+        Map<String, FormatChecksumStrategy> strategies = checksumStrategies != null ? checksumStrategies : Map.of();
+
         List<DataFormat> allFormats = new ArrayList<>();
         DataFormatPlugin primaryPlugin = dataFormatPlugins.get(primaryFormatName);
-        this.primaryEngine = primaryPlugin.indexingEngine(mapperService, shardPath, indexSettings);
+        this.primaryEngine = primaryPlugin.indexingEngine(
+            mapperService, shardPath, indexSettings, strategies.get(primaryFormatName)
+        );
         allFormats.add(primaryPlugin.getDataFormat());
 
         List<IndexingExecutionEngine<?, ?>> secondaries = new ArrayList<>();
         for (String secondaryName : secondaryFormatNames) {
             DataFormatPlugin secondaryPlugin = dataFormatPlugins.get(secondaryName);
-            secondaries.add(secondaryPlugin.indexingEngine(mapperService, shardPath, indexSettings));
+            secondaries.add(secondaryPlugin.indexingEngine(
+                mapperService, shardPath, indexSettings, strategies.get(secondaryName)
+            ));
             allFormats.add(secondaryPlugin.getDataFormat());
         }
         this.secondaryEngines = Set.copyOf(secondaries);
@@ -306,35 +314,6 @@ public class CompositeIndexingExecutionEngine implements IndexingExecutionEngine
      */
     public Set<IndexingExecutionEngine<?, ?>> getSecondaryDelegates() {
         return secondaryEngines;
-    }
-
-    /**
-     * Wires per-format engine checksum strategies into the given directory.
-     *
-     * <p>Each per-format engine may pre-compute checksums during write (e.g., Parquet
-     * computes CRC32 in the native Rust writer). This method registers those strategies
-     * into the directory so the upload path can retrieve pre-computed checksums in O(1)
-     * instead of re-reading the entire file.
-     *
-     * <p>Only engines that return a non-null {@link IndexingExecutionEngine#getChecksumStrategy()}
-     * are registered. Engines without pre-computed checksums (e.g., Lucene, which reads
-     * the codec footer) are left with the directory's default strategy.
-     *
-     * @param directory the directory to register checksum strategies into
-     */
-    public void wireChecksumStrategies(DataFormatAwareStoreDirectory directory) {
-        wireEngineChecksumStrategy(primaryEngine, directory);
-        for (IndexingExecutionEngine<?, ?> engine : secondaryEngines) {
-            wireEngineChecksumStrategy(engine, directory);
-        }
-    }
-
-    private static void wireEngineChecksumStrategy(IndexingExecutionEngine<?, ?> engine, DataFormatAwareStoreDirectory directory) {
-        FormatChecksumStrategy strategy = engine.getChecksumStrategy();
-        if (strategy != null) {
-            directory.registerChecksumStrategy(engine.getDataFormat().name(), strategy);
-            logger.debug("Wired checksum strategy from engine [{}] into directory", engine.getDataFormat().name());
-        }
     }
 
 }

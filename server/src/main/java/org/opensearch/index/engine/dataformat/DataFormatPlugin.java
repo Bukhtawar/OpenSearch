@@ -12,6 +12,7 @@ import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.FormatChecksumStrategy;
 
 import java.util.Map;
 
@@ -35,17 +36,26 @@ public interface DataFormatPlugin {
     /**
      * Creates the indexing engine for the data format. This should be instantiated per shard.
      *
-     * @param mapperService the mapper service for field mapping resolution
-     * @param shardPath the shard path for file storage
-     * @param indexSettings the index settings
+     * @param mapperService     the mapper service for field mapping resolution
+     * @param shardPath         the shard path for file storage
+     * @param indexSettings     the index settings
+     * @param checksumStrategy  the checksum strategy owned by the directory for this format,
+     *                          or null if not available. Engines that pre-compute checksums
+     *                          during write should register into this instance so the upload
+     *                          path can retrieve them in O(1).
      * @return the indexing execution engine instance
      */
-    IndexingExecutionEngine<?, ?> indexingEngine(MapperService mapperService, ShardPath shardPath, IndexSettings indexSettings);
+    IndexingExecutionEngine<?, ?> indexingEngine(
+        MapperService mapperService,
+        ShardPath shardPath,
+        IndexSettings indexSettings,
+        FormatChecksumStrategy checksumStrategy
+    );
 
     /**
      * Returns format descriptors for this plugin, filtered by the given index settings.
      * Each entry maps a format name to its {@link DataFormatDescriptor} containing the
-     * checksum handler and format name.
+     * default checksum strategy and format name.
      *
      * @param indexSettings the index settings used to determine active formats
      * @return map of format name to descriptor

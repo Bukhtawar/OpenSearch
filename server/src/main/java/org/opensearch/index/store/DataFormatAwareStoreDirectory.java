@@ -99,8 +99,7 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
         Map<String, DataFormatDescriptor> descriptors = dataFormatRegistry.getFormatDescriptors(indexSettings);
         this.checksumStrategies = new HashMap<>();
         for (Map.Entry<String, DataFormatDescriptor> entry : descriptors.entrySet()) {
-            // ChecksumHandler extends FormatChecksumStrategy, so this works directly
-            this.checksumStrategies.put(entry.getKey(), entry.getValue().getChecksumHandler());
+            this.checksumStrategies.put(entry.getKey(), entry.getValue().getChecksumStrategy());
         }
         this.checksumStrategies.put(DEFAULT_FORMAT, new LuceneChecksumHandler());
 
@@ -263,6 +262,18 @@ public class DataFormatAwareStoreDirectory extends FilterDirectory {
             checksumStrategies.put(format, strategy);
             logger.debug("Registered FormatChecksumStrategy for format [{}]", format);
         }
+    }
+
+    /**
+     * Returns the checksum strategy for the given format, or {@code null} if none is registered.
+     * Engines use this to share the directory's strategy instance so that pre-computed
+     * checksums registered during write are visible to the upload path.
+     *
+     * @param format the data format name (e.g., "parquet")
+     * @return the strategy, or null if not found
+     */
+    public FormatChecksumStrategy getChecksumStrategy(String format) {
+        return checksumStrategies.get(format);
     }
 
     public IndexOutput createOutput(FileMetadata fm, IOContext context) throws IOException {

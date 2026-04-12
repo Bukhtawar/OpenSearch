@@ -107,7 +107,7 @@ public class DataFormatAwareRemoteDirectoryTests extends OpenSearchTestCase {
             .build();
         IndexSettings indexSettings = new IndexSettings(metadata, Settings.EMPTY);
         when(mockRegistry.getFormatDescriptors(any(IndexSettings.class))).thenReturn(
-            Map.of("parquet", new DataFormatDescriptor("parquet", () -> new GenericCRC32ChecksumHandler()))
+            Map.of("parquet", new DataFormatDescriptor("parquet", new GenericCRC32ChecksumHandler()))
         );
 
         directory = new DataFormatAwareRemoteDirectory(

@@ -14,6 +14,7 @@ import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.exec.EngineReaderManager;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.FormatChecksumStrategy;
 import org.opensearch.plugins.PluginsService;
 import org.opensearch.plugins.SearchBackEndPlugin;
 
@@ -109,7 +110,10 @@ public class DataFormatRegistry {
         if (plugin == null) {
             throw new IllegalArgumentException("No plugin registered for DataFormat [" + format.name() + "]");
         }
-        return plugin.indexingEngine(mapperService, shardPath, indexSettings);
+        Map<String, DataFormatDescriptor> descriptors = plugin.getFormatDescriptors(indexSettings);
+        DataFormatDescriptor descriptor = descriptors.get(format.name());
+        FormatChecksumStrategy checksumStrategy = descriptor != null ? descriptor.getChecksumStrategy() : null;
+        return plugin.indexingEngine(mapperService, shardPath, indexSettings, checksumStrategy);
     }
 
     public DataFormat format(String name) {

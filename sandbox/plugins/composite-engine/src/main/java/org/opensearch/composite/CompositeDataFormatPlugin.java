@@ -20,6 +20,7 @@ import org.opensearch.index.engine.dataformat.DataFormatPlugin;
 import org.opensearch.index.engine.dataformat.IndexingExecutionEngine;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.index.store.FormatChecksumStrategy;
 import org.opensearch.plugins.ExtensiblePlugin;
 import org.opensearch.plugins.Plugin;
 
@@ -139,12 +140,36 @@ public class CompositeDataFormatPlugin extends Plugin implements ExtensiblePlugi
     }
 
     @Override
-    public IndexingExecutionEngine<?, ?> indexingEngine(MapperService mapperService, ShardPath shardPath, IndexSettings indexSettings) {
-        return new CompositeIndexingExecutionEngine(dataFormatPlugins, indexSettings, mapperService, shardPath);
+    public IndexingExecutionEngine<?, ?> indexingEngine(
+        MapperService mapperService,
+        ShardPath shardPath,
+        IndexSettings indexSettings,
+        FormatChecksumStrategy checksumStrategy
+    ) {
+        return new CompositeIndexingExecutionEngine(dataFormatPlugins, indexSettings, mapperService, shardPath, null);
     }
 
     @Override
     public Map<String, DataFormatDescriptor> getFormatDescriptors(IndexSettings indexSettings) {
+        Settings settings = indexSettings.getSettings();
+        String primaryFormatName = PRIMARY_DATA_FORMAT.get(settings);
+        List<String> secondaryFormatNames = SECONDARY_DATA_FORMATS.get(settings);
+
+        Map<String, DataFormatDescriptor> descriptors = new HashMap<>();
+        DataFormatPlugin primaryPlugin = dataFormatPlugins.get(primaryFormatName);
+        if (primaryPlugin != null) {
+            descriptors.putAll(primaryPlugin.getFormatDescriptors(indexSettings));
+        }
+        for (String secondaryName : secondaryFormatNames) {
+            DataFormatPlugin secondaryPlugin = dataFormatPlugins.get(secondaryName);
+            if (secondaryPlugin != null) {
+                descriptors.putAll(secondaryPlugin.getFormatDescriptors(indexSettings));
+            }
+        }
+        return Map.copyOf(descriptors);
+    }
+
+    private Map<String, DataFormatDescriptor> buildDescriptors(IndexSettings indexSettings) {
         Settings settings = indexSettings.getSettings();
         String primaryFormatName = PRIMARY_DATA_FORMAT.get(settings);
         List<String> secondaryFormatNames = SECONDARY_DATA_FORMATS.get(settings);
