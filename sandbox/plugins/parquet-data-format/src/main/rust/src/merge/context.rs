@@ -123,13 +123,21 @@ impl MergeContext {
 
     /// Concat buffered batches, append row IDs, encode columns in parallel,
     /// and send the encoded row group to the IO task.
+    ///
+    /// Optimization: skips `concat_batches` when only a single chunk is buffered,
+    /// avoiding a full memcpy of the batch data.
     pub fn flush(&mut self) -> MergeResult<()> {
         if self.output_chunks.is_empty() {
             return Ok(());
         }
 
-        let merged = concat_batches(&self.data_schema, self.output_chunks.as_slice())?;
-        self.output_chunks.clear();
+        let merged = if self.output_chunks.len() == 1 {
+            self.output_chunks.pop().unwrap()
+        } else {
+            let m = concat_batches(&self.data_schema, self.output_chunks.as_slice())?;
+            self.output_chunks.clear();
+            m
+        };
         let n = merged.num_rows();
 
         let with_id = append_row_id(&merged, self.next_row_id, &self.output_schema)?;

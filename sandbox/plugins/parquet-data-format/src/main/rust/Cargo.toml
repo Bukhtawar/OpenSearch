@@ -25,3 +25,8 @@ crc32fast = { workspace = true }
 
 [dev-dependencies]
 opensearch-parquet-format = { path = ".", features = ["test-utils"] }
+criterion = { workspace = true }
+
+[[bench]]
+name = "merge_benchmark"
+harness = false

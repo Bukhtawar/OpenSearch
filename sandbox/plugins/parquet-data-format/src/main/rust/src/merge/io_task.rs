@@ -50,12 +50,12 @@ pub fn get_merge_pool() -> &'static ThreadPool {
 }
 
 // =============================================================================
-// Process-wide shared Tokio runtime for async IO
+// Process-wide shared Tokio runtime for async IO and prefetch
 // =============================================================================
 
 static IO_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
-fn get_io_runtime() -> &'static Runtime {
+pub fn get_io_runtime() -> &'static Runtime {
     IO_RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(4)
