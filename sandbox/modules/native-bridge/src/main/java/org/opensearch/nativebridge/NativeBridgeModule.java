@@ -16,6 +16,7 @@ import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.env.Environment;
 import org.opensearch.env.NodeEnvironment;
+import org.opensearch.nativebridge.spi.HeapProfiler;
 import org.opensearch.nativebridge.spi.NativeAllocatorConfig;
 import org.opensearch.nativebridge.spi.NativeHeapProfiler;
 import org.opensearch.plugins.Plugin;
@@ -83,6 +84,9 @@ public class NativeBridgeModule extends Plugin {
         // Register dynamic update listeners
         clusterService.getClusterSettings().addSettingsUpdateConsumer(JEMALLOC_DIRTY_DECAY_MS, NativeAllocatorConfig::setDirtyDecayMs);
         clusterService.getClusterSettings().addSettingsUpdateConsumer(JEMALLOC_MUZZY_DECAY_MS, NativeAllocatorConfig::setMuzzyDecayMs);
+
+        // Register heap profiling MBean for CLI access via JMX
+        HeapProfiler.register();
 
         return Collections.emptyList();
     }
