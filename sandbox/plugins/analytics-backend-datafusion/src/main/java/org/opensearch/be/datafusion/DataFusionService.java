@@ -157,6 +157,16 @@ public class DataFusionService extends AbstractLifecycleComponent {
     }
 
     /**
+     * Sets the disk spill limit at runtime. Throws
+     * {@link UnsupportedOperationException} if the loaded datafusion library
+     * does not export {@code df_set_spill_limit}. Callers should check
+     * {@link NativeBridge#isDynamicSpillSupported()} before invoking.
+     */
+    public void setSpillLimit(long newLimitBytes) {
+        NativeBridge.setSpillLimit(getNativeRuntime().get(), newLimitBytes);
+    }
+
+    /**
      * Returns the latest native executor stats, collected fresh from JNI on every call.
      *
      * @return the current {@link DataFusionStats}

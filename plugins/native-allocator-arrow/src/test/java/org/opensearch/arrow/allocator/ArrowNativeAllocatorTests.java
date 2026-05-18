@@ -11,7 +11,10 @@ package org.opensearch.arrow.allocator;
 import org.apache.arrow.memory.BufferAllocator;
 import org.opensearch.arrow.spi.NativeAllocator;
 import org.opensearch.arrow.spi.NativeAllocatorPoolStats;
+import org.opensearch.core.common.breaker.NoopCircuitBreaker;
 import org.opensearch.test.OpenSearchTestCase;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 public class ArrowNativeAllocatorTests extends OpenSearchTestCase {
 
@@ -161,5 +164,91 @@ public class ArrowNativeAllocatorTests extends OpenSearchTestCase {
 
         // Recreate for tearDown
         allocator = new ArrowNativeAllocator(1024L * 1024 * 1024);
+    }
+
+    public void testListenerFiresOnSetPoolLimit() {
+        AtomicLong observedLimit = new AtomicLong(-1);
+        AtomicLong observedCount = new AtomicLong();
+        allocator.getOrCreatePool("listened", 50 * 1024 * 1024);
+        allocator.addListener((poolName, newLimit) -> {
+            assertEquals("listened", poolName);
+            observedLimit.set(newLimit);
+            observedCount.incrementAndGet();
+        });
+
+        allocator.setPoolLimit("listened", 75 * 1024 * 1024);
+
+        assertEquals(75L * 1024 * 1024, observedLimit.get());
+        assertEquals(1, observedCount.get());
+    }
+
+    public void testListenerExceptionDoesNotBreakResize() {
+        allocator.getOrCreatePool("guarded", 50 * 1024 * 1024);
+        allocator.addListener((poolName, newLimit) -> { throw new RuntimeException("listener boom"); });
+
+        // setPoolLimit must succeed even if a listener throws
+        allocator.setPoolLimit("guarded", 100 * 1024 * 1024);
+        assertEquals(100L * 1024 * 1024, allocator.getPoolAllocator("guarded").getLimit());
+    }
+
+    public void testMultipleListenersAllFire() {
+        AtomicLong calls = new AtomicLong();
+        allocator.getOrCreatePool("multi", 10 * 1024 * 1024);
+        allocator.addListener((p, l) -> calls.incrementAndGet());
+        allocator.addListener((p, l) -> calls.incrementAndGet());
+        allocator.addListener((p, l) -> calls.incrementAndGet());
+
+        allocator.setPoolLimit("multi", 20 * 1024 * 1024);
+        assertEquals(3, calls.get());
+    }
+
+    public void testBreakerSyncOnRebalance() {
+        // Use a no-op breaker shape with a tracking counter so we can assert delta application.
+        TrackingBreaker breaker = new TrackingBreaker();
+        allocator.setBreaker(breaker);
+
+        allocator.getOrCreatePool("breaker-test", 50 * 1024 * 1024);
+        BufferAllocator pool = allocator.getPoolAllocator("breaker-test");
+        BufferAllocator child = pool.newChildAllocator("worker", 0, 50 * 1024 * 1024);
+        try {
+            var buf = child.buffer(2 * 1024 * 1024);
+            try {
+                allocator.rebalance(); // triggers syncBreaker()
+                // Breaker should now reflect root's allocated memory (≥ 2 MB)
+                assertTrue(
+                    "breaker counter " + breaker.used.get() + " should reflect root usage",
+                    breaker.used.get() >= 2L * 1024 * 1024
+                );
+            } finally {
+                buf.close();
+            }
+        } finally {
+            child.close();
+        }
+    }
+
+    public void testBreakerNullSafeOnRebalance() {
+        // No breaker attached — rebalance must not throw NPE
+        allocator.getOrCreatePool("no-breaker", 10 * 1024 * 1024);
+        allocator.rebalance();
+    }
+
+    /** Test breaker that exposes an addressable counter we can assert against. */
+    private static final class TrackingBreaker extends NoopCircuitBreaker {
+        final AtomicLong used = new AtomicLong();
+
+        TrackingBreaker() {
+            super("tracking-test");
+        }
+
+        @Override
+        public long addWithoutBreaking(long bytes) {
+            return used.addAndGet(bytes);
+        }
+
+        @Override
+        public long getUsed() {
+            return used.get();
+        }
     }
 }

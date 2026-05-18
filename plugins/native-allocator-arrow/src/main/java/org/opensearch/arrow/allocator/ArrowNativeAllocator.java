@@ -11,7 +11,9 @@ package org.opensearch.arrow.allocator;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.opensearch.arrow.spi.NativeAllocator;
+import org.opensearch.arrow.spi.NativeAllocatorListener;
 import org.opensearch.arrow.spi.NativeAllocatorPoolStats;
+import org.opensearch.core.common.breaker.CircuitBreaker;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -20,6 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -58,12 +61,42 @@ public class ArrowNativeAllocator implements NativeAllocator {
         return inst;
     }
 
+    /**
+     * Test-only: lazily creates and returns a singleton with the given root limit
+     * if no instance is present. Subsequent calls return the existing instance
+     * regardless of the limit argument. Lets unit tests that depend on the
+     * singleton (via shims like {@code ArrowAllocatorProvider} or {@code ArrowBufferPool})
+     * run without bootstrapping the full {@link NativeAllocatorArrowPlugin}.
+     *
+     * <p>Production code MUST go through the plugin's {@code createComponents}.
+     *
+     * @param rootLimit root allocator limit for the test instance
+     * @return the singleton (newly created or pre-existing)
+     */
+    public static synchronized ArrowNativeAllocator ensureForTesting(long rootLimit) {
+        if (INSTANCE == null) {
+            ArrowNativeAllocator alloc = new ArrowNativeAllocator(rootLimit);
+            // Pre-register the four standard pools so existing test code paths
+            // that assume getOrCreatePool was already called work transparently.
+            // Use min = max = rootLimit so each pool starts with full capacity (no
+            // rebalancer is running in tests). Without this, pools sit at min = 0
+            // and any allocation through the pool blocks or fails silently.
+            alloc.getOrCreatePool(org.opensearch.arrow.spi.NativeAllocatorPoolConfig.POOL_FLIGHT, rootLimit, rootLimit);
+            alloc.getOrCreatePool(org.opensearch.arrow.spi.NativeAllocatorPoolConfig.POOL_INGEST, rootLimit, rootLimit);
+            alloc.getOrCreatePool(org.opensearch.arrow.spi.NativeAllocatorPoolConfig.POOL_QUERY, rootLimit, rootLimit);
+            alloc.getOrCreatePool(org.opensearch.arrow.spi.NativeAllocatorPoolConfig.POOL_DATAFUSION, rootLimit, rootLimit);
+        }
+        return INSTANCE;
+    }
+
     private final RootAllocator root;
     private final ConcurrentMap<String, ArrowPoolHandle> pools = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Long> poolMins = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Long> poolMaxes = new ConcurrentHashMap<>();
     private final ScheduledExecutorService rebalancer;
     private volatile ScheduledFuture<?> rebalanceTask;
+    private final CopyOnWriteArrayList<NativeAllocatorListener> listeners = new CopyOnWriteArrayList<>();
+    private volatile CircuitBreaker breaker;
 
     /**
      * Creates a new allocator with a fresh RootAllocator.
@@ -130,6 +163,41 @@ public class ArrowNativeAllocator implements NativeAllocator {
         }
         poolMaxes.put(poolName, newLimit);
         handle.allocator.setLimit(newLimit);
+        for (NativeAllocatorListener listener : listeners) {
+            try {
+                listener.onPoolLimitChanged(poolName, newLimit);
+            } catch (Exception e) {
+                // listener errors must not break the resize
+            }
+        }
+    }
+
+    @Override
+    public void addListener(NativeAllocatorListener listener) {
+        listeners.add(listener);
+    }
+
+    /**
+     * Attaches a circuit breaker that mirrors the root allocator's total usage. The
+     * rebalancer task syncs the breaker's counter to {@code root.getAllocatedMemory()}
+     * on every cycle so {@code _nodes/stats?breaker} reflects native usage and the
+     * parent breaker's heap-only tally gains visibility into off-heap pressure.
+     *
+     * @param breaker the circuit breaker registered for the unified allocator
+     */
+    public void setBreaker(CircuitBreaker breaker) {
+        this.breaker = breaker;
+    }
+
+    /** Synchronizes the breaker counter to the root allocator's current usage. */
+    private void syncBreaker() {
+        CircuitBreaker b = breaker;
+        if (b == null) return;
+        long allocated = root.getAllocatedMemory();
+        long delta = allocated - b.getUsed();
+        if (delta != 0) {
+            b.addWithoutBreaking(delta);
+        }
     }
 
     /**
@@ -197,6 +265,7 @@ public class ArrowNativeAllocator implements NativeAllocator {
      * </ol>
      */
     void rebalance() {
+        syncBreaker();
         if (pools.isEmpty()) return;
 
         long rootLimit = root.getLimit();

@@ -53,6 +53,12 @@ public final class NativeBridge {
     private static final MethodHandle GET_MEMORY_POOL_USAGE;
     private static final MethodHandle GET_MEMORY_POOL_LIMIT;
     private static final MethodHandle SET_MEMORY_POOL_LIMIT;
+    /**
+     * Optional handle for {@code df_set_spill_limit}. Null when the symbol is absent
+     * (older datafusion crates without runtime spill-cap mutation support). Callers
+     * must check {@link #isDynamicSpillSupported()} before invoking.
+     */
+    private static final MethodHandle SET_SPILL_LIMIT;
     private static final MethodHandle CREATE_READER;
     private static final MethodHandle CLOSE_READER;
     private static final MethodHandle EXECUTE_QUERY;
@@ -133,6 +139,17 @@ public final class NativeBridge {
             lib.find("df_set_memory_pool_limit").orElseThrow(),
             FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG)
         );
+
+        // Forward-compat: df_set_spill_limit lands in a future datafusion crate (separate PR
+        // upstream). Probe at static init; if absent, leave null and surface via
+        // isDynamicSpillSupported(). This lets the OpenSearch wiring ship before the
+        // datafusion-side change merges, and "lights up" automatically when the symbol appears.
+        SET_SPILL_LIMIT = lib.find("df_set_spill_limit")
+            .map(addr -> linker.downcallHandle(
+                addr,
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG)
+            ))
+            .orElse(null);
 
         CREATE_READER = linker.downcallHandle(
             lib.find("df_create_reader").orElseThrow(),
@@ -568,6 +585,36 @@ public final class NativeBridge {
     public static void setMemoryPoolLimit(long runtimePtr, long newLimitBytes) {
         try (var call = new NativeCall()) {
             call.invoke(SET_MEMORY_POOL_LIMIT, runtimePtr, newLimitBytes);
+        }
+    }
+
+    /**
+     * Returns true when the underlying datafusion crate exports
+     * {@code df_set_spill_limit}. When false, callers should keep the
+     * {@code datafusion.disk_spill_limit} setting NodeScope-only — runtime
+     * mutation will not be honored even if the setting accepts the new value.
+     */
+    public static boolean isDynamicSpillSupported() {
+        return SET_SPILL_LIMIT != null;
+    }
+
+    /**
+     * Sets the disk spill limit at runtime. Takes effect for new spill
+     * reservations only.
+     *
+     * @throws UnsupportedOperationException if the current native library does
+     *     not export {@code df_set_spill_limit} (older datafusion crates).
+     *     Check {@link #isDynamicSpillSupported()} first.
+     */
+    public static void setSpillLimit(long runtimePtr, long newLimitBytes) {
+        if (SET_SPILL_LIMIT == null) {
+            throw new UnsupportedOperationException(
+                "df_set_spill_limit is not exported by the loaded datafusion library; "
+                    + "datafusion.disk_spill_limit cannot be updated at runtime."
+            );
+        }
+        try (var call = new NativeCall()) {
+            call.invoke(SET_SPILL_LIMIT, runtimePtr, newLimitBytes);
         }
     }
 

@@ -11,7 +11,10 @@ package org.opensearch.be.datafusion;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.analytics.spi.AnalyticsSearchBackendPlugin;
+import org.opensearch.arrow.allocator.ArrowNativeAllocator;
+import org.opensearch.arrow.spi.NativeAllocatorPoolConfig;
 import org.opensearch.be.datafusion.action.DataFusionStatsAction;
+import org.opensearch.be.datafusion.nativelib.NativeBridge;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.node.DiscoveryNodes;
 import org.opensearch.cluster.service.ClusterService;
@@ -73,13 +76,30 @@ public class DataFusionPlugin extends Plugin implements SearchBackEndPlugin<Data
         Setting.Property.Dynamic
     );
 
-    /** Spill memory limit — when exceeded, DataFusion spills to disk. */
-    public static final Setting<Long> DATAFUSION_SPILL_MEMORY_LIMIT = Setting.longSetting(
-        "datafusion.spill_memory_limit_bytes",
-        Runtime.getRuntime().maxMemory() / 8,
-        0L,
-        Setting.Property.NodeScope
-    );
+    /**
+     * Spill memory limit — when exceeded, DataFusion spills to disk.
+     *
+     * <p>Conditionally {@code Dynamic}: only when the loaded datafusion library
+     * exports {@code df_set_spill_limit}. Otherwise {@code NodeScope}-only and a
+     * cluster-settings PUT is rejected by OpenSearch. The dynamic-update support
+     * lights up automatically once the upstream datafusion crate carrying
+     * {@code df_set_spill_limit} is picked up here — no OpenSearch-side change
+     * required at that point.
+     */
+    public static final Setting<Long> DATAFUSION_SPILL_MEMORY_LIMIT = NativeBridge.isDynamicSpillSupported()
+        ? Setting.longSetting(
+            "datafusion.spill_memory_limit_bytes",
+            Runtime.getRuntime().maxMemory() / 8,
+            0L,
+            Setting.Property.NodeScope,
+            Setting.Property.Dynamic
+        )
+        : Setting.longSetting(
+            "datafusion.spill_memory_limit_bytes",
+            Runtime.getRuntime().maxMemory() / 8,
+            0L,
+            Setting.Property.NodeScope
+        );
 
     /**
      * Selects how the coordinator-reduce sink hands shard responses to the native runtime.
@@ -150,6 +170,30 @@ public class DataFusionPlugin extends Plugin implements SearchBackEndPlugin<Data
         // Wire the dynamic memory pool limit setting to the native runtime so updates via the
         // cluster settings API take effect without restarting the node.
         clusterService.getClusterSettings().addSettingsUpdateConsumer(DATAFUSION_MEMORY_POOL_LIMIT, this::updateMemoryPoolLimit);
+
+        // Spill listener: only register when the underlying datafusion library supports
+        // df_set_spill_limit. When unsupported, the setting is registered as NodeScope-only
+        // (see DATAFUSION_SPILL_MEMORY_LIMIT initializer above), so a cluster-settings PUT
+        // is rejected by OpenSearch's settings layer before it ever reaches us.
+        if (NativeBridge.isDynamicSpillSupported()) {
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(DATAFUSION_SPILL_MEMORY_LIMIT, this::updateSpillLimit);
+        } else {
+            logger.info(
+                "datafusion.spill_memory_limit_bytes registered as NodeScope-only — "
+                    + "the loaded datafusion library does not export df_set_spill_limit. "
+                    + "Runtime updates will be rejected; restart required to change spill cap."
+            );
+        }
+
+        // Mirror unified-pool resizes for the "datafusion" pool to the native Rust MemoryPool
+        // so the Java-side cap and the Rust-side cap stay in sync. Without this, an operator
+        // who changes native.allocator.pool.datafusion.limit would resize only the Java
+        // BufferAllocator while the Rust MemoryPool keeps its old cap.
+        ArrowNativeAllocator.instance().addListener((poolName, newLimit) -> {
+            if (NativeAllocatorPoolConfig.POOL_DATAFUSION.equals(poolName)) {
+                updateMemoryPoolLimit(newLimit);
+            }
+        });
 
         this.datafusionSettings = new DatafusionSettings(clusterService);
 
@@ -243,6 +287,32 @@ public class DataFusionPlugin extends Plugin implements SearchBackEndPlugin<Data
             // still registered on ClusterSettings because there is no removeSettingsUpdateConsumer
             // API; swallow the race so cluster-state application does not log a spurious failure.
             logger.warn("Ignoring memory pool limit update to {}B; service is not running", newLimitBytes);
+        }
+    }
+
+    /**
+     * Listener for {@link #DATAFUSION_SPILL_MEMORY_LIMIT} updates. Only invoked when
+     * the loaded datafusion library exports {@code df_set_spill_limit}; otherwise the
+     * setting is registered as NodeScope-only and OpenSearch rejects the PUT before
+     * it reaches this method.
+     * <p>
+     * Package-private for testing.
+     */
+    void updateSpillLimit(long newLimitBytes) {
+        DataFusionService service = dataFusionService;
+        if (service == null) {
+            logger.debug("DataFusion service not yet initialized; ignoring spill limit update to {}B", newLimitBytes);
+            return;
+        }
+        try {
+            service.setSpillLimit(newLimitBytes);
+            logger.info("Updated DataFusion disk spill limit to {}B", newLimitBytes);
+        } catch (IllegalStateException e) {
+            logger.warn("Ignoring spill limit update to {}B; service is not running", newLimitBytes);
+        } catch (UnsupportedOperationException e) {
+            // Defensive: should not happen because the listener is only registered when the
+            // FFM symbol is present, but guard anyway in case the library swaps under us.
+            logger.warn("Ignoring spill limit update; native library does not support runtime spill cap mutation");
         }
     }
 

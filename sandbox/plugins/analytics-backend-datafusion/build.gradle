@@ -9,7 +9,7 @@
 opensearchplugin {
   description = 'DataFusion native execution engine plugin for the query engine.'
   classname = 'org.opensearch.be.datafusion.DataFusionPlugin'
-  extendedPlugins = ['analytics-engine']
+  extendedPlugins = ['analytics-engine', 'native-allocator-arrow']
 }
 
 repositories {
@@ -36,6 +36,10 @@ sourceSets.main.compileClasspath += configurations.calciteCompile
 sourceSets.test.compileClasspath += configurations.calciteTestCompile
 
 dependencies {
+  // native-allocator-arrow provides ArrowNativeAllocator at runtime (shared classloader).
+  compileOnly project(':libs:opensearch-arrow-spi')
+  compileOnly project(':plugins:native-allocator-arrow')
+
   // Shared native bridge lib (provides the unified .so and FFM SymbolLookup)
   implementation project(':sandbox:libs:dataformat-native')
 

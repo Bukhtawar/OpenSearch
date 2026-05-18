@@ -56,6 +56,17 @@ public interface NativeAllocator extends Closeable {
     NativeAllocatorPoolStats stats();
 
     /**
+     * Registers a listener that fires whenever a pool's limit is updated via
+     * {@link #setPoolLimit(String, long)}. Used by consumers (e.g., DataFusion)
+     * that need to mirror the Java-side limit to a separate native accountant.
+     *
+     * @param listener callback to invoke on pool resize
+     */
+    default void addListener(NativeAllocatorListener listener) {
+        // Default no-op for impls that don't support listeners.
+    }
+
+    /**
      * Opaque handle to a memory pool. Plugins downcast to the concrete type
      * (e.g., Arrow's {@code BufferAllocator}) in the implementation layer.
      */
