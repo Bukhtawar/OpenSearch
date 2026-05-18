@@ -418,6 +418,7 @@ impl NativeParquetWriter {
             reverse_sorts,
             nulls_first,
             writer_generation,
+            &[],
         )
         .map_err(|e| -> Box<dyn std::error::Error> {
             format!("Streaming merge failed: {}", e).into()
