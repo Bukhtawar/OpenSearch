@@ -217,7 +217,7 @@ pub fn merge_sorted(
                     break;
                 }
                 // Check if cursor should yield after loading new batch
-                let val = cursor.current_sort_values()?;
+                let val = cursors[file_id].current_sort_values()?;
                 if cmp_sort_values(&val, heap_top, reverse_sorts) == Ordering::Greater {
                     heap.push(HeapItem {
                         sort_values: val,

@@ -14,7 +14,7 @@
 use std::slice;
 use std::str;
 
-use native_bridge_common::{ffm_safe, log_debug};
+use native_bridge_common::ffm_safe;
 
 use crate::native_settings::NativeSettings;
 use crate::merge;

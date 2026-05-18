@@ -24,12 +24,12 @@ import org.opensearch.index.engine.dataformat.DeleteExecutionEngine;
 import org.opensearch.index.engine.dataformat.DeleteInput;
 import org.opensearch.index.engine.dataformat.DeleteResult;
 import org.opensearch.index.engine.dataformat.Deleter;
+import org.opensearch.index.engine.dataformat.DeleterImpl;
 import org.opensearch.index.engine.dataformat.RefreshInput;
 import org.opensearch.index.engine.dataformat.RefreshResult;
 import org.opensearch.index.engine.dataformat.Writer;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.commit.Committer;
-import org.opensearch.index.engine.dataformat.DeleterImpl;
 
 import java.io.IOException;
 import java.util.HashMap;

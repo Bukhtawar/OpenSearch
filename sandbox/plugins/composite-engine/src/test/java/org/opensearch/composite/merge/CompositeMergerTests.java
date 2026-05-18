@@ -18,10 +18,8 @@ import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.dataformat.DataFormat;
-import org.opensearch.index.engine.dataformat.DeleteExecutionEngine;
 import org.opensearch.index.engine.dataformat.FieldTypeCapabilities;
 import org.opensearch.index.engine.dataformat.IndexingExecutionEngine;
-import org.opensearch.index.engine.dataformat.MergeInput;
 import org.opensearch.index.engine.dataformat.MergeResult;
 import org.opensearch.index.engine.dataformat.Merger;
 import org.opensearch.index.engine.dataformat.RowIdMapping;
@@ -32,7 +30,6 @@ import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
 import org.opensearch.index.engine.exec.coord.CatalogSnapshot;
 import org.opensearch.test.OpenSearchTestCase;
-import org.mockito.ArgumentCaptor;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -46,7 +43,6 @@ import java.util.Set;
 import java.util.function.Supplier;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -117,48 +113,6 @@ public class CompositeMergerTests extends OpenSearchTestCase {
         assertSame(mergedSecondaryWfs, result.getMergedWriterFileSetForDataformat(secondaryFormat));
     }
 
-    // ========== doMerge: live-docs plumbed through to primary MergeInput ==========
-
-    public void testDoMergeForwardsLiveDocsFromDeleteEngineToPrimary() throws IOException {
-        Path tempDir = createTempDir();
-        WriterFileSet primaryWfs = wfs(tempDir, 3L, Set.of("p.dat"), 10);
-        WriterFileSet secondaryWfs = wfs(tempDir, 3L, Set.of("s.dat"), 10);
-        Segment segment = buildSegment(3L, primaryFormat, primaryWfs, secondaryFormat, secondaryWfs);
-        OneMerge oneMerge = new OneMerge(List.of(segment));
-
-        // Live-docs: rows 0 and 4 dead, rest alive
-        long[] bits = new long[] { ~0L & ~0x11L };
-        Map<Long, long[]> liveDocs = Map.of(3L, bits);
-
-        DeleteExecutionEngine<?> deleteEngine = mock(DeleteExecutionEngine.class);
-        when(deleteEngine.getLiveDocsForSegments(anyList())).thenReturn(liveDocs);
-
-        WriterFileSet mergedPrimaryWfs = wfs(tempDir, 99L, Set.of("mp.dat"), 8);
-        WriterFileSet mergedSecondaryWfs = wfs(tempDir, 99L, Set.of("ms.dat"), 8);
-        MergeResult primaryResult = new MergeResult(Map.of(primaryFormat, mergedPrimaryWfs), STUB_ROW_ID_MAPPING);
-        MergeResult secondaryResult = new MergeResult(Map.of(secondaryFormat, mergedSecondaryWfs));
-
-        ArgumentCaptor<MergeInput> captor = ArgumentCaptor.forClass(MergeInput.class);
-        when(primaryMerger.merge(captor.capture())).thenReturn(primaryResult);
-        when(secondaryMerger.merge(any())).thenReturn(secondaryResult);
-
-        MergeHandler handler = new MergeHandler(
-            snapshotSupplier,
-            new CompositeMerger(compositeEngine, compositeDataFormat),
-            SHARD_ID,
-            mock(MergeHandler.MergePolicy.class),
-            mock(MergeHandler.MergeListener.class),
-            () -> 99L,
-            deleteEngine
-        );
-        handler.doMerge(oneMerge);
-
-        MergeInput forwarded = captor.getValue();
-        assertNotNull(forwarded);
-        long[] primaryBits = forwarded.getLiveDocsForSegment(3L);
-        assertArrayEquals(bits, primaryBits);
-    }
-
     // ========== doMerge: primary only (no secondaries) ==========
 
     public void testDoMergePrimaryOnlyNoSecondaries() throws IOException {
@@ -185,8 +139,7 @@ public class CompositeMergerTests extends OpenSearchTestCase {
             SHARD_ID,
             mock(MergeHandler.MergePolicy.class),
             mock(MergeHandler.MergeListener.class),
-            () -> 1L,
-            null
+            () -> 1L
         );
 
         MergeResult result = handler.doMerge(oneMerge);
@@ -270,8 +223,7 @@ public class CompositeMergerTests extends OpenSearchTestCase {
             SHARD_ID,
             mock(MergeHandler.MergePolicy.class),
             mock(MergeHandler.MergeListener.class),
-            () -> 1L,
-            null
+            () -> 1L
         );
 
         UncheckedIOException ex = expectThrows(UncheckedIOException.class, () -> handler.doMerge(oneMerge));
@@ -422,8 +374,7 @@ public class CompositeMergerTests extends OpenSearchTestCase {
             SHARD_ID,
             mock(MergeHandler.MergePolicy.class),
             mock(MergeHandler.MergeListener.class),
-            () -> 1L,
-            null
+            () -> 1L
         );
 
         MergeResult result = handler.doMerge(oneMerge);
@@ -618,8 +569,7 @@ public class CompositeMergerTests extends OpenSearchTestCase {
             SHARD_ID,
             mock(MergeHandler.MergePolicy.class),
             mock(MergeHandler.MergeListener.class),
-            () -> 1L,
-            null
+            () -> 1L
         );
     }
 
@@ -638,8 +588,7 @@ public class CompositeMergerTests extends OpenSearchTestCase {
             SHARD_ID,
             policy,
             policy,
-            () -> 1L,
-            null
+            () -> 1L
         );
     }
 

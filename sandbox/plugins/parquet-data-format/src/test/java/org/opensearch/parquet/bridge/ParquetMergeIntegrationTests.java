@@ -79,8 +79,6 @@ public class ParquetMergeIntegrationTests extends OpenSearchTestCase {
 
         RustBridge.mergeParquetFilesInRust(List.of(Path.of(file1), Path.of(file2), Path.of(file3)), null, mergedFile, INDEX_NAME, 0L);
 
-
-
         // 4. Verify merged output
         ParquetFileMetadata mergedMeta = RustBridge.getFileMetadata(mergedFile);
         assertEquals(9, mergedMeta.numRows());
@@ -103,8 +101,6 @@ public class ParquetMergeIntegrationTests extends OpenSearchTestCase {
 
         RustBridge.mergeParquetFilesInRust(List.of(Path.of(file1), Path.of(file2)), null, mergedFile, INDEX_NAME, 0L);
 
-
-
         assertEquals(6, RustBridge.getFileMetadata(mergedFile).numRows());
 
         RustBridge.removeSettings(INDEX_NAME);
@@ -120,8 +116,6 @@ public class ParquetMergeIntegrationTests extends OpenSearchTestCase {
         String mergedFile = tempDir.resolve("merged.parquet").toString();
 
         RustBridge.mergeParquetFilesInRust(List.of(Path.of(file1)), null, mergedFile, INDEX_NAME, 0L);
-
-
 
         assertEquals(3, RustBridge.getFileMetadata(mergedFile).numRows());
 

@@ -28,13 +28,9 @@ import java.util.Set;
  * @opensearch.experimental
  */
 @ExperimentalApi
-public record MergePlan(
-    long mergedWriterGeneration,
-    DataFormat primaryFormat,
-    List<DataFormat> secondaryFormats,
-    Map<DataFormat, List<WriterFileSet>> filesByFormat,
-    Map<Long, long[]> liveDocsPerSegment
-) {
+public record MergePlan(long mergedWriterGeneration, DataFormat primaryFormat, List<DataFormat> secondaryFormats, Map<
+    DataFormat,
+    List<WriterFileSet>> filesByFormat, Map<Long, long[]> liveDocsPerSegment) {
 
     public MergePlan {
         secondaryFormats = List.copyOf(secondaryFormats);
