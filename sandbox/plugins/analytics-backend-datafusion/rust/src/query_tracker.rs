@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dashmap::DashMap;
+use log::debug;
 use once_cell::sync::Lazy;
 use tokio_util::sync::CancellationToken;
 
@@ -351,8 +352,8 @@ impl Drop for QueryTrackingContext {
     fn drop(&mut self) {
         if let Some(tracker) = &self.tracker {
             tracker.mark_completed();
-           debug!(
-               "Query completed ctx={}: wall={:.3}s, mem_current={}B, mem_peak={}B",
+          debug!(
+              "Query completed ctx={}: wall={:.3}s, mem_current={}B, mem_peak={}B",
                 tracker.context_id,
                 tracker.wall_secs(),
                 tracker.memory_pool.current_bytes(),
