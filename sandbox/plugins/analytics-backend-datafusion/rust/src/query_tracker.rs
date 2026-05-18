@@ -28,8 +28,6 @@ use tokio_util::sync::CancellationToken;
 use datafusion::common::DataFusionError;
 use datafusion::execution::memory_pool::{MemoryConsumer, MemoryPool, MemoryReservation};
 
-use crate::log_debug;
-
 // ---------------------------------------------------------------------------
 // Per-query memory pool
 // ---------------------------------------------------------------------------
@@ -353,10 +351,11 @@ impl Drop for QueryTrackingContext {
     fn drop(&mut self) {
         if let Some(tracker) = &self.tracker {
             tracker.mark_completed();
-            log_debug!(
-                "query completed ctx={}: wall={:.3}s, peak={}B",
+           debug!(
+               "Query completed ctx={}: wall={:.3}s, mem_current={}B, mem_peak={}B",
                 tracker.context_id,
                 tracker.wall_secs(),
+                tracker.memory_pool.current_bytes(),
                 tracker.memory_pool.peak_bytes(),
             );
             QUERY_REGISTRY.remove(&tracker.context_id);
