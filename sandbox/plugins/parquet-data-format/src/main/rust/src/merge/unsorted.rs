@@ -173,13 +173,5 @@ pub fn merge_unsorted(
 
 #[inline]
 fn is_alive(bits: &[u64], abs_row_id: u64, num_rows: u64) -> bool {
-    if abs_row_id >= num_rows {
-        return true;
-    }
-    let word = (abs_row_id / 64) as usize;
-    let bit = (abs_row_id % 64) as u64;
-    match bits.get(word) {
-        Some(&w) => (w & (1u64 << bit)) != 0,
-        None => true,
-    }
+    super::live_docs::is_alive_in_words(bits, num_rows, abs_row_id)
 }
