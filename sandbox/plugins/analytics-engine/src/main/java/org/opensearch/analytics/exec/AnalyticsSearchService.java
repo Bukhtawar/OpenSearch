@@ -23,7 +23,9 @@ import org.opensearch.analytics.spi.FilterDelegationHandle;
 import org.opensearch.analytics.spi.FragmentInstructionHandler;
 import org.opensearch.analytics.spi.FragmentInstructionHandlerFactory;
 import org.opensearch.analytics.spi.InstructionNode;
+import org.opensearch.arrow.allocator.ArrowNativeAllocator;
 import org.opensearch.arrow.memory.ArrowAllocatorService;
+import org.opensearch.arrow.spi.NativeAllocatorPoolConfig;
 import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
 import org.opensearch.core.tasks.TaskCancelledException;
@@ -82,7 +84,12 @@ public class AnalyticsSearchService implements AutoCloseable {
     ) {
         this.backends = backends;
         this.listener = new AnalyticsOperationListener.CompositeListener(listeners);
-        this.allocator = allocatorService.newChildAllocator("analytics-search-service", Long.MAX_VALUE);
+        // Source the service-level allocator from the unified framework's query pool so all
+        // analytics-engine allocations are tracked and capped by the framework. Hard-fail if
+        // the framework is missing — silently falling back to a separate root would break
+        // Arrow's same-root invariant for cross-plugin handoff.
+        BufferAllocator queryPool = ArrowNativeAllocator.instance().getPoolAllocator(NativeAllocatorPoolConfig.POOL_QUERY);
+        this.allocator = queryPool.newChildAllocator("analytics-search-service", 0, queryPool.getLimit());
         this.namedWriteableRegistry = namedWriteableRegistry;
     }
 

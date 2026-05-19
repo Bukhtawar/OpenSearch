@@ -30,6 +30,10 @@ public final class NativeAllocatorPoolConfig {
     public static final String POOL_FLIGHT = "flight";
     /** Pool name for ingest pipeline memory. */
     public static final String POOL_INGEST = "ingest";
+    /** Pool name for query-execution memory (analytics-engine fragments and per-query allocators). */
+    public static final String POOL_QUERY = "query";
+    /** Pool name for DataFusion native runtime memory. Mirrored to the Rust-side memory pool via {@link NativeAllocatorListener}. */
+    public static final String POOL_DATAFUSION = "datafusion";
 
     /** Setting key for the root allocator limit. */
     public static final String SETTING_ROOT_LIMIT = "native.allocator.root.limit";
@@ -42,6 +46,14 @@ public final class NativeAllocatorPoolConfig {
     public static final String SETTING_INGEST_MIN = "native.allocator.pool.ingest.min";
     /** Setting key for the ingest pool maximum. */
     public static final String SETTING_INGEST_MAX = "native.allocator.pool.ingest.max";
+    /** Setting key for the query pool minimum. */
+    public static final String SETTING_QUERY_MIN = "native.allocator.pool.query.min";
+    /** Setting key for the query pool maximum. */
+    public static final String SETTING_QUERY_MAX = "native.allocator.pool.query.max";
+    /** Setting key for the DataFusion pool minimum. */
+    public static final String SETTING_DATAFUSION_MIN = "native.allocator.pool.datafusion.min";
+    /** Setting key for the DataFusion pool maximum. */
+    public static final String SETTING_DATAFUSION_MAX = "native.allocator.pool.datafusion.max";
 
     private NativeAllocatorPoolConfig() {}
 }

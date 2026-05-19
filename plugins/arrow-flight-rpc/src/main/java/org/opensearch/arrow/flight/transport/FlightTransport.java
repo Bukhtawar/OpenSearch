@@ -19,10 +19,12 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.Version;
+import org.opensearch.arrow.allocator.ArrowNativeAllocator;
 import org.opensearch.arrow.flight.bootstrap.ServerConfig;
 import org.opensearch.arrow.flight.bootstrap.tls.SslContextProvider;
 import org.opensearch.arrow.flight.stats.FlightStatsCollector;
 import org.opensearch.arrow.memory.ArrowAllocatorService;
+import org.opensearch.arrow.spi.NativeAllocatorPoolConfig;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.common.network.NetworkAddress;
 import org.opensearch.common.network.NetworkService;
@@ -147,7 +149,12 @@ class FlightTransport extends TcpTransport {
     protected void doStart() {
         boolean success = false;
         try {
-            flightAllocator = allocatorService.newChildAllocator("flight", Integer.MAX_VALUE);
+            // Use the unified native allocator's flight pool so flight allocations are tracked
+            // and capped by the framework alongside ingest, query, and datafusion. Hard-fail if
+            // the framework plugin is missing — silently falling back to a separate root would
+            // break the same-root invariant for cross-plugin Arrow handoff.
+            BufferAllocator flightPool = ArrowNativeAllocator.instance().getPoolAllocator(NativeAllocatorPoolConfig.POOL_FLIGHT);
+            flightAllocator = flightPool.newChildAllocator("flight", 0, flightPool.getLimit());
             serverAllocator = flightAllocator.newChildAllocator("server", 0, flightAllocator.getLimit());
             clientAllocator = flightAllocator.newChildAllocator("client", 0, flightAllocator.getLimit());
             if (statsCollector != null) {
