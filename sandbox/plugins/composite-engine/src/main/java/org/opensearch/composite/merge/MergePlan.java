@@ -10,6 +10,7 @@ package org.opensearch.composite.merge;
 
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.index.engine.dataformat.DataFormat;
+import org.opensearch.index.engine.dataformat.LiveDocs;
 import org.opensearch.index.engine.dataformat.merge.OneMerge;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
@@ -30,12 +31,11 @@ import java.util.Set;
 @ExperimentalApi
 public record MergePlan(long mergedWriterGeneration, DataFormat primaryFormat, List<DataFormat> secondaryFormats, Map<
     DataFormat,
-    List<WriterFileSet>> filesByFormat, Map<Long, long[]> liveDocsPerSegment) {
+    List<WriterFileSet>> filesByFormat, LiveDocs liveDocs) {
 
     public MergePlan {
         secondaryFormats = List.copyOf(secondaryFormats);
         filesByFormat = Map.copyOf(filesByFormat);
-        liveDocsPerSegment = Map.copyOf(liveDocsPerSegment);
     }
 
     /** Files for a given format, empty list if the format has no files. */
@@ -50,14 +50,14 @@ public record MergePlan(long mergedWriterGeneration, DataFormat primaryFormat, L
 
     /**
      * Builds a plan from a merge operation, a primary format, secondary formats, a generation,
-     * and per-segment live-docs bitsets.
+     * and live-docs.
      */
     public static MergePlan from(
         OneMerge oneMerge,
         DataFormat primaryFormat,
         List<DataFormat> secondaryFormats,
         long generation,
-        Map<Long, long[]> liveDocsPerSegment
+        LiveDocs liveDocs
     ) {
         Set<DataFormat> allFormats = new LinkedHashSet<>();
         allFormats.add(primaryFormat);
@@ -74,6 +74,6 @@ public record MergePlan(long mergedWriterGeneration, DataFormat primaryFormat, L
             }
             filesByFormat.put(format, List.copyOf(files));
         }
-        return new MergePlan(generation, primaryFormat, secondaryFormats, filesByFormat, liveDocsPerSegment);
+        return new MergePlan(generation, primaryFormat, secondaryFormats, filesByFormat, liveDocs);
     }
 }

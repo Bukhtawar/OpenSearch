@@ -81,7 +81,7 @@ public class CompositeMergeExecutor {
                 .segments(segments)
                 .rowIdMapping(mapping)
                 .newWriterGeneration(plan.mergedWriterGeneration())
-                .liveDocsPerSegment(plan.liveDocsPerSegment())
+                .liveDocs(plan.liveDocs())
                 .build()
         );
         return new FormatMergeResult(format, result.getMergedWriterFileSetForDataformat(format), result.rowIdMapping().orElse(null));

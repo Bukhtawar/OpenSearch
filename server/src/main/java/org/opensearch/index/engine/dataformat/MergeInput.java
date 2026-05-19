@@ -13,30 +13,25 @@ import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 
 /**
- * input data for a merge operation.
+ * Input data for a merge operation.
  * Use {@link Builder} to construct instances.
  *
- * <p>{@code liveDocsPerSegment} is keyed by {@link Segment#generation()}. Values are packed
- * bitsets in Lucene {@code FixedBitSet#getBits()} layout (bit {@code i} set means row
- * {@code i} is alive). Absent key = all rows alive. The snapshot is taken once at merge
- * start; mid-merge deletes are not reflected.</p>
+ * <p>{@code liveDocs} provides per-segment delete filtering. See {@link LiveDocs} for
+ * the contract. The snapshot is taken once at merge start; mid-merge deletes are not
+ * reflected.</p>
  *
  * @opensearch.experimental
  */
 @ExperimentalApi
-public record MergeInput(List<Segment> segments, RowIdMapping rowIdMapping, long newWriterGeneration, Map<
-    Long,
-    long[]> liveDocsPerSegment) {
+public record MergeInput(List<Segment> segments, RowIdMapping rowIdMapping, long newWriterGeneration, LiveDocs liveDocs) {
 
     public MergeInput {
         segments = List.copyOf(segments);
-        liveDocsPerSegment = Map.copyOf(liveDocsPerSegment);
+        Objects.requireNonNull(liveDocs, "liveDocs must not be null; use LiveDocs.ALL_ALIVE for no filtering");
     }
 
     private MergeInput(Builder builder) {
@@ -44,7 +39,7 @@ public record MergeInput(List<Segment> segments, RowIdMapping rowIdMapping, long
             new ArrayList<>(builder.segments),
             builder.rowIdMapping,
             builder.newWriterGeneration,
-            new HashMap<>(builder.liveDocsPerSegment)
+            builder.liveDocs
         );
     }
 
@@ -60,10 +55,10 @@ public record MergeInput(List<Segment> segments, RowIdMapping rowIdMapping, long
 
     /**
      * Returns the live-docs bitset for the given segment generation, or {@code null} if all
-     * rows in that segment are alive.
+     * rows in that segment are alive. Convenience delegate to {@link LiveDocs#packedBits(long)}.
      */
     public long[] getLiveDocsForSegment(long generation) {
-        return liveDocsPerSegment.get(generation);
+        return liveDocs.packedBits(generation);
     }
 
     /**
@@ -83,7 +78,7 @@ public record MergeInput(List<Segment> segments, RowIdMapping rowIdMapping, long
         private List<Segment> segments = new ArrayList<>();
         private RowIdMapping rowIdMapping;
         private long newWriterGeneration;
-        private Map<Long, long[]> liveDocsPerSegment = Map.of();
+        private LiveDocs liveDocs = LiveDocs.ALL_ALIVE;
 
         private Builder() {}
 
@@ -132,10 +127,25 @@ public record MergeInput(List<Segment> segments, RowIdMapping rowIdMapping, long
         }
 
         /**
-         * Sets the per-segment live-docs bitsets. See class javadoc for the contract.
+         * Sets the live-docs for delete filtering during merge.
+         *
+         * @param liveDocs the live-docs instance
+         * @return this builder
          */
-        public Builder liveDocsPerSegment(Map<Long, long[]> liveDocsPerSegment) {
-            this.liveDocsPerSegment = Objects.requireNonNull(liveDocsPerSegment, "liveDocsPerSegment must not be null");
+        public Builder liveDocs(LiveDocs liveDocs) {
+            this.liveDocs = Objects.requireNonNull(liveDocs, "liveDocs must not be null; use LiveDocs.ALL_ALIVE");
+            return this;
+        }
+
+        /**
+         * Sets the per-segment live-docs from a raw packed bitset map.
+         * Convenience method that wraps the map in a {@link LiveDocs} instance.
+         *
+         * @param liveDocsPerSegment raw bitsets keyed by segment generation
+         * @return this builder
+         */
+        public Builder liveDocsPerSegment(java.util.Map<Long, long[]> liveDocsPerSegment) {
+            this.liveDocs = LiveDocs.fromPackedBits(liveDocsPerSegment);
             return this;
         }
 

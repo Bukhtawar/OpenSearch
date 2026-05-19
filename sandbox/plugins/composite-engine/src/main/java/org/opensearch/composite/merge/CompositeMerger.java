@@ -55,7 +55,7 @@ public class CompositeMerger implements Merger {
             primaryFormat,
             secondaryFormats,
             filesByFormat,
-            mergeInput.liveDocsPerSegment()
+            mergeInput.liveDocs()
         );
         return executor.execute(plan);
     }
