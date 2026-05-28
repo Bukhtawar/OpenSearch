@@ -297,6 +297,11 @@ public class CompositeIndexingExecutionEngine implements IndexingExecutionEngine
                         assert result.stream().allMatch(s -> s.dfGroupedSearchableFiles().size() >= 1 + secondaryEngines.size())
                             : "refresh result segments must contain all configured formats";
 
+                        // Clean up source per-writer files that were superseded by the merged segment.
+                        // These files never appear in any catalog snapshot (only the merged file does),
+                        // so the normal FileDeleter path won't handle them.
+                        deleteSourceFiles(onlyNew);
+
                         return new RefreshResult(List.copyOf(result));
                     }
                 } catch (Exception e) {
@@ -311,6 +316,30 @@ public class CompositeIndexingExecutionEngine implements IndexingExecutionEngine
         assert newSegments.stream().allMatch(s -> s.dfGroupedSearchableFiles().size() >= 1 + secondaryEngines.size())
             : "refresh result segments must contain all configured formats";
         return new RefreshResult(List.copyOf(newSegments));
+    }
+
+    /**
+     * Deletes source per-writer files that were superseded by an inline merge.
+     * These files never appear in any catalog snapshot, so the normal FileDeleter
+     * (which tracks catalog refcounts) won't clean them up. Only deletes the primary
+     * format's files — Lucene's executeMerge handles its own segment cleanup via
+     * IndexFileDeleter.
+     */
+    private void deleteSourceFiles(List<Segment> sourceSegments) {
+        for (Segment seg : sourceSegments) {
+            WriterFileSet wfs = seg.dfGroupedSearchableFiles().get(primaryEngine.getDataFormat().name());
+            if (wfs == null) {
+                continue;
+            }
+            for (String file : wfs.files()) {
+                try {
+                    java.nio.file.Path filePath = java.nio.file.Path.of(wfs.directory()).resolve(file);
+                    java.nio.file.Files.deleteIfExists(filePath);
+                } catch (IOException e) {
+                    logger.warn("Failed to delete superseded source file: {}/{}", wfs.directory(), file);
+                }
+            }
+        }
     }
 
     private boolean shouldMergeOnRefresh(List<Segment> writerFiles) {
