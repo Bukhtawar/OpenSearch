@@ -474,6 +474,101 @@ public class CompositeConcurrentIndexingIT extends OpenSearchIntegTestCase {
         client().admin().indices().prepareDelete(indexName).get();
     }
 
+    /**
+     * Verifies that merge-on-refresh does not leave orphan per-writer Parquet files on disk.
+     * After inline merge, only the merged file should remain — the source per-writer files
+     * must be deleted. Without proper cleanup, each merge-on-refresh would leak N-1 files.
+     */
+    public void testMergeOnRefreshDeletesSourceFiles() throws Exception {
+        String indexName = "merge-no-orphans";
+        int numThreads = 3;
+        int docsPerThread = 10;
+        int totalDocs = numThreads * docsPerThread;
+
+        client().admin()
+            .indices()
+            .prepareCreate(indexName)
+            .setSettings(mergeOnRefreshSettings())
+            .setMapping("name", "type=keyword", "value", "type=integer")
+            .get();
+        ensureGreen(indexName);
+
+        CyclicBarrier barrier = new CyclicBarrier(numThreads);
+        AtomicInteger failures = new AtomicInteger(0);
+        Thread[] threads = new Thread[numThreads];
+
+        for (int t = 0; t < numThreads; t++) {
+            int threadId = t;
+            threads[t] = new Thread(() -> {
+                try {
+                    barrier.await();
+                    for (int d = 0; d < docsPerThread; d++) {
+                        client().prepareIndex()
+                            .setIndex(indexName)
+                            .setSource("name", "t" + threadId + "_d" + d, "value", threadId * 100 + d)
+                            .get();
+                    }
+                } catch (Exception e) {
+                    failures.incrementAndGet();
+                }
+            }, "orphan-test-indexer-" + t);
+            threads[t].start();
+        }
+        for (Thread t : threads) {
+            t.join(30_000);
+            assertFalse("Thread did not finish in time: " + t.getName(), t.isAlive());
+        }
+        assertEquals(0, failures.get());
+
+        client().admin().indices().prepareRefresh(indexName).get();
+        client().admin().indices().prepareFlush(indexName).setForce(true).setWaitIfOngoing(true).get();
+
+        // Verify data correctness
+        verifyIndex(indexName, 1, totalDocs);
+
+        // Count parquet files on disk vs files referenced by catalog
+        IndicesStatsResponse statsResponse = client().admin().indices().prepareStats(indexName).clear().setStore(true).get();
+        for (ShardStats ss : statsResponse.getIndex(indexName).getShards()) {
+            if (ss.getShardRouting().primary() == false) continue;
+
+            CommitStats commitStats = ss.getCommitStats();
+            DataformatAwareCatalogSnapshot snapshot = DataformatAwareCatalogSnapshot.deserializeFromString(
+                commitStats.getUserData().get(DataformatAwareCatalogSnapshot.CATALOG_SNAPSHOT_KEY),
+                Function.identity()
+            );
+
+            // Collect all parquet files referenced by the catalog
+            Set<String> catalogFiles = new HashSet<>();
+            for (Segment seg : snapshot.getSegments()) {
+                WriterFileSet wfs = seg.dfGroupedSearchableFiles().get("parquet");
+                if (wfs != null) {
+                    catalogFiles.addAll(wfs.files());
+                }
+            }
+
+            // Count actual parquet files on disk in the shard's parquet directory
+            java.nio.file.Path parquetDir = java.nio.file.Path.of(ss.getDataPath()).resolve("parquet");
+            if (java.nio.file.Files.isDirectory(parquetDir)) {
+                Set<String> diskFiles;
+                try (var stream = java.nio.file.Files.list(parquetDir)) {
+                    diskFiles = stream.filter(p -> p.toString().endsWith(".parquet"))
+                        .map(p -> p.getFileName().toString())
+                        .collect(java.util.stream.Collectors.toSet());
+                }
+
+                // Every file on disk must be referenced by the catalog (no orphans)
+                for (String diskFile : diskFiles) {
+                    assertTrue(
+                        "Orphan parquet file on disk not referenced by catalog: " + diskFile,
+                        catalogFiles.contains(diskFile)
+                    );
+                }
+            }
+        }
+
+        client().admin().indices().prepareDelete(indexName).get();
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // Merge-on-refresh disabled (baseline) tests
     // ══════════════════════════════════════════════════════════════════════
