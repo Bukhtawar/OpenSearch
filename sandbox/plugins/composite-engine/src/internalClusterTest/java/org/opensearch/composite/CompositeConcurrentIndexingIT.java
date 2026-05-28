@@ -17,13 +17,18 @@ import org.opensearch.arrow.allocator.ArrowBasePlugin;
 import org.opensearch.be.datafusion.DataFusionPlugin;
 import org.opensearch.be.lucene.LucenePlugin;
 import org.opensearch.cluster.metadata.IndexMetadata;
+import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.util.FeatureFlags;
 import org.opensearch.core.rest.RestStatus;
+import org.opensearch.index.IndexService;
 import org.opensearch.index.engine.CommitStats;
 import org.opensearch.index.engine.exec.Segment;
 import org.opensearch.index.engine.exec.WriterFileSet;
+import org.opensearch.index.engine.exec.coord.CatalogSnapshot;
 import org.opensearch.index.engine.exec.coord.DataformatAwareCatalogSnapshot;
+import org.opensearch.index.shard.IndexShard;
+import org.opensearch.indices.IndicesService;
 import org.opensearch.parquet.ParquetDataFormatPlugin;
 import org.opensearch.plugins.Plugin;
 import org.opensearch.test.OpenSearchIntegTestCase;
@@ -526,18 +531,28 @@ public class CompositeConcurrentIndexingIT extends OpenSearchIntegTestCase {
         // Verify data correctness
         verifyIndex(indexName, 1, totalDocs);
 
-        // Count parquet files on disk vs files referenced by catalog
-        IndicesStatsResponse statsResponse = client().admin().indices().prepareStats(indexName).clear().setStore(true).get();
-        for (ShardStats ss : statsResponse.getIndex(indexName).getShards()) {
-            if (ss.getShardRouting().primary() == false) continue;
+        // Get the primary shard's parquet directory directly via IndexShard
+        String nodeName = getClusterState().routingTable().index(indexName).shard(0).primaryShard().currentNodeId();
+        String nodeNameResolved = getClusterState().nodes().get(nodeName).getName();
+        IndicesService indicesService = internalCluster().getInstance(IndicesService.class, nodeNameResolved);
+        IndexService indexService = indicesService.indexServiceSafe(resolveIndex(indexName));
+        IndexShard shard = indexService.getShard(0);
+        java.nio.file.Path parquetDir = shard.shardPath().getDataPath().resolve("parquet");
 
-            CommitStats commitStats = ss.getCommitStats();
-            DataformatAwareCatalogSnapshot snapshot = DataformatAwareCatalogSnapshot.deserializeFromString(
-                commitStats.getUserData().get(DataformatAwareCatalogSnapshot.CATALOG_SNAPSHOT_KEY),
-                Function.identity()
-            );
+        assertTrue("Parquet directory must exist: " + parquetDir, java.nio.file.Files.isDirectory(parquetDir));
 
-            // Collect all parquet files referenced by the catalog
+        // Count actual parquet files on disk
+        Set<String> diskFiles;
+        try (var stream = java.nio.file.Files.list(parquetDir)) {
+            diskFiles = stream.filter(p -> p.toString().endsWith(".parquet"))
+                .map(p -> p.getFileName().toString())
+                .collect(java.util.stream.Collectors.toSet());
+        }
+        assertFalse("Expected parquet files on disk", diskFiles.isEmpty());
+
+        // Collect all parquet files referenced by the catalog
+        try (GatedCloseable<CatalogSnapshot> gated = shard.getCatalogSnapshot()) {
+            DataformatAwareCatalogSnapshot snapshot = (DataformatAwareCatalogSnapshot) gated.get();
             Set<String> catalogFiles = new HashSet<>();
             for (Segment seg : snapshot.getSegments()) {
                 WriterFileSet wfs = seg.dfGroupedSearchableFiles().get("parquet");
@@ -545,25 +560,12 @@ public class CompositeConcurrentIndexingIT extends OpenSearchIntegTestCase {
                     catalogFiles.addAll(wfs.files());
                 }
             }
+            assertFalse("Catalog must reference at least one parquet file", catalogFiles.isEmpty());
 
-            // Count actual parquet files on disk in the shard's parquet directory
-            java.nio.file.Path parquetDir = java.nio.file.Path.of(ss.getDataPath()).resolve("parquet");
-            if (java.nio.file.Files.isDirectory(parquetDir)) {
-                Set<String> diskFiles;
-                try (var stream = java.nio.file.Files.list(parquetDir)) {
-                    diskFiles = stream.filter(p -> p.toString().endsWith(".parquet"))
-                        .map(p -> p.getFileName().toString())
-                        .collect(java.util.stream.Collectors.toSet());
-                }
-
-                // Every file on disk must be referenced by the catalog (no orphans)
-                for (String diskFile : diskFiles) {
-                    assertTrue(
-                        "Orphan parquet file on disk not referenced by catalog: " + diskFile,
-                        catalogFiles.contains(diskFile)
-                    );
-                }
-            }
+            // Every file on disk must be referenced by the catalog (no orphans)
+            Set<String> orphans = new HashSet<>(diskFiles);
+            orphans.removeAll(catalogFiles);
+            assertTrue("Orphan parquet files on disk not referenced by catalog: " + orphans, orphans.isEmpty());
         }
 
         client().admin().indices().prepareDelete(indexName).get();
