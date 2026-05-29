@@ -91,6 +91,7 @@ public class DefaultPlanExecutor extends HandledTransportAction<AnalyticsQueryRe
     private final BufferAllocator coordinatorAllocator;
     private volatile long perQueryBufferLimit;
     private final IndexNameExpressionResolver indexNameExpressionResolver;
+    private final AnalyticsSearchSlowLog analyticsSearchSlowLog;
 
     @Inject
     public DefaultPlanExecutor(
@@ -103,7 +104,8 @@ public class DefaultPlanExecutor extends HandledTransportAction<AnalyticsQueryRe
         NodeClient client,
         Scheduler scheduler,
         CoordinatorAllocatorHandle coordinatorAllocatorHandle,
-        IndexNameExpressionResolver indexNameExpressionResolver
+        IndexNameExpressionResolver indexNameExpressionResolver,
+        AnalyticsSearchSlowLog analyticsSearchSlowLog
     ) {
         super(AnalyticsQueryAction.NAME, transportService, actionFilters, AnalyticsQueryRequest::new);
         this.capabilityRegistry = capabilityRegistry;
@@ -125,6 +127,7 @@ public class DefaultPlanExecutor extends HandledTransportAction<AnalyticsQueryRe
         clusterService.getClusterSettings()
             .addSettingsUpdateConsumer(AnalyticsPlugin.COORDINATOR_BUFFER_LIMIT, v -> perQueryBufferLimit = v);
         this.indexNameExpressionResolver = indexNameExpressionResolver;
+        this.analyticsSearchSlowLog = analyticsSearchSlowLog;
     }
 
     @Override
@@ -173,7 +176,13 @@ public class DefaultPlanExecutor extends HandledTransportAction<AnalyticsQueryRe
         RelMetadataQueryBase.THREAD_PROVIDERS.set(JaninoRelMetadataProvider.of(logicalFragment.getCluster().getMetadataProvider()));
         logicalFragment.getCluster().invalidateMetadataQuery();
 
-        final long planStartNanos = profile ? System.nanoTime() : 0;
+        // Create the slow log wrapper at the start so it observes the full query lifecycle.
+        final String querySource = queryCtx != null ? queryCtx.querySource() : null;
+        final AnalyticsSearchSlowLog.QuerySlowLogListener queryListener = analyticsSearchSlowLog.createQueryListener(querySource);
+        final long queryStartNanos = System.nanoTime();
+
+        // ─── Planning phase ───────────────────────────────────────────────
+        final long planStartNanos = System.nanoTime();
         // Reuse the snapshot captured at REST entry when present; this is the same ClusterState
         // OpenSearchSchemaBuilder used to build the SchemaPlus, so planner and schema agree.
         // TODO: remove the null fallback once every front-end (test-ppl-frontend,
@@ -188,14 +197,21 @@ public class DefaultPlanExecutor extends HandledTransportAction<AnalyticsQueryRe
         PlanForker.forkAll(dag, capabilityRegistry);
         BackendPlanAdapter.adaptAll(dag, capabilityRegistry);
         FragmentConversionDriver.convertAll(dag, capabilityRegistry);
-        final long planningTimeMs = profile ? java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - planStartNanos) : 0;
+        final long planningTimeNanos = System.nanoTime() - planStartNanos;
+        final long planningTimeMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(planningTimeNanos);
         logger.debug("[DefaultPlanExecutor] QueryDAG:\n{}", dag);
 
+        queryListener.onPlanningComplete(dag.queryId(), planningTimeNanos);
+
+        // ─── Task registration + allocator ────────────────────────────────
         final AnalyticsQueryTask queryTask = (AnalyticsQueryTask) taskManager.register(
             "transport",
             "analytics_query",
             new AnalyticsQueryTaskRequest(dag.queryId(), null)
         );
+
+        queryListener.setHeaders(queryTask.getHeader(Task.X_OPAQUE_ID), queryTask.getHeader(Task.X_REQUEST_ID));
+
         final BufferAllocator queryAllocator;
         final boolean ownsAllocator;
         if (perQueryBufferLimit <= 0) {
@@ -213,14 +229,17 @@ public class DefaultPlanExecutor extends HandledTransportAction<AnalyticsQueryRe
             ownsAllocator = true;
         }
         logger.debug("[query-{}] Arrow allocator created, limit={}B", dag.queryId(), perQueryBufferLimit);
+
+        // ─── Build query context ──────────────────────────────────────────
         final QueryContext context;
         try {
-            context = new QueryContext(dag, threadPool, queryTask, queryAllocator, ownsAllocator);
+            context = new QueryContext(dag, threadPool, queryTask, queryAllocator, ownsAllocator, List.of(queryListener));
         } catch (Exception e) {
             if (ownsAllocator) queryAllocator.close();
             throw e;
         }
 
+        // ─── Execution + materialization ──────────────────────────────────
         /*
         Profile and explain are captured within the QueryExecution, however QueryExecution requires the complete
         batchesListener to construct the ExecutionGraph. To get around this circular dependency we build a profiling
@@ -233,10 +252,12 @@ public class DefaultPlanExecutor extends HandledTransportAction<AnalyticsQueryRe
             : ActionListener.wrap(rows -> listener.onResponse(new ProfiledResult(rows, null, null)), listener::onFailure);
 
         final List<String> outputColumnOrder = logicalFragment.getRowType().getFieldNames();
-        ActionListener<Iterable<VectorSchemaRoot>> batchesListener = ActionListener.runAfter(
-            ActionListener.wrap(batches -> rowsListener.onResponse(batchesToRows(batches, outputColumnOrder)), rowsListener::onFailure),
-            () -> taskManager.unregister(queryTask)
-        );
+        ActionListener<Iterable<VectorSchemaRoot>> batchesListener = ActionListener.runAfter(ActionListener.wrap(batches -> {
+            Iterable<Object[]> rows = batchesToRows(batches, outputColumnOrder);
+            long totalRows = rows instanceof List ? ((List<?>) rows).size() : 0;
+            queryListener.onQueryComplete(dag.queryId(), System.nanoTime() - queryStartNanos, totalRows);
+            rowsListener.onResponse(rows);
+        }, rowsListener::onFailure), () -> taskManager.unregister(queryTask));
 
         TimeValue taskTimeout = queryTask.getCancelAfterTimeInterval();
         TimeValue clusterTimeout = clusterService.getClusterSettings().get(SEARCH_CANCEL_AFTER_TIME_INTERVAL_SETTING);
