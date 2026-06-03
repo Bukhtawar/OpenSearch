@@ -9,10 +9,12 @@ use std::{
     },
 };
 
+use arrow_schema::DataType;
 use datafusion::{
-    common::DataFusionError,
+    common::{config::ConfigOptions, DataFusionError},
     optimizer::OptimizerRule,
     physical_optimizer::PhysicalOptimizerRule,
+    physical_plan::ExecutionPlan,
     prelude::SessionConfig,
 };
 
@@ -109,7 +111,7 @@ impl LiquidOnlyRuntime {
     }
 
     pub fn optimizer(&self) -> Arc<dyn PhysicalOptimizerRule + Send + Sync> {
-        self.optimizer.clone()
+        Arc::new(NumericFilterOnlyLiquidCacheOptimizer::new(self.optimizer.clone()))
     }
 
     pub fn lineage_optimizer(&self) -> Arc<dyn OptimizerRule + Send + Sync> {
@@ -214,4 +216,98 @@ impl LiquidOnlyRuntime {
             rt.reset_cache();
         }
     }
+}
+
+/// Wraps the Liquid Cache physical optimizer, applying it only when the query's
+/// filter predicate references exclusively numeric/temporal columns. Queries filtering
+/// on string/text columns bypass the cache since those columns are better served by
+/// the Lucene inverted index path and would waste cache budget on large string data.
+#[derive(Debug)]
+pub struct NumericFilterOnlyLiquidCacheOptimizer {
+    inner: Arc<dyn PhysicalOptimizerRule + Send + Sync>,
+}
+
+impl NumericFilterOnlyLiquidCacheOptimizer {
+    pub fn new(inner: Arc<dyn PhysicalOptimizerRule + Send + Sync>) -> Self {
+        Self { inner }
+    }
+}
+
+impl PhysicalOptimizerRule for NumericFilterOnlyLiquidCacheOptimizer {
+    fn optimize(
+        &self,
+        plan: Arc<dyn ExecutionPlan>,
+        config: &ConfigOptions,
+    ) -> datafusion::common::Result<Arc<dyn ExecutionPlan>> {
+        if filter_columns_are_cacheable(&plan) {
+            self.inner.optimize(plan, config)
+        } else {
+            log_debug!("[LiquidCache] Skipping — filter references non-numeric columns");
+            Ok(plan)
+        }
+    }
+
+    fn name(&self) -> &str {
+        "NumericFilterOnlyLiquidCacheOptimizer"
+    }
+
+    fn schema_check(&self) -> bool {
+        true
+    }
+}
+
+/// Walks the plan tree to find filter predicates. Returns true if ALL filter
+/// columns are numeric/temporal (cacheable), or if there's no filter at all.
+fn filter_columns_are_cacheable(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    use datafusion::physical_plan::filter::FilterExec;
+    use datafusion::physical_expr::utils::collect_columns;
+
+    // Check this node
+    if let Some(filter) = plan.as_any().downcast_ref::<FilterExec>() {
+        let predicate = filter.predicate();
+        let columns = collect_columns(predicate);
+        let schema = filter.children()[0].schema();
+        for col in &columns {
+            if let Ok(field) = schema.field_with_name(col.name()) {
+                if !is_cacheable_type(field.data_type()) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Recurse into children
+    for child in plan.children() {
+        if !filter_columns_are_cacheable(child) {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_cacheable_type(dt: &DataType) -> bool {
+    matches!(
+        dt,
+        DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt32
+            | DataType::UInt64
+            | DataType::Float16
+            | DataType::Float32
+            | DataType::Float64
+            | DataType::Decimal128(_, _)
+            | DataType::Decimal256(_, _)
+            | DataType::Date32
+            | DataType::Date64
+            | DataType::Time32(_)
+            | DataType::Time64(_)
+            | DataType::Timestamp(_, _)
+            | DataType::Duration(_)
+            | DataType::Interval(_)
+            | DataType::Boolean
+    )
 }
