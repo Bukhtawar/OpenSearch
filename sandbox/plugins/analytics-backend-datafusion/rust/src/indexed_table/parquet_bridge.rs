@@ -163,9 +163,27 @@ fn create_stream_with_access_plan(
         }
     }
 
-    let mut config_builder =
+    // Wrap with Liquid Cache when enabled — predicate is None (evaluator handles filtering).
+    // LiquidParquetSource acts as a decoded-batch cache: on HIT returns Arrow directly,
+    // on MISS decodes from Parquet and caches the result.
+    let config_builder = if crate::liquid_cache::LiquidOnlyRuntime::is_enabled_globally() {
+        if let Some(cache_ref) = crate::liquid_cache::LiquidOnlyRuntime::cache_ref_globally() {
+            let liquid_source = liquid_cache_datafusion::LiquidParquetSource::from_parquet_source(
+                parquet_source,
+                cache_ref,
+            );
+            FileScanConfigBuilder::new(config.store_url.clone(), Arc::new(liquid_source))
+                .with_file(partitioned_file)
+        } else {
+            FileScanConfigBuilder::new(config.store_url.clone(), Arc::new(parquet_source))
+                .with_file(partitioned_file)
+        }
+    } else {
         FileScanConfigBuilder::new(config.store_url.clone(), Arc::new(parquet_source))
-            .with_file(partitioned_file);
+            .with_file(partitioned_file)
+    };
+
+    let mut config_builder = config_builder;
 
     if let Some(ref proj) = config.projection {
         // Empty projection (e.g. COUNT(*)) is honoured as "read no
