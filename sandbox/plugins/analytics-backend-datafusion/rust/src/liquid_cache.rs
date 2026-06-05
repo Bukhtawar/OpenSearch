@@ -140,15 +140,27 @@ impl LiquidOnlyRuntime {
     }
 
     pub fn reset_cache(&self) {
+        let stats_before = self.storage.stats();
+        log_info!(
+            "[LiquidCache] Clearing cache: entries={}, mem_usage={} bytes, disk_usage={} bytes",
+            stats_before.total_entries,
+            stats_before.memory_usage_bytes,
+            stats_before.disk_usage_bytes
+        );
         self.storage.reset();
         self.recreate_cache_dir();
-        log_info!("[LiquidCache] Cache cleared");
-        self.log_stats();
+        let stats_after = self.storage.stats();
+        log_info!(
+            "[LiquidCache] Cache cleared: entries={}, mem_usage={} bytes, disk_usage={} bytes",
+            stats_after.total_entries,
+            stats_after.memory_usage_bytes,
+            stats_after.disk_usage_bytes
+        );
     }
 
     pub fn log_stats(&self) {
         let s = self.storage.stats();
-        log_debug!(
+        log_info!(
             "[LiquidCache] entries={}, mem={}/{}, disk={}/{}, \
              arrow={}({} B), liquid={}({} B), squeezed={}({} B), \
              disk_liquid={}, disk_arrow={}",
@@ -160,15 +172,19 @@ impl LiquidOnlyRuntime {
             s.memory_squeezed_liquid_entries, s.memory_squeezed_liquid_bytes,
             s.disk_liquid_entries, s.disk_arrow_entries,
         );
-        log_debug!(
+        let mem_pct = if s.max_memory_bytes > 0 {
+            (s.memory_usage_bytes as f64 / s.max_memory_bytes as f64 * 100.0) as u64
+        } else { 0 };
+        log_info!(
             "[LiquidCache] hits={}, misses={}, predicate_evals={}, \
              squeeze_ok={}, squeeze_io={}, read_io={}, write_io={}, \
-             disk_evict={}, squeeze_saved={}",
+             disk_evict={}, squeeze_saved={}, mem_pressure={}%",
             s.runtime.cache_hit, s.runtime.cache_miss,
             s.runtime.eval_predicate,
             s.runtime.get_squeezed_success, s.runtime.get_squeezed_needs_io,
             s.runtime.read_io_count, s.runtime.write_io_count,
             s.runtime.disk_evictions, s.runtime.squeeze_io_saved,
+            mem_pct,
         );
     }
 

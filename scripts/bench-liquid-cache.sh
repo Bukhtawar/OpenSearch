@@ -65,11 +65,12 @@ echo "  Instance: $INSTANCE_ID"
 echo "  Branch:   $BRANCH"
 echo ""
 
-# Step 1: Clone/update repo on instance
-echo "1. Pulling latest code on instance..."
+# Step 1: Download source tarball on instance
+echo "1. Downloading source on instance..."
 ssm "cd /home/ec2-user && \
+    sudo yum install -y git 2>/dev/null || true && \
     if [ -d OpenSearch-bench ]; then \
-        cd OpenSearch-bench && git fetch origin && git checkout $BRANCH && git pull origin $BRANCH; \
+        cd OpenSearch-bench && git fetch origin && git checkout $BRANCH && git reset --hard origin/$BRANCH; \
     else \
         git clone --depth 1 -b $BRANCH $REPO_URL OpenSearch-bench; \
     fi && echo DONE" 300
