@@ -19,7 +19,6 @@
 //! the vanilla path uses (file://, s3://, etc.).
 
 use std::sync::Arc;
-
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::common::Result;
 use datafusion::datasource::physical_plan::parquet::metadata::DFParquetMetadata;
@@ -41,6 +40,7 @@ use datafusion_datasource::source::DataSourceExec;
 use datafusion_datasource::PartitionedFile;
 use futures::future::BoxFuture;
 use futures::FutureExt;
+use native_bridge_common::log_debug;
 use object_store::{ObjectStore, ObjectStoreExt};
 use prost::bytes::Bytes;
 
@@ -160,12 +160,66 @@ fn create_stream_with_access_plan(
     // path which may apply predicate pushdown.
     let config_builder = if crate::liquid_cache::LiquidOnlyRuntime::is_enabled_globally() {
         if let Some(cache_ref) = crate::liquid_cache::LiquidOnlyRuntime::cache_ref_globally() {
-            let liquid_source = liquid_cache_datafusion::LiquidParquetSource::from_parquet_source(
-                parquet_source,
-                cache_ref,
-            );
-            FileScanConfigBuilder::new(config.store_url.clone(), Arc::new(liquid_source))
-                .with_file(partitioned_file)
+            // LC cannot cache string/binary columns (always returns None on
+            // get_arrow_array_with_filter). Bypass LC entirely when all projected
+            // columns are uncacheable to avoid the overhead of LC's separate I/O
+            // pipeline on cache-miss (ParquetFallback rebuilds its own stream).
+            let (projected_string_cols, projected_total) = if let Some(ref proj) = config.projection {
+                let string_count = proj.iter().filter(|&&idx| {
+                    config.full_schema.fields().get(idx).map_or(false, |f| {
+                        matches!(f.data_type(),
+                            datafusion::arrow::datatypes::DataType::Utf8
+                            | datafusion::arrow::datatypes::DataType::Utf8View
+                            | datafusion::arrow::datatypes::DataType::LargeUtf8
+                            | datafusion::arrow::datatypes::DataType::Binary
+                            | datafusion::arrow::datatypes::DataType::BinaryView
+                            | datafusion::arrow::datatypes::DataType::LargeBinary
+                            | datafusion::arrow::datatypes::DataType::Dictionary(_, _)
+                        )
+                    })
+                }).count();
+                (string_count, proj.len())
+            } else {
+                let string_count = config.full_schema.fields().iter().filter(|f| {
+                    matches!(f.data_type(),
+                        datafusion::arrow::datatypes::DataType::Utf8
+                        | datafusion::arrow::datatypes::DataType::Utf8View
+                        | datafusion::arrow::datatypes::DataType::LargeUtf8
+                        | datafusion::arrow::datatypes::DataType::Binary
+                        | datafusion::arrow::datatypes::DataType::BinaryView
+                        | datafusion::arrow::datatypes::DataType::LargeBinary
+                        | datafusion::arrow::datatypes::DataType::Dictionary(_, _)
+                    )
+                }).count();
+                (string_count, config.full_schema.fields().len())
+            };
+            if projected_string_cols == projected_total {
+                log_debug!(
+                    "[parquet_bridge] Bypassing LC: all {}/{} projected columns are \
+                     string/binary (uncacheable). file={}",
+                    projected_string_cols,
+                    projected_total,
+                    config.file_path,
+                );
+                let mut source = parquet_source;
+                if push_predicate {
+                    if let Some(ref pred) = config.predicate {
+                        source = source
+                            .with_predicate(Arc::clone(pred))
+                            .with_pushdown_filters(true)
+                            .with_reorder_filters(true);
+                    }
+                }
+                FileScanConfigBuilder::new(config.store_url.clone(), Arc::new(source))
+                    .with_file(partitioned_file)
+            } else {
+                let liquid_source = liquid_cache_datafusion::LiquidParquetSource::from_parquet_source(
+                    parquet_source,
+                    cache_ref,
+                );
+                FileScanConfigBuilder::new(config.store_url.clone(), Arc::new(liquid_source))
+                    .with_file(partitioned_file)
+            }
         } else {
             let mut source = parquet_source;
             if push_predicate {
