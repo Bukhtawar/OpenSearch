@@ -52,6 +52,7 @@ tokio-metrics = { workspace = true }
 
 # Liquid Cache for byte-level caching (experimental)
 liquid-cache-datafusion-local = { workspace = true }
+liquid-cache-datafusion = { workspace = true }
 
 # serde_json `preserve_order` — backs `Map<String,Value>` with `IndexMap`
 # instead of `BTreeMap` so json_keys / mutation UDFs see object keys in

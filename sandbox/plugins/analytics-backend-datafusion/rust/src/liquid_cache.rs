@@ -33,7 +33,7 @@ static INSTANCE: OnceLock<Result<LiquidOnlyRuntime, String>> = OnceLock::new();
 pub struct LiquidOnlyRuntime {
     optimizer: Arc<dyn PhysicalOptimizerRule + Send + Sync>,
     lineage_optimizer: Arc<dyn OptimizerRule + Send + Sync>,
-    _handle: Box<dyn std::any::Any + Send + Sync>,
+    cache_ref: liquid_cache_datafusion::LiquidCacheParquetRef,
     storage: Arc<LiquidCache>,
     cache_dir: PathBuf,
     enabled: AtomicBool,
@@ -81,7 +81,6 @@ impl LiquidOnlyRuntime {
             .block_on(builder.build(SessionConfig::new()))
             .map_err(|e| format!("Failed to build liquid cache: {}", e))?;
 
-        let storage = cache_ref.storage().clone();
         let state = ctx.state();
 
         let optimizer = state
@@ -101,8 +100,8 @@ impl LiquidOnlyRuntime {
         Ok(Self {
             optimizer,
             lineage_optimizer,
-            _handle: Box::new(cache_ref),
-            storage,
+            storage: cache_ref.storage().clone(),
+            cache_ref,
             cache_dir,
             enabled: AtomicBool::new(true),
         })
@@ -110,6 +109,14 @@ impl LiquidOnlyRuntime {
 
     pub fn optimizer(&self) -> Arc<dyn PhysicalOptimizerRule + Send + Sync> {
         self.optimizer.clone()
+    }
+
+    pub fn cache_ref(&self) -> &liquid_cache_datafusion::LiquidCacheParquetRef {
+        &self.cache_ref
+    }
+
+    pub fn cache_ref_globally() -> Option<liquid_cache_datafusion::LiquidCacheParquetRef> {
+        Self::get().map(|rt| rt.cache_ref.clone())
     }
 
     pub fn lineage_optimizer(&self) -> Arc<dyn OptimizerRule + Send + Sync> {
