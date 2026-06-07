@@ -1,19 +1,14 @@
 #!/bin/bash
-# ClickBench benchmark script with per-query log isolation.
-# Clears LC cache before each query, captures logs per query into separate files.
+# ClickBench benchmark script with proper JSON handling for multi-line PPL queries.
 ITERS=3
 QUERY_DIR="/home/ec2-user/OpenSearch-bench/sandbox/plugins/analytics-engine/src/test/resources/clickbench/queries"
 OS="http://localhost:9200"
-LOG_FILE="/home/ec2-user/opensearch/logs/opensearch.log"
-PER_QUERY_LOG_DIR="/home/ec2-user/bench_query_logs"
-
-mkdir -p "$PER_QUERY_LOG_DIR"
 
 curl -s -X PUT "$OS/_cluster/settings" -H "Content-Type: application/json" \
   -d '{"transient":{"datafusion.liquid_cache.enabled":"true"}}' > /dev/null
 sleep 2
 
-echo "=== ClickBench LC ON - ${ITERS} iters (cache cleared per query) ==="
+echo "=== ClickBench LC ON - ${ITERS} iters ==="
 echo "Query | Min(ms) | Times(ms)"
 echo "------|---------|----------"
 
@@ -21,6 +16,7 @@ for i in $(seq 1 43); do
   QFILE="$QUERY_DIR/q${i}.ppl"
   if [ ! -f "$QFILE" ]; then continue; fi
 
+  # Use python to safely build JSON body — handles quotes, newlines, special chars
   python3 -c "
 import json, sys
 with open(sys.argv[1]) as f:
@@ -39,12 +35,6 @@ json.dump({'query': ppl}, open('/tmp/ppl_query.json', 'w'))
 
   if [ ! -s /tmp/ppl_query.json ]; then continue; fi
 
-  # Clear LC cache before each query
-  curl -s -X POST "$OS/_plugins/analytics_backend_datafusion/liquid_cache/clear" > /dev/null 2>&1
-
-  # Record log line count before query
-  BEFORE=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
-
   TIMES=""
   MIN=999999
   for iter in $(seq 1 $ITERS); do
@@ -58,33 +48,7 @@ json.dump({'query': ppl}, open('/tmp/ppl_query.json', 'w'))
     TIMES="$TIMES $MS"
   done
 
-  # Capture per-query logs
-  AFTER=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
-  if [ "$AFTER" -gt "$BEFORE" ]; then
-    sed -n "$((BEFORE+1)),${AFTER}p" "$LOG_FILE" | grep "LC-" > "$PER_QUERY_LOG_DIR/q${i}.log"
-  fi
-
   if [ $MIN -eq 999999 ]; then MIN="ERR"; fi
   printf "Q%-2d   | %7s |%s\n" "$i" "$MIN" "$TIMES"
 done
 echo "=== Done ==="
-
-# Print per-query LC summary
-echo
-echo "=== Per-Query LC Summary ==="
-for i in $(seq 1 43); do
-  LOGF="$PER_QUERY_LOG_DIR/q${i}.log"
-  if [ -f "$LOGF" ] && [ -s "$LOGF" ]; then
-    OPT_WRAP=$(grep -c "WRAP" "$LOGF" 2>/dev/null)
-    OPT_SKIP=$(grep -c "SKIP" "$LOGF" 2>/dev/null)
-    STREAM=$(grep -c "LC STREAM" "$LOGF" 2>/dev/null)
-    DELEGATE=$(grep -c "DELEGATE" "$LOGF" 2>/dev/null)
-    EMPTY=$(grep -c "EMPTY" "$LOGF" 2>/dev/null)
-    HITS=$(grep "LC-Reader" "$LOGF" 2>/dev/null | grep -c "misses=0")
-    MISSES=$(grep "LC-Reader" "$LOGF" 2>/dev/null | grep -c "misses=[1-9]")
-    printf "Q%-2d: wrap=%s skip=%s stream=%s delegate=%s empty=%s hits=%s misses=%s\n" \
-      "$i" "$OPT_WRAP" "$OPT_SKIP" "$STREAM" "$DELEGATE" "$EMPTY" "$HITS" "$MISSES"
-  else
-    printf "Q%-2d: NO LC LOGS (skipped by optimizer)\n" "$i"
-  fi
-done
