@@ -113,7 +113,7 @@ pub fn create_row_selection_stream(
     let num_rgs = config.metadata.num_row_groups();
     let mut access_plan = ParquetAccessPlan::new_none(num_rgs);
     access_plan.set(rg_index, RowGroupAccess::Selection(selection));
-    create_stream_with_access_plan(config, access_plan, push_predicate, selectivity, rg_index)
+    create_stream_with_access_plan(config, access_plan, push_predicate, selectivity)
 }
 
 /// Create a stream that reads a single row group with full scan.
@@ -127,8 +127,8 @@ pub fn create_full_scan_stream(
     let num_rgs = config.metadata.num_row_groups();
     let mut access_plan = ParquetAccessPlan::new_none(num_rgs);
     access_plan.set(rg_index, RowGroupAccess::Scan);
-    // Full scan = selectivity 1.0 (all rows), LC bypass.
-    create_stream_with_access_plan(config, access_plan, false, 1.0, rg_index)
+    // Full scan = selectivity 1.0 (all rows).
+    create_stream_with_access_plan(config, access_plan, false, 1.0)
 }
 
 fn create_stream_with_access_plan(
@@ -136,7 +136,6 @@ fn create_stream_with_access_plan(
     access_plan: ParquetAccessPlan,
     push_predicate: bool,
     selectivity: f64,
-    rg_index: usize,
 ) -> Result<(SendableRecordBatchStream, Arc<dyn ExecutionPlan>)> {
     let partitioned_file = PartitionedFile::new(config.file_path.clone(), config.file_size)
         .with_extensions(Arc::new(access_plan));
@@ -216,20 +215,9 @@ fn create_stream_with_access_plan(
         })
     });
 
-    // For full-scan queries (selectivity ~1.0) with large decoded volume, parquet's
-    // batch decode from OS page cache is faster than LC's per-column pipeline overhead.
-    // Estimate decoded bytes and skip LC when it would be slower.
-    let rg_num_rows = config.metadata.row_group(rg_index).num_rows() as u64;
-    let estimated_decoded_rows = (rg_num_rows as f64 * selectivity) as u64;
-    let num_proj_cols = config.projection.as_ref().map_or(0, |p| p.len()) as u64;
-    let estimated_decode_bytes = estimated_decoded_rows * num_proj_cols * 8; // ~8 bytes avg per col
-    const LC_FULL_SCAN_BYPASS_BYTES: u64 = 500_000_000; // 500MB
-    let full_scan_too_large = selectivity >= 0.95 && estimated_decode_bytes > LC_FULL_SCAN_BYPASS_BYTES;
-
     let use_lc = lc_globally_enabled
         && has_projection
         && !predicate_has_string
-        && !full_scan_too_large
         && ((selectivity < LC_SELECTIVITY_THRESHOLD && has_numeric_predicate)
             || all_numeric_projection);
 
