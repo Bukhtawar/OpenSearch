@@ -87,12 +87,6 @@ pub struct RowGroupStreamConfig {
     pub predicate: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
 }
 
-/// Selectivity threshold below which LC with filter pushdown is engaged.
-/// When fewer than this fraction of rows match, LC's column-by-column decode
-/// with filter pushdown avoids decoding non-matching rows — significant savings
-/// for highly selective queries. Above this threshold, most rows match so the
-/// overhead of LC's per-column pipeline outweighs the savings.
-const LC_SELECTIVITY_THRESHOLD: f64 = 0.5;
 
 /// Create a stream that reads a single row group using `RowSelection`.
 ///
@@ -155,32 +149,10 @@ fn create_stream_with_access_plan(
     // decoded-batch cache without filter pushdown. The BoolNode evaluator handles
     // all filtering externally. When LC is disabled, fall through to the standard
     // path which may apply predicate pushdown.
-    // LC engagement gate — two paths:
-    //   A) Filter pushdown: selectivity < 0.5 AND numeric predicate available.
-    //      LC decodes predicate column first, evaluates filter, skips non-matching rows.
-    //   B) Pure cache: ALL projected columns are numeric (no strings).
-    //      LC caches decoded Arrow arrays; warm queries skip parquet decode entirely.
-    //
-    // String columns are never cached by LC (is_string_type guard rejects them),
-    // and on miss they force a full parquet read of ALL columns. So LC is only
-    // engaged when it can serve every projected column from cache (path B) or
-    // when filter pushdown skips most rows (path A).
+    // LC engagement: wrap when ALL projected columns are cacheable (numeric/date/
+    // timestamp/boolean) and no predicate column is string. The opener decides
+    // per-file whether to STREAM (selectivity >= 0.8) or DELEGATE to plain parquet.
     let lc_globally_enabled = crate::liquid_cache::LiquidOnlyRuntime::is_enabled_globally();
-
-    let has_numeric_predicate = config.predicate.as_ref().map_or(false, |pred| {
-        let referenced = datafusion::physical_expr::utils::collect_columns(pred);
-        referenced.iter().any(|col| {
-            config.full_schema.fields().get(col.index()).map_or(false, |f| {
-                f.data_type().is_numeric()
-                    || matches!(f.data_type(),
-                        datafusion::arrow::datatypes::DataType::Date32
-                        | datafusion::arrow::datatypes::DataType::Date64
-                        | datafusion::arrow::datatypes::DataType::Timestamp(_, _)
-                        | datafusion::arrow::datatypes::DataType::Boolean
-                    )
-            })
-        })
-    });
 
     let all_numeric_projection = config.projection.as_ref().map_or(false, |proj| {
         !proj.is_empty() && proj.iter().all(|&idx| {
@@ -195,8 +167,6 @@ fn create_stream_with_access_plan(
             })
         })
     });
-
-    let has_projection = config.projection.as_ref().map_or(false, |p| !p.is_empty());
 
     let predicate_has_string = config.predicate.as_ref().map_or(false, |pred| {
         let referenced = datafusion::physical_expr::utils::collect_columns(pred);
@@ -216,19 +186,15 @@ fn create_stream_with_access_plan(
     });
 
     let use_lc = lc_globally_enabled
-        && has_projection
-        && !predicate_has_string
-        && ((selectivity < LC_SELECTIVITY_THRESHOLD && has_numeric_predicate)
-            || all_numeric_projection);
+        && all_numeric_projection
+        && !predicate_has_string;
 
     log_info!(
-        "[parquet_bridge] gate: lc_enabled={}, selectivity={:.3}, numeric_pred={}, \
-         all_numeric_proj={}, has_proj={}, pred_has_string={}, use_lc={}, file={}",
+        "[parquet_bridge] gate: lc_enabled={}, selectivity={:.3}, \
+         all_numeric_proj={}, pred_has_string={}, use_lc={}, file={}",
         lc_globally_enabled,
         selectivity,
-        has_numeric_predicate,
         all_numeric_projection,
-        has_projection,
         predicate_has_string,
         use_lc,
         config.file_path,
