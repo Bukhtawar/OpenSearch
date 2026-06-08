@@ -11,7 +11,6 @@ use std::{
 
 use datafusion::{
     common::DataFusionError,
-    optimizer::OptimizerRule,
     physical_optimizer::PhysicalOptimizerRule,
     prelude::SessionConfig,
 };
@@ -24,7 +23,6 @@ use liquid_cache_datafusion_local::{
 use native_bridge_common::{log_debug, log_info};
 
 const LOCAL_MODE_OPTIMIZER_NAME: &str = "LocalModeLiquidCacheOptimizer";
-const LINEAGE_OPTIMIZER_NAME: &str = "LineageOptimizer";
 const EVICTION_POLICY_LRU: &str = "lru";
 const CACHE_DIR_PREFIX: &str = "node_";
 
@@ -32,7 +30,6 @@ static INSTANCE: OnceLock<Result<LiquidOnlyRuntime, String>> = OnceLock::new();
 
 pub struct LiquidOnlyRuntime {
     optimizer: Arc<dyn PhysicalOptimizerRule + Send + Sync>,
-    lineage_optimizer: Arc<dyn OptimizerRule + Send + Sync>,
     cache_ref: liquid_cache_datafusion::LiquidCacheParquetRef,
     storage: Arc<LiquidCache>,
     cache_dir: PathBuf,
@@ -90,16 +87,8 @@ impl LiquidOnlyRuntime {
             .cloned()
             .ok_or_else(|| format!("{} not found in session state", LOCAL_MODE_OPTIMIZER_NAME))?;
 
-        let lineage_optimizer = state
-            .optimizers()
-            .iter()
-            .find(|r| r.name() == LINEAGE_OPTIMIZER_NAME)
-            .cloned()
-            .ok_or_else(|| format!("{} not found in session state", LINEAGE_OPTIMIZER_NAME))?;
-
         Ok(Self {
             optimizer,
-            lineage_optimizer,
             storage: cache_ref.storage().clone(),
             cache_ref,
             cache_dir,
@@ -117,10 +106,6 @@ impl LiquidOnlyRuntime {
 
     pub fn cache_ref_globally() -> Option<liquid_cache_datafusion::LiquidCacheParquetRef> {
         Self::get().map(|rt| rt.cache_ref.clone())
-    }
-
-    pub fn lineage_optimizer(&self) -> Arc<dyn OptimizerRule + Send + Sync> {
-        self.lineage_optimizer.clone()
     }
 
     pub fn is_enabled(&self) -> bool {

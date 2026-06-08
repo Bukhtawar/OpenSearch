@@ -157,7 +157,6 @@ pub struct DataFusionRuntime {
     pub custom_cache_manager: Option<CustomCacheManager>,
     pub dynamic_limit_handle: DynamicLimitHandle,
     pub liquid_cache_optimizer: Option<Arc<dyn datafusion::physical_optimizer::PhysicalOptimizerRule + Send + Sync>>,
-    pub liquid_cache_lineage_optimizer: Option<Arc<dyn datafusion::optimizer::OptimizerRule + Send + Sync>>,
 }
 
 /// Per-file metadata passed from Java at shard view creation time.
@@ -263,7 +262,6 @@ impl DataFusionRuntime {
             custom_cache_manager: None,
             dynamic_limit_handle: handle,
             liquid_cache_optimizer: None,
-            liquid_cache_lineage_optimizer: None,
         }
     }
 
@@ -273,9 +271,6 @@ impl DataFusionRuntime {
     ) -> SessionStateBuilder {
         if let Some(ref optimizer) = self.liquid_cache_optimizer {
             builder = builder.with_physical_optimizer_rule(optimizer.clone());
-        }
-        if let Some(ref lineage_opt) = self.liquid_cache_lineage_optimizer {
-            builder = builder.with_optimizer_rule(lineage_opt.clone());
         }
         builder
     }
@@ -365,7 +360,7 @@ pub fn create_global_runtime(
         .with_cache_manager(cache_manager_config)
         .build()?;
 
-    let (liquid_cache_optimizer, liquid_cache_lineage_optimizer) = if liquid_cache_enabled {
+    let liquid_cache_optimizer = if liquid_cache_enabled {
         let liquid_runtime = crate::liquid_cache::LiquidOnlyRuntime::init(
             liquid_cache_size as u64,
             liquid_cache_max_disk_bytes as u64,
@@ -373,9 +368,9 @@ pub fn create_global_runtime(
             liquid_cache_eviction_policy,
             tokio_handle,
         )?;
-        (Some(liquid_runtime.optimizer()), Some(liquid_runtime.lineage_optimizer()))
+        Some(liquid_runtime.optimizer())
     } else {
-        (None, None)
+        None
     };
 
     let runtime = DataFusionRuntime {
@@ -383,7 +378,6 @@ pub fn create_global_runtime(
         custom_cache_manager,
         dynamic_limit_handle,
         liquid_cache_optimizer,
-        liquid_cache_lineage_optimizer,
     };
     Ok(Box::into_raw(Box::new(runtime)) as i64)
 }
