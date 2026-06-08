@@ -176,12 +176,12 @@ impl LiquidOnlyRuntime {
     fn recreate_cache_dir(&self) {
         if self.cache_dir.exists() {
             if let Err(e) = fs::remove_dir_all(&self.cache_dir) {
-                log_info!("[LiquidCache] Failed to remove cache dir: {}", e);
+                log_debug!("[LiquidCache] Failed to remove cache dir: {}", e);
                 return;
             }
         }
         if let Err(e) = fs::create_dir_all(&self.cache_dir) {
-            log_info!("[LiquidCache] Failed to recreate cache dir: {}", e);
+            log_debug!("[LiquidCache] Failed to recreate cache dir: {}", e);
         }
     }
 

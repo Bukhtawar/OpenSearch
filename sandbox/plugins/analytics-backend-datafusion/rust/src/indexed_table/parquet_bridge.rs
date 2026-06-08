@@ -189,24 +189,16 @@ fn create_stream_with_access_plan(
         && all_numeric_projection
         && !predicate_has_string;
 
-    log_info!(
-        "[parquet_bridge] gate: lc_enabled={}, selectivity={:.3}, \
-         all_numeric_proj={}, pred_has_string={}, use_lc={}, file={}",
-        lc_globally_enabled,
+    log_debug!(
+        "[parquet_bridge] gate: selectivity={:.3}, all_numeric_proj={}, pred_has_string={}, use_lc={}",
         selectivity,
         all_numeric_projection,
         predicate_has_string,
         use_lc,
-        config.file_path,
     );
 
     let config_builder = if use_lc {
         if let Some(cache_ref) = crate::liquid_cache::LiquidOnlyRuntime::cache_ref_globally() {
-            log_info!(
-                "[parquet_bridge] LC ENGAGED: selectivity={:.3}, all_numeric={}",
-                selectivity,
-                all_numeric_projection,
-            );
             // Pass predicate to LC so it applies filter pushdown during decode.
             // LC decodes predicate columns first, evaluates filter, then only
             // decodes matching rows of other columns. Cached predicate columns
