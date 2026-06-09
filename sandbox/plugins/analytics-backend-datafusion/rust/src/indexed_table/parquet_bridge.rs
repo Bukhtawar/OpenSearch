@@ -154,8 +154,9 @@ fn create_stream_with_access_plan(
     // per-file whether to STREAM (selectivity >= 0.8) or DELEGATE to plain parquet.
     let lc_globally_enabled = crate::liquid_cache::LiquidOnlyRuntime::is_enabled_globally();
 
+    let max_cols = crate::liquid_cache::lc_max_columns();
     let all_numeric_projection = config.projection.as_ref().map_or(false, |proj| {
-        !proj.is_empty() && proj.iter().all(|&idx| {
+        !proj.is_empty() && proj.len() <= max_cols && proj.iter().all(|&idx| {
             config.full_schema.fields().get(idx).map_or(false, |f| {
                 f.data_type().is_numeric()
                     || matches!(f.data_type(),

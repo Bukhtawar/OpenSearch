@@ -4,7 +4,7 @@ use std::{
     fs,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc, OnceLock,
     },
 };
@@ -27,6 +27,28 @@ const EVICTION_POLICY_LRU: &str = "lru";
 const CACHE_DIR_PREFIX: &str = "node_";
 
 static INSTANCE: OnceLock<Result<LiquidOnlyRuntime, String>> = OnceLock::new();
+
+// Dynamic tuning knobs — updated via cluster settings without restart.
+// Selectivity threshold stored as permille (800 = 0.800) to avoid floating-point atomics.
+static LC_SELECTIVITY_THRESHOLD_PERMILLE: AtomicU32 = AtomicU32::new(800);
+static LC_MAX_COLUMNS: AtomicU32 = AtomicU32::new(10);
+
+pub fn lc_selectivity_threshold() -> f64 {
+    LC_SELECTIVITY_THRESHOLD_PERMILLE.load(Ordering::Relaxed) as f64 / 1000.0
+}
+
+pub fn lc_max_columns() -> usize {
+    LC_MAX_COLUMNS.load(Ordering::Relaxed) as usize
+}
+
+pub fn set_lc_selectivity_threshold(value: f64) {
+    let permille = (value * 1000.0) as u32;
+    LC_SELECTIVITY_THRESHOLD_PERMILLE.store(permille, Ordering::Relaxed);
+}
+
+pub fn set_lc_max_columns(value: usize) {
+    LC_MAX_COLUMNS.store(value as u32, Ordering::Relaxed);
+}
 
 pub struct LiquidOnlyRuntime {
     optimizer: Arc<dyn PhysicalOptimizerRule + Send + Sync>,
