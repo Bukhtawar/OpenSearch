@@ -186,9 +186,15 @@ fn create_stream_with_access_plan(
         })
     });
 
+    // Only engage LC when there's no residual predicate. If a predicate exists,
+    // it needs row-level evaluation (pushdown or post-decode). LC's opener would
+    // do page-index pruning on the predicate, which conflicts with the BoolNode's
+    // pre-computed RowSelection — causing incorrect row elimination.
+    let has_predicate = config.predicate.is_some();
     let use_lc = lc_globally_enabled
         && all_numeric_projection
-        && !predicate_has_string;
+        && !predicate_has_string
+        && !has_predicate;
 
     log_debug!(
         "[parquet_bridge] gate: selectivity={:.3}, all_numeric_proj={}, pred_has_string={}, use_lc={}",
