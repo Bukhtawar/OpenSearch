@@ -186,15 +186,9 @@ fn create_stream_with_access_plan(
         })
     });
 
-    // Only engage LC when there's no residual predicate. If a predicate exists,
-    // it needs row-level evaluation (pushdown or post-decode). LC's opener would
-    // do page-index pruning on the predicate, which conflicts with the BoolNode's
-    // pre-computed RowSelection — causing incorrect row elimination.
-    let has_predicate = config.predicate.is_some();
     let use_lc = lc_globally_enabled
         && all_numeric_projection
-        && !predicate_has_string
-        && !has_predicate;
+        && !predicate_has_string;
 
     log_debug!(
         "[parquet_bridge] gate: selectivity={:.3}, all_numeric_proj={}, pred_has_string={}, use_lc={}",
@@ -206,12 +200,11 @@ fn create_stream_with_access_plan(
 
     let config_builder = if use_lc {
         if let Some(cache_ref) = crate::liquid_cache::LiquidOnlyRuntime::cache_ref_globally() {
-            // Do NOT pass predicate to LC on the indexed path. The BoolNode evaluator
-            // already produced an exact RowSelection (intersection of all collectors).
-            // LC's opener would do its own RG/page-index pruning using approximate
-            // statistics, which can incorrectly prune pages that the BoolNode's exact
-            // evaluation included — causing row loss (correctness bug).
-            // LC here acts as a pure decoded-batch cache only.
+            // Do NOT pass predicate to LC on the indexed path. LC's STREAM path
+            // mishandles RowSelection + row_filter combination, dropping rows.
+            // The BoolNode's RowSelection is pre-computed; LC acts as pure
+            // decoded-batch cache. The evaluator handles residual filtering
+            // post-decode via finalize_batch().
             let liquid_source = liquid_cache_datafusion::LiquidParquetSource::from_parquet_source(
                 parquet_source,
                 cache_ref,
