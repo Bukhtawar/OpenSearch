@@ -200,19 +200,14 @@ fn create_stream_with_access_plan(
 
     let config_builder = if use_lc {
         if let Some(cache_ref) = crate::liquid_cache::LiquidOnlyRuntime::cache_ref_globally() {
-            // Pass predicate to LC so it applies filter pushdown during decode.
-            // LC decodes predicate columns first, evaluates filter, then only
-            // decodes matching rows of other columns. Cached predicate columns
-            // are served from memory on repeat queries.
-            let mut source = parquet_source;
-            if let Some(ref pred) = config.predicate {
-                source = source
-                    .with_predicate(Arc::clone(pred))
-                    .with_pushdown_filters(true)
-                    .with_reorder_filters(true);
-            }
+            // Do NOT pass predicate to LC on the indexed path. The BoolNode evaluator
+            // already produced an exact RowSelection (intersection of all collectors).
+            // LC's opener would do its own RG/page-index pruning using approximate
+            // statistics, which can incorrectly prune pages that the BoolNode's exact
+            // evaluation included — causing row loss (correctness bug).
+            // LC here acts as a pure decoded-batch cache only.
             let liquid_source = liquid_cache_datafusion::LiquidParquetSource::from_parquet_source(
-                source,
+                parquet_source,
                 cache_ref,
             );
             FileScanConfigBuilder::new(config.store_url.clone(), Arc::new(liquid_source))
