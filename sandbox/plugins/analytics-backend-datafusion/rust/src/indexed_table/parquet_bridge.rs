@@ -200,15 +200,19 @@ fn create_stream_with_access_plan(
 
     let config_builder = if use_lc {
         if let Some(cache_ref) = crate::liquid_cache::LiquidOnlyRuntime::cache_ref_globally() {
-            // Do NOT pass predicate to LC on the indexed path. LC's STREAM path
-            // mishandles RowSelection + row_filter combination, dropping rows.
-            // The BoolNode's RowSelection is pre-computed; LC acts as pure
-            // decoded-batch cache. The evaluator handles residual filtering
-            // post-decode via finalize_batch().
-            let liquid_source = liquid_cache_datafusion::LiquidParquetSource::from_parquet_source(
+            // Pass predicate for row_filter (per-row AND during decode) but skip
+            // page-index pruning. This isolates whether the row loss is from
+            // page-index intersection or from LC's STREAM row_filter handling.
+            let mut liquid_source = liquid_cache_datafusion::LiquidParquetSource::from_parquet_source(
                 parquet_source,
                 cache_ref,
             );
+            if let Some(ref pred) = config.predicate {
+                liquid_source = liquid_source.with_predicate_no_page_pruning(
+                    config.full_schema.clone(),
+                    Arc::clone(pred),
+                );
+            }
             FileScanConfigBuilder::new(config.store_url.clone(), Arc::new(liquid_source))
                 .with_file(partitioned_file)
         } else {
