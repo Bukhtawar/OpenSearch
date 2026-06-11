@@ -699,6 +699,45 @@ pub unsafe extern "C" fn df_sender_close(sender_ptr: i64) {
     api::sender_close(sender_ptr);
 }
 
+/// Compressed IPC variant of `df_stream_next`. Serializes the next batch as
+/// LZ4-compressed Arrow IPC bytes (or uncompressed if < 16MB).
+/// Writes (ptr, len) into out parameters. Returns len on success, 0 on EOF.
+/// Caller must free bytes via `df_free_ipc_bytes`.
+#[ffm_safe]
+#[no_mangle]
+pub unsafe extern "C" fn df_stream_next_compressed(
+    stream_ptr: i64,
+    out_ptr: *mut *const u8,
+    out_len: *mut i64,
+) -> i64 {
+    let mgr = get_rt_manager()?;
+    mgr.io_runtime.handle().block_on(
+        api::stream_next_compressed(stream_ptr, out_ptr, out_len)
+    ).map_err(|e| e.to_string())
+}
+
+/// Compressed IPC variant of `df_sender_send`. Decodes LZ4-compressed IPC bytes
+/// and feeds the batch to the partition stream sender.
+/// Returns 0 on success, SENDER_SEND_RECEIVER_DROPPED if consumer finished, negative on error.
+#[ffm_safe]
+#[no_mangle]
+pub unsafe extern "C" fn df_sender_send_compressed(
+    sender_ptr: i64,
+    bytes_ptr: *const u8,
+    bytes_len: i64,
+) -> i64 {
+    let mgr = get_rt_manager()?;
+    api::sender_send_compressed(sender_ptr, bytes_ptr, bytes_len, mgr.io_runtime.handle())
+        .map(send_outcome_to_code)
+        .map_err(|e| e.to_string())
+}
+
+/// Frees IPC bytes returned by `df_stream_next_compressed`.
+#[no_mangle]
+pub unsafe extern "C" fn df_free_ipc_bytes(ptr: *mut u8, len: i64) {
+    unsafe { api::free_ipc_bytes(ptr, len) };
+}
+
 /// Memtable variant of `df_register_partition_stream`: instead of returning a
 /// sender that streams batches one at a time, the caller hands across `n`
 /// already-exported Arrow C Data batches in two parallel pointer arrays and

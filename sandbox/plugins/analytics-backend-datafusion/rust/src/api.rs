@@ -2551,3 +2551,130 @@ fn assert_fetch_result_schema(schema: &datafusion::arrow::datatypes::Schema, col
     }
     true
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Compressed IPC transport — bypasses Java Arrow allocators entirely.
+// Data node: RecordBatch → LZ4-compressed IPC bytes
+// Coordinator: LZ4-compressed IPC bytes → RecordBatch
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Serializes the next batch from the stream as LZ4-compressed Arrow IPC bytes.
+/// Returns (ptr, len) via out parameters. Returns 0 if end-of-stream.
+/// Caller must free the returned bytes via `free_ipc_bytes`.
+pub async unsafe fn stream_next_compressed(
+    stream_ptr: i64,
+    out_ptr: *mut *const u8,
+    out_len: *mut i64,
+) -> Result<i64, DataFusionError> {
+    let handle = &mut *(stream_ptr as *mut QueryStreamHandle);
+    let token = query_tracker::get_cancellation_token(handle._query_tracking_context.context_id());
+
+    let result = cancellation::cancellable_or(
+        token.as_ref(),
+        None,
+        async { handle.stream.try_next().await.map_err(|e: DataFusionError| e) },
+    ).await
+    .map_err(|e| DataFusionError::Execution(e))?;
+
+    match result {
+        Some(batch) => {
+            handle._query_tracking_context.apply_pending_phantom_correction();
+
+            let batch = if handle.has_views {
+                compact_string_view_columns(batch)
+            } else {
+                batch
+            };
+
+            let ipc_bytes = encode_batch_lz4(&batch)?;
+            let len = ipc_bytes.len() as i64;
+            let boxed = ipc_bytes.into_boxed_slice();
+            let ptr = Box::into_raw(boxed) as *const u8;
+            *out_ptr = ptr;
+            *out_len = len;
+            Ok(len)
+        }
+        None => Ok(0),
+    }
+}
+
+/// Decodes LZ4-compressed IPC bytes into a RecordBatch and feeds it to the
+/// partition stream sender. The bytes are consumed (freed) by this call.
+pub unsafe fn sender_send_compressed(
+    sender_ptr: i64,
+    bytes_ptr: *const u8,
+    bytes_len: i64,
+    io_handle: &tokio::runtime::Handle,
+) -> Result<crate::partition_stream::SendOutcome, DataFusionError> {
+    let sender = &*(sender_ptr as *const crate::partition_stream::PartitionStreamSender);
+
+    let bytes = std::slice::from_raw_parts(bytes_ptr, bytes_len as usize);
+    let batch = decode_batch_lz4(bytes)?;
+
+    Ok(sender.send_blocking(Ok(batch), io_handle))
+}
+
+/// Frees IPC bytes previously returned by `stream_next_compressed`.
+pub unsafe fn free_ipc_bytes(ptr: *mut u8, len: i64) {
+    if !ptr.is_null() && len > 0 {
+        let _ = Box::from_raw(std::slice::from_raw_parts_mut(ptr, len as usize));
+    }
+}
+
+/// Threshold below which compression is skipped (overhead not worth it).
+const COMPRESS_THRESHOLD_BYTES: usize = 16 * 1024 * 1024; // 16MB
+
+/// Encode a RecordBatch as Arrow IPC (stream format, single message).
+/// Applies LZ4 compression only if the batch exceeds COMPRESS_THRESHOLD_BYTES.
+/// The first byte of the output indicates the encoding: 0 = uncompressed, 1 = LZ4.
+fn encode_batch_lz4(batch: &RecordBatch) -> Result<Vec<u8>, DataFusionError> {
+    use arrow_ipc::writer::StreamWriter;
+    use arrow_ipc::CompressionType;
+
+    let batch_size = batch.get_array_memory_size();
+    let use_compression = batch_size > COMPRESS_THRESHOLD_BYTES;
+
+    let mut buf = Vec::with_capacity(1 + batch_size / 2);
+    buf.push(if use_compression { 1u8 } else { 0u8 });
+
+    let options = if use_compression {
+        arrow_ipc::writer::IpcWriteOptions::default()
+            .try_with_compression(Some(CompressionType::LZ4_FRAME))
+            .map_err(|e| DataFusionError::Execution(format!("IPC compression config: {}", e)))?
+    } else {
+        arrow_ipc::writer::IpcWriteOptions::default()
+    };
+
+    {
+        let mut writer = StreamWriter::try_new_with_options(
+            &mut buf,
+            batch.schema_ref(),
+            options,
+        ).map_err(|e| DataFusionError::ArrowError(Box::new(e), None))?;
+        writer.write(batch).map_err(|e| DataFusionError::ArrowError(Box::new(e), None))?;
+        writer.finish().map_err(|e| DataFusionError::ArrowError(Box::new(e), None))?;
+    }
+    Ok(buf)
+}
+
+/// Decode Arrow IPC bytes (with or without LZ4 compression) into a RecordBatch.
+/// The first byte indicates the encoding: 0 = uncompressed IPC, 1 = LZ4-compressed IPC.
+fn decode_batch_lz4(bytes: &[u8]) -> Result<RecordBatch, DataFusionError> {
+    use arrow_ipc::reader::StreamReader;
+
+    if bytes.is_empty() {
+        return Err(DataFusionError::Execution("Empty IPC bytes".into()));
+    }
+
+    // Skip the encoding prefix byte — arrow-ipc StreamReader handles
+    // decompression transparently based on the IPC message metadata.
+    let ipc_bytes = &bytes[1..];
+
+    let cursor = std::io::Cursor::new(ipc_bytes);
+    let mut reader = StreamReader::try_new(cursor, None)
+        .map_err(|e| DataFusionError::ArrowError(Box::new(e), None))?;
+
+    reader.next()
+        .ok_or_else(|| DataFusionError::Execution("Empty IPC stream".into()))?
+        .map_err(|e| DataFusionError::ArrowError(Box::new(e), None))
+}
