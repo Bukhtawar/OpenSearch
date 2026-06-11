@@ -95,6 +95,9 @@ public final class NativeBridge {
     private static final MethodHandle EXECUTE_LOCAL_PLAN;
     private static final MethodHandle SENDER_SEND;
     private static final MethodHandle SENDER_CLOSE;
+    private static final MethodHandle STREAM_NEXT_COMPRESSED;
+    private static final MethodHandle SENDER_SEND_COMPRESSED;
+    private static final MethodHandle FREE_IPC_BYTES;
     private static final MethodHandle REGISTER_MEMTABLE;
     private static final MethodHandle CREATE_CUSTOM_CACHE_MANAGER;
     private static final MethodHandle DESTROY_CUSTOM_CACHE_MANAGER;
@@ -325,6 +328,24 @@ public final class NativeBridge {
 
         // void df_sender_close(sender_ptr)
         SENDER_CLOSE = linker.downcallHandle(lib.find("df_sender_close").orElseThrow(), FunctionDescriptor.ofVoid(ValueLayout.JAVA_LONG));
+
+        // i64 df_stream_next_compressed(stream_ptr, out_ptr, out_len) → len or 0 (EOF)
+        STREAM_NEXT_COMPRESSED = linker.downcallHandle(
+            lib.find("df_stream_next_compressed").orElseThrow(),
+            FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS)
+        );
+
+        // i64 df_sender_send_compressed(sender_ptr, bytes_ptr, bytes_len) → 0 or RECEIVER_DROPPED
+        SENDER_SEND_COMPRESSED = linker.downcallHandle(
+            lib.find("df_sender_send_compressed").orElseThrow(),
+            FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG)
+        );
+
+        // void df_free_ipc_bytes(ptr, len)
+        FREE_IPC_BYTES = linker.downcallHandle(
+            lib.find("df_free_ipc_bytes").orElseThrow(),
+            FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.JAVA_LONG)
+        );
 
         // i64 df_register_memtable(session_ptr, input_id_ptr, input_id_len,
         // partial_plan_ptr, partial_plan_len,
@@ -1204,6 +1225,60 @@ public final class NativeBridge {
     public static void senderClose(long senderPtr) {
         NativeCall.invokeVoid(SENDER_CLOSE, senderPtr);
     }
+
+    /**
+     * Compressed IPC variant of {@link #streamNext}. Serializes the next batch as
+     * LZ4-compressed Arrow IPC bytes (or uncompressed if batch is under 16MB).
+     * Returns a {@link CompressedBatch} holding the native pointer and length,
+     * or null if end-of-stream.
+     * Caller must free via {@link #freeIpcBytes(long, long)}.
+     */
+    public static CompressedBatch streamNextCompressed(long streamPtr) {
+        NativeHandle.validatePointer(streamPtr, "stream");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outPtr = arena.allocate(ValueLayout.ADDRESS);
+            MemorySegment outLen = arena.allocate(ValueLayout.JAVA_LONG);
+            long result = NativeLibraryLoader.checkResult(
+                (long) STREAM_NEXT_COMPRESSED.invokeExact(streamPtr, outPtr, outLen)
+            );
+            if (result == 0) {
+                return null; // EOF
+            }
+            long ptr = outPtr.get(ValueLayout.ADDRESS, 0).address();
+            long len = outLen.get(ValueLayout.JAVA_LONG, 0);
+            return new CompressedBatch(ptr, len);
+        } catch (Throwable t) {
+            throw t instanceof RuntimeException rt ? rt : new RuntimeException(t);
+        }
+    }
+
+    /**
+     * Compressed IPC variant of {@link #senderSend}. Decodes compressed IPC bytes
+     * and feeds the batch to the partition stream sender.
+     * Returns 0 on success, {@link #SENDER_SEND_RECEIVER_DROPPED} if consumer finished.
+     */
+    public static long senderSendCompressed(long senderPtr, long bytesPtr, long bytesLen) {
+        NativeHandle.validatePointer(senderPtr, "sender");
+        try (var call = new NativeCall()) {
+            MemorySegment seg = MemorySegment.ofAddress(bytesPtr).reinterpret(bytesLen);
+            return call.invoke(SENDER_SEND_COMPRESSED, senderPtr, seg, bytesLen);
+        }
+    }
+
+    /** Frees IPC bytes previously returned by {@link #streamNextCompressed}. */
+    public static void freeIpcBytes(long ptr, long len) {
+        if (ptr != 0 && len > 0) {
+            try {
+                MemorySegment seg = MemorySegment.ofAddress(ptr).reinterpret(len);
+                FREE_IPC_BYTES.invokeExact(seg, len);
+            } catch (Throwable t) {
+                throw t instanceof RuntimeException rt ? rt : new RuntimeException(t);
+            }
+        }
+    }
+
+    /** Holds a pointer and length to compressed IPC bytes in native memory. */
+    public record CompressedBatch(long ptr, long len) {}
 
     /**
      * Memtable variant of {@link #registerPartitionStream}: hands across a list of
