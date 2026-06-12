@@ -116,16 +116,38 @@ public class DatafusionResultStream implements EngineResultStream, FragmentResou
             }
         }
 
+        private NativeBridge.CompressedBatch nextCompressed;
+        private boolean useCompressedPath = true;
+
         private boolean loadNextBatch() {
             ensureSchema();
             if (nativeStreamExhausted) return false;
+
+            if (useCompressedPath) {
+                // Compressed path: Rust serializes to IPC bytes (LZ4 if > 16MB).
+                // Returns null on EOF. Java never materializes Arrow vectors.
+                NativeBridge.CompressedBatch compressed = NativeBridge.streamNextCompressed(streamHandle.getPointer());
+                if (compressed == null) {
+                    nativeStreamExhausted = true;
+                    if (!batchEmitted) {
+                        nextBatch = VectorSchemaRoot.create(schema, allocator);
+                        nextBatch.setRowCount(0);
+                        batchEmitted = true;
+                        return true;
+                    }
+                    return false;
+                }
+                nextCompressed = compressed;
+                batchEmitted = true;
+                return true;
+            }
+
+            // Fallback: standard Arrow C Data path (for compatibility)
             long arrayAddr = callNativeFn(
                 listener -> NativeBridge.streamNext(streamHandle.getRuntimeHandle().get(), streamHandle.getPointer(), listener)
             );
             if (arrayAddr == 0) {
                 nativeStreamExhausted = true;
-                // Streaming Flight requires ≥1 schema-bearing frame before completeStream;
-                // synthesise a zero-row batch carrying the schema for empty native streams.
                 if (!batchEmitted) {
                     nextBatch = VectorSchemaRoot.create(schema, allocator);
                     nextBatch.setRowCount(0);
@@ -157,18 +179,26 @@ public class DatafusionResultStream implements EngineResultStream, FragmentResou
                 throw new NoSuchElementException();
             }
             nextAvailable = null;
+            batchEmitted = true;
+
+            // Compressed batch: return opaque bytes, no VectorSchemaRoot materialization
+            if (nextCompressed != null) {
+                NativeBridge.CompressedBatch compressed = nextCompressed;
+                nextCompressed = null;
+                return new CompressedResultBatch(compressed.ptr(), compressed.len());
+            }
+
+            // Standard batch: return VectorSchemaRoot
             VectorSchemaRoot batch = nextBatch;
             nextBatch = null;
-            batchEmitted = true;
-            // Caller owns the returned VSR's lifecycle. Streaming handler transfers it to Flight
-            // (Flight closes after wire write); row-path collector closes after reading.
             return new ArrowResultBatch(batch);
         }
 
         void closeLastBatch() {
-            // Only close batches that were loaded but never handed to the caller. Caller
-            // owns any batch returned by next(); closing it here would double-close after
-            // Flight's transferTo or after row-path reads.
+            if (nextCompressed != null) {
+                NativeBridge.freeIpcBytes(nextCompressed.ptr(), nextCompressed.len());
+                nextCompressed = null;
+            }
             if (nextBatch != null) {
                 nextBatch.close();
                 nextBatch = null;
@@ -189,6 +219,49 @@ public class DatafusionResultStream implements EngineResultStream, FragmentResou
                 }
             });
             return future.join();
+        }
+    }
+
+    /**
+     * Batch carrying compressed IPC bytes from native. No Arrow vectors are materialized
+     * on the Java side — bytes pass opaquely through Flight to the coordinator's Rust decoder.
+     * Native memory is copied into a Java byte[] at construction and freed immediately.
+     */
+    static class CompressedResultBatch implements EngineResultBatch {
+        private final byte[] compressedBytes;
+
+        CompressedResultBatch(long nativePtr, long nativeLen) {
+            this.compressedBytes = new byte[(int) nativeLen];
+            java.lang.foreign.MemorySegment.ofAddress(nativePtr)
+                .reinterpret(nativeLen)
+                .asByteBuffer()
+                .get(this.compressedBytes);
+            NativeBridge.freeIpcBytes(nativePtr, nativeLen);
+        }
+
+        @Override
+        public VectorSchemaRoot getArrowRoot() {
+            throw new UnsupportedOperationException("Compressed batch has no Arrow root — use getCompressedBytes()");
+        }
+
+        @Override
+        public List<String> getFieldNames() {
+            return List.of();
+        }
+
+        @Override
+        public int getRowCount() {
+            return -1;
+        }
+
+        @Override
+        public Object getFieldValue(String fieldName, int rowIndex) {
+            throw new UnsupportedOperationException("Compressed batch requires native decode");
+        }
+
+        @Override
+        public byte[] getCompressedBytes() {
+            return compressedBytes;
         }
     }
 

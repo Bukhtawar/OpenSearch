@@ -54,4 +54,13 @@ public interface EngineResultBatch {
      * @return the value (may be null)
      */
     Object getFieldValue(String fieldName, int rowIndex);
+
+    /**
+     * Returns compressed IPC bytes for this batch, or null if this batch uses
+     * the standard Arrow vector path. When non-null, the transport should send
+     * these bytes opaquely and the coordinator feeds them to the native decoder.
+     */
+    default byte[] getCompressedBytes() {
+        return null;
+    }
 }

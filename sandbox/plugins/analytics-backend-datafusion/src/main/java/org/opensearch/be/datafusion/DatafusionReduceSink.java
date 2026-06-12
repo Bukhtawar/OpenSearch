@@ -168,6 +168,27 @@ public class DatafusionReduceSink extends AbstractDatafusionReduceSink implement
         feedToSender(sendersByChildStageId.values().iterator().next(), batch, childSchemas.values().iterator().next());
     }
 
+    @Override
+    public void feedCompressed(byte[] compressedIpcBytes, int sourceOrdinal) {
+        if (sendersByChildStageId.size() != 1) {
+            throw new IllegalStateException(
+                "feedCompressed requires single-input sink; got " + sendersByChildStageId.size() + " partitions"
+            );
+        }
+        DatafusionPartitionSender sender = sendersByChildStageId.values().iterator().next();
+        if (sender.isReceiverDropped()) {
+            return;
+        }
+        // Allocate native memory, copy bytes, call senderSendCompressed
+        java.lang.foreign.MemorySegment nativeBuf = java.lang.foreign.Arena.global().allocate(compressedIpcBytes.length);
+        nativeBuf.asByteBuffer().put(compressedIpcBytes);
+        long rc = org.opensearch.be.datafusion.nativelib.NativeBridge.senderSendCompressed(
+            sender.getPointer(), nativeBuf.address(), compressedIpcBytes.length
+        );
+        // rc == SENDER_SEND_RECEIVER_DROPPED means consumer finished; native side
+        // already latched this on the sender (see DatafusionPartitionSender.send).
+    }
+
     /**
      * Single-input path only: true once the sole input's consumer dropped its receiver (e.g. a
      * LimitExec satisfied its fetch). Multi-input shapes (join/union) feed via {@link #sinkForChild}

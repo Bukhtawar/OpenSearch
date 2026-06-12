@@ -40,6 +40,17 @@ public interface StreamingResponseListener<Resp extends ActionResponse> {
     boolean onStreamResponse(Resp response, boolean isLast);
 
     /**
+     * Called when a compressed IPC batch is received. The bytes are LZ4-compressed
+     * Arrow IPC and should be fed directly to the native decoder (senderSendCompressed).
+     * Default implementation throws — callers that support compression must override.
+     *
+     * @param compressedBytes the compressed IPC bytes (prefixed with 4-byte CIPC marker)
+     */
+    default void onCompressedBatch(byte[] compressedBytes) {
+        throw new UnsupportedOperationException("Compressed batch handling not implemented by this listener");
+    }
+
+    /**
      * Called after the stream is exhausted with any trailing metadata sent by the data node.
      *
      * @param trailingMetadata application metadata bytes, or {@code null} if none sent

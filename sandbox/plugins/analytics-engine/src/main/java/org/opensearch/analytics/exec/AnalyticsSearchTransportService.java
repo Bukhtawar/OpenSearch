@@ -157,12 +157,28 @@ public class AnalyticsSearchTransportService {
 
             @Override
             public void onBatch(EngineResultBatch batch) throws Exception {
-                VectorSchemaRoot root = batch.getArrowRoot();
-                if (batchSchema == null && root.getFieldVectors().isEmpty() == false) {
-                    batchSchema = root.getSchema();
-                    batchAllocator = root.getFieldVectors().getFirst().getAllocator();
+                byte[] compressedBytes = batch.getCompressedBytes();
+                if (compressedBytes != null) {
+                    // Compressed path: send IPC bytes as Flight metadata with CIPC prefix.
+                    // Coordinator detects prefix and routes to native decoder.
+                    if (batchSchema == null) {
+                        throw new IllegalStateException("First batch must establish schema before compressed batches");
+                    }
+                    byte[] tagged = new byte[4 + compressedBytes.length];
+                    tagged[0] = 'C'; tagged[1] = 'I'; tagged[2] = 'P'; tagged[3] = 'C';
+                    System.arraycopy(compressedBytes, 0, tagged, 4, compressedBytes.length);
+                    VectorSchemaRoot sentinel = VectorSchemaRoot.create(batchSchema, batchAllocator);
+                    sentinel.setRowCount(0);
+                    channel.sendResponseBatch(new FragmentExecutionArrowResponse(sentinel, tagged));
+                } else {
+                    // Standard path: uncompressed Arrow vectors
+                    VectorSchemaRoot root = batch.getArrowRoot();
+                    if (batchSchema == null && root.getFieldVectors().isEmpty() == false) {
+                        batchSchema = root.getSchema();
+                        batchAllocator = root.getFieldVectors().getFirst().getAllocator();
+                    }
+                    channel.sendResponseBatch(new FragmentExecutionArrowResponse(root));
                 }
-                channel.sendResponseBatch(new FragmentExecutionArrowResponse(root));
             }
 
             @Override
@@ -263,6 +279,16 @@ public class AnalyticsSearchTransportService {
                 try {
                     FragmentExecutionArrowResponse last = stream.nextResponse();
                     while (last != null) {
+                        // Compressed IPC batch: 0 rows with CIPC-prefixed metadata.
+                        // Feed bytes directly to the native decoder, skip Arrow materialization.
+                        if (last.getRoot() != null && last.getRoot().getRowCount() == 0
+                            && last.getMetadata() != null && isCompressedIpc(last.getMetadata())) {
+                            last.getRoot().close();
+                            listener.onCompressedBatch(last.getMetadata());
+                            last = stream.nextResponse();
+                            continue;
+                        }
+
                         // Profiling sentinel: 0 rows with metadata attached. Deliver metrics and exit.
                         if (last.getRoot() != null && last.getRoot().getRowCount() == 0 && last.getMetadata() != null) {
                             listener.onStreamComplete(last.getMetadata());
@@ -337,5 +363,11 @@ public class AnalyticsSearchTransportService {
                 }
             }
         });
+    }
+
+    private static boolean isCompressedIpc(byte[] metadata) {
+        return metadata != null && metadata.length > 4
+            && metadata[0] == 'C' && metadata[1] == 'I'
+            && metadata[2] == 'P' && metadata[3] == 'C';
     }
 }

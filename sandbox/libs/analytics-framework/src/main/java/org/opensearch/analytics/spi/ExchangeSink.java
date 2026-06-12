@@ -51,6 +51,18 @@ public interface ExchangeSink {
     }
 
     /**
+     * Feed compressed IPC bytes directly to the native decoder, bypassing Arrow vector
+     * materialization in Java. Default throws — backends that support compressed transport
+     * (e.g. DataFusion reduce sink) override this.
+     *
+     * @param compressedIpcBytes LZ4-compressed Arrow IPC stream bytes
+     * @param sourceOrdinal the producer task ordinal
+     */
+    default void feedCompressed(byte[] compressedIpcBytes, int sourceOrdinal) {
+        throw new UnsupportedOperationException("Compressed feed not supported by this sink");
+    }
+
+    /**
      * Whether the downstream consumer has finished and will read no more batches (e.g. a reduce
      * whose LimitExec satisfied its fetch). Producers may poll this after a {@link #feed} to stop
      * early. Default {@code false}; best-effort — a {@code true} is monotonic, a {@code false} may

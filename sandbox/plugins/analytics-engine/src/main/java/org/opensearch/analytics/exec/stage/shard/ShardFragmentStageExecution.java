@@ -127,6 +127,15 @@ public class ShardFragmentStageExecution extends AbstractStageExecution implemen
         final int sourceOrdinal = ((ShardExecutionTarget) task.target()).ordinal();
         return new StreamingResponseListener<>() {
             @Override
+            public void onCompressedBatch(byte[] compressedBytes) {
+                if (getState().isTerminal()) return;
+                // Strip 4-byte CIPC marker, feed remaining bytes to native decoder
+                byte[] ipcBytes = new byte[compressedBytes.length - 4];
+                System.arraycopy(compressedBytes, 4, ipcBytes, 0, ipcBytes.length);
+                outputSink.feedCompressed(ipcBytes, sourceOrdinal);
+            }
+
+            @Override
             public boolean onStreamResponse(FragmentExecutionArrowResponse response, boolean isLast) {
                 VectorSchemaRoot vsr = response.getRoot();
                 if (getState().isTerminal()) {
