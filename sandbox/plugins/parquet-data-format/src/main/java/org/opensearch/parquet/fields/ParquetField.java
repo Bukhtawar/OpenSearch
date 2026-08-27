@@ -106,6 +106,15 @@ public abstract class ParquetField {
 
     /**
      * Creates and processes a field entry. Throws if vector not present in VSR.
+     * <p>
+     * Adaptive multi-value encoding: a declared LIST column may still be accumulating as an
+     * optimistic scalar ({@link ManagedVSR#isPromotable}). A singleton value writes through the
+     * scalar fast path — no offset bookkeeping, no list dispatch. The first document that
+     * carries several values promotes the column in place ({@link ManagedVSR#promoteToList})
+     * and writes through the list path from then on. This is the write-side analogue of
+     * Lucene's flush-time SORTED/SORTED_SET choice: singleton is an encoding optimization,
+     * never a schema shape.
+     *
      * @param fieldType the mapped field type
      * @param managedVSR the managed vector schema root
      * @param parseValue the parsed value to write
@@ -116,6 +125,22 @@ public abstract class ParquetField {
         FieldVector vector = managedVSR.getVector(fieldType.name());
         if (vector instanceof ListVector listVector) {
             writeList(fieldType, managedVSR, listVector, parseValue);
+            return;
+        }
+        if (managedVSR.isPromotable(fieldType.name())) {
+            List<?> values = parseValue instanceof List<?> list ? list : (parseValue == null ? List.of() : List.of(parseValue));
+            if (values.size() <= 1) {
+                // Singleton fast path: write the element as a plain scalar. A null or empty
+                // entry leaves the slot unset, which reads back as null — the same document
+                // shape a null list represents after promotion.
+                Object single = values.isEmpty() ? null : values.get(0);
+                if (single != null) {
+                    addToVector(vector, managedVSR.getRowCount(), single);
+                }
+                return;
+            }
+            ListVector promoted = (ListVector) managedVSR.promoteToList(fieldType.name());
+            writeList(fieldType, managedVSR, promoted, parseValue);
             return;
         }
         addToGroup(fieldType, managedVSR, parseValue);

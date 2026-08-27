@@ -11,14 +11,17 @@ package org.opensearch.parquet.vsr;
 import org.apache.arrow.c.ArrowArray;
 import org.apache.arrow.c.ArrowSchema;
 import org.apache.arrow.c.Data;
+import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.nativebridge.spi.ArrowExport;
+import org.opensearch.parquet.writer.MismatchedInputException;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -52,6 +55,27 @@ public class ManagedVSR implements AutoCloseable {
     private final BufferAllocator allocator;
     private final AtomicReference<VSRState> state = new AtomicReference<>(VSRState.ACTIVE);
     private final Map<String, FieldVector> fields = new HashMap<>();
+    /**
+     * Declared LIST fields currently accumulating as scalar vectors (adaptive encoding).
+     * Keyed by field name; the value is the declared LIST field to promote to. Emptied as
+     * columns are promoted — any survivors are promoted wholesale in {@link #moveToFrozen}.
+     */
+    private final Map<String, Field> pendingListPromotions = new HashMap<>();
+    /** The declared (logical) fields, LIST-shaped even while accumulating as scalar. */
+    private final List<Field> declaredFields = new ArrayList<>();
+    /** Per-file shape latch shared by every VSR of one file's pool; see {@link AdaptiveShapePolicy}. */
+    private final AdaptiveShapePolicy shapePolicy;
+
+    /**
+     * Creates a new ManagedVSR with a private shape latch (single-batch/test use).
+     *
+     * @param id unique identifier for this VSR
+     * @param schema Arrow schema defining the vector structure
+     * @param allocator buffer allocator for Arrow memory
+     */
+    public ManagedVSR(String id, Schema schema, BufferAllocator allocator) {
+        this(id, schema, allocator, new AdaptiveShapePolicy());
+    }
 
     /**
      * Creates a new ManagedVSR.
@@ -59,10 +83,28 @@ public class ManagedVSR implements AutoCloseable {
      * @param id unique identifier for this VSR
      * @param schema Arrow schema defining the vector structure
      * @param allocator buffer allocator for Arrow memory
+     * @param shapePolicy the per-file shape latch shared across the pool's VSRs
      */
-    public ManagedVSR(String id, Schema schema, BufferAllocator allocator) {
+    ManagedVSR(String id, Schema schema, BufferAllocator allocator, AdaptiveShapePolicy shapePolicy) {
         this.id = id;
-        this.vsr = VectorSchemaRoot.create(schema, allocator);
+        this.shapePolicy = shapePolicy;
+        // Adaptive multi-value encoding: a declared LIST column starts as a scalar vector of
+        // its element type — the all-singleton common case pays no offset bookkeeping while
+        // accumulating. The column is promoted to its declared LIST shape by the first document
+        // that carries several values (ParquetField.createField), or at freeze time when the
+        // file's schema is already locked LIST; a column never promoted freezes — and flushes —
+        // as a plain scalar (lazy LIST materialization).
+        List<Field> physicalFields = new ArrayList<>(schema.getFields().size());
+        for (Field field : schema.getFields()) {
+            declaredFields.add(field);
+            if (AdaptiveListPromoter.isAdaptable(field)) {
+                pendingListPromotions.put(field.getName(), field);
+                physicalFields.add(AdaptiveListPromoter.scalarSeed(field));
+            } else {
+                physicalFields.add(field);
+            }
+        }
+        this.vsr = VectorSchemaRoot.create(new Schema(physicalFields), allocator);
         this.allocator = allocator;
         for (Field field : vsr.getSchema().getFields()) {
             fields.put(field.getName(), vsr.getVector(field));
@@ -83,7 +125,41 @@ public class ManagedVSR implements AutoCloseable {
         if (state.get() != VSRState.ACTIVE) {
             throw new IllegalStateException("Cannot modify VSR in state: " + state.get());
         }
+        int previous = vsr.getRowCount();
+        // Rollback: rows in [rowCount, previous) were written by rejected documents. Their
+        // validity bits (and, for list columns, lastSet/offset state) were already set by the
+        // write path and would otherwise leak into the next document that reuses the slot —
+        // a document that leaves the field ABSENT would read back the rejected document's
+        // values as a ghost. Clear the trimmed slots so a rolled-back slot is
+        // indistinguishable from a never-written one.
+        if (rowCount < previous) {
+            for (FieldVector vector : fields.values()) {
+                for (int row = previous - 1; row >= rowCount; row--) {
+                    clearSlot(vector, row);
+                }
+            }
+        }
         vsr.setRowCount(rowCount);
+    }
+
+    /**
+     * Clears one row slot of a vector after rollback: the validity bit is cleared so the slot
+     * reads as null again. For a {@link ListVector} the offset chain and {@code lastSet} are
+     * rewound too, so the next write at this row starts its child range where the rolled-back
+     * row started (stale child bytes beyond it are unreachable — offsets are the only access
+     * path into a list's child vector).
+     */
+    private static void clearSlot(FieldVector vector, int row) {
+        if (vector instanceof ListVector listVector) {
+            listVector.setNull(row);
+            ArrowBuf offsets = listVector.getOffsetBuffer();
+            offsets.setInt((long) (row + 1) * Integer.BYTES, offsets.getInt((long) row * Integer.BYTES));
+            if (listVector.getLastSet() >= row) {
+                listVector.setLastSet(row - 1);
+            }
+        } else {
+            vector.setNull(row);
+        }
     }
 
     /**
@@ -98,8 +174,102 @@ public class ManagedVSR implements AutoCloseable {
         return fields.get(fieldName);
     }
 
+    /**
+     * Whether the column is still accumulating as an optimistic scalar and can be promoted
+     * to its declared LIST shape on demand.
+     */
+    public boolean isPromotable(String fieldName) {
+        return pendingListPromotions.containsKey(fieldName);
+    }
+
+    /**
+     * Promotes a column from its optimistic scalar accumulator to the declared LIST shape,
+     * carrying the rows written so far as single-element lists (identity offsets, zero-copy
+     * buffer transfer). Called by the write path when a document first supplies several
+     * values for the column. Only allowed in ACTIVE state.
+     *
+     * @param fieldName the column to promote
+     * @return the promoted list vector, ready for {@code startNewValue(getRowCount())}
+     */
+    public FieldVector promoteToList(String fieldName) {
+        if (state.get() != VSRState.ACTIVE) {
+            throw new IllegalStateException("Cannot promote field in VSR state: " + state.get());
+        }
+        if (shapePolicy.promotionAllowed(fieldName) == false) {
+            // The file's schema froze with this column as a plain scalar, so no batch of this
+            // file can ever hold an array for it. Recoverable by design: ParquetWriter turns
+            // this into WriteResult.Failure + PENDING_ROLLBACK, the partial row is cleared by
+            // the rollback path, and the document is retried into a new writer generation
+            // whose shape latch starts UNDECIDED.
+            throw new MismatchedInputException(
+                "Field ["
+                    + fieldName
+                    + "] received multiple values but is locked to scalar shape in the current file"
+                    + " generation; multi-valued storage requires a new writer generation"
+            );
+        }
+        Field declared = pendingListPromotions.remove(fieldName);
+        if (declared == null) {
+            throw new IllegalStateException("Field [" + fieldName + "] is not pending list promotion");
+        }
+        FieldVector scalar = fields.get(fieldName);
+        FieldVector promoted = AdaptiveListPromoter.promote(scalar, declared, allocator, vsr.getRowCount());
+        replaceVector(fieldName, scalar, promoted, declared);
+        logger.debug("Promoted column [{}] scalar -> LIST at row {} in VSR {}", fieldName, vsr.getRowCount(), id);
+        return promoted;
+    }
+
+    /**
+     * Swaps a column's vector in the VSR, closing the old vector. The schema entry for the
+     * column is the <em>declared</em> field, not {@code newVector.getField()}: Arrow renames a
+     * list vector's child to {@code $data$} internally, and the VSR schema is what
+     * {@link #exportSchema()} hands to the native writer — it must keep the declared element
+     * name or the Parquet leaf path would change.
+     */
+    private void replaceVector(String fieldName, FieldVector oldVector, FieldVector newVector, Field declaredField) {
+        int rowCount = vsr.getRowCount();
+        List<Field> oldSchemaFields = vsr.getSchema().getFields();
+        List<Field> newFields = new ArrayList<>(oldSchemaFields.size());
+        List<FieldVector> newVectors = new ArrayList<>(oldSchemaFields.size());
+        List<FieldVector> oldVectors = vsr.getFieldVectors();
+        for (int i = 0; i < oldVectors.size(); i++) {
+            FieldVector vector = oldVectors.get(i);
+            if (vector == oldVector) {
+                newVectors.add(newVector);
+                newFields.add(declaredField);
+            } else {
+                newVectors.add(vector);
+                newFields.add(oldSchemaFields.get(i));
+            }
+        }
+        vsr = new VectorSchemaRoot(newFields, newVectors, rowCount);
+        fields.put(fieldName, newVector);
+        oldVector.close();
+    }
+
     /** Transitions this VSR from ACTIVE to FROZEN state. */
     public void moveToFrozen() {
+        if (state.get() == VSRState.ACTIVE) {
+            // Normalize every vector's value count to the row count before export: a column
+            // added by a late mapping update that no document ever wrote still has empty
+            // buffers, and exporting it with fewer values than rows crashes the native writer
+            // (under-length buffer). setRowCount allocates and back-fills as needed; it is a
+            // no-op for vectors already written through.
+            vsr.setRowCount(vsr.getRowCount());
+            if (pendingListPromotions.isEmpty() == false) {
+                // Lazy LIST materialization: a still-scalar column canonicalizes at freeze ONLY
+                // when the file's schema is already locked LIST (an earlier batch of this file
+                // was promoted). While the shape is UNDECIDED — no batch exported yet — the
+                // column freezes in its current physical shape, so an all-singleton file is a
+                // plain scalar file end to end. (Lucene's flush-time SORTED/SORTED_SET
+                // decision, made per file at first export instead of pinned to LIST.)
+                for (String fieldName : List.copyOf(pendingListPromotions.keySet())) {
+                    if (shapePolicy.canonicalizeAtFreeze(fieldName)) {
+                        promoteToList(fieldName);
+                    }
+                }
+            }
+        }
         if (state.compareAndSet(VSRState.ACTIVE, VSRState.FROZEN) == false) {
             throw new IllegalStateException("Cannot freeze VSR " + id + ": expected ACTIVE but was " + state.get());
         }
@@ -141,6 +311,9 @@ public class ManagedVSR implements AutoCloseable {
     /**
      * Dynamically adds a new field to this VSR. Creates the vector using the internal
      * allocator and appends it to the schema. Only allowed in ACTIVE state.
+     * <p>
+     * A declared LIST field is seeded as an optimistic scalar of its element type, exactly
+     * like construction-time fields; see the constructor for the adaptive-encoding contract.
      *
      * @param field the Arrow field descriptor
      */
@@ -148,14 +321,20 @@ public class ManagedVSR implements AutoCloseable {
         if (state.get() != VSRState.ACTIVE) {
             throw new IllegalStateException("Cannot add field to VSR in state: " + state.get());
         }
-        FieldVector vector = field.createVector(allocator);
+        declaredFields.add(field);
+        Field physicalField = field;
+        if (AdaptiveListPromoter.isAdaptable(field)) {
+            pendingListPromotions.put(field.getName(), field);
+            physicalField = AdaptiveListPromoter.scalarSeed(field);
+        }
+        FieldVector vector = physicalField.createVector(allocator);
         List<FieldVector> vectors = new ArrayList<>(vsr.getFieldVectors());
         vectors.add(vector);
         List<Field> newFields = new ArrayList<>(vsr.getSchema().getFields());
-        newFields.add(field);
+        newFields.add(physicalField);
         int rowCount = vsr.getRowCount();
         vsr = new VectorSchemaRoot(newFields, vectors, rowCount);
-        fields.put(field.getName(), vector);
+        fields.put(physicalField.getName(), vector);
     }
 
     /**
@@ -165,6 +344,17 @@ public class ManagedVSR implements AutoCloseable {
      */
     public Schema getSchema() {
         return vsr.getSchema();
+    }
+
+    /**
+     * Returns the declared (logical) schema: declared-LIST columns appear as LIST here even
+     * while their accumulator is still an optimistic scalar. This is the schema new VSRs
+     * must be created from and the shape every frozen batch is canonicalized to.
+     *
+     * @return the declared schema
+     */
+    public Schema getDeclaredSchema() {
+        return new Schema(declaredFields);
     }
 
     /**

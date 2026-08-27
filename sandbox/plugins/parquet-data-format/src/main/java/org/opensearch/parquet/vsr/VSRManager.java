@@ -10,6 +10,7 @@ package org.opensearch.parquet.vsr;
 
 import org.apache.arrow.c.ArrowSchema;
 import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.logging.log4j.LogManager;
@@ -76,6 +77,8 @@ public class VSRManager implements AutoCloseable {
     private final int ROTATION_TIMEOUT = 120;
     private LongAdder rowCount = new LongAdder();
     private long acceptedRows = 0L;
+    /** Per-file shape latch for adaptive columns; locked when the native writer initializes. */
+    private final AdaptiveShapePolicy shapePolicy;
 
     /**
      * Creates a new VSRManager with asynchronous background writes (production default).
@@ -173,7 +176,8 @@ public class VSRManager implements AutoCloseable {
         this.indexSettings = indexSettings;
         this.writerGeneration = writerGeneration;
         this.stats = stats;
-        this.vsrPool = new VSRPool("pool-" + fileName, schema, bufferPool, maxRowsPerVSR);
+        this.shapePolicy = new AdaptiveShapePolicy();
+        this.vsrPool = new VSRPool("pool-" + fileName, schema, bufferPool, maxRowsPerVSR, shapePolicy);
         this.threadPool = threadPool;
         this.vsrRotationThread = runAsync ? ParquetDataFormatPlugin.PARQUET_THREAD_POOL_NAME : ThreadPool.Names.SAME;
         this.managedVSR.set(vsrPool.getActiveVSR());
@@ -273,7 +277,11 @@ public class VSRManager implements AutoCloseable {
             }
         }
         if (changed) {
-            vsrPool.updateSchema(activeVSR.getSchema());
+            // Propagate the DECLARED schema, not the physical one: under adaptive encoding the
+            // active VSR's physical schema shows declared-LIST columns as their optimistic
+            // scalar seeds. New VSRs created after rotation must be seeded from the declared
+            // shape or their columns would be permanently scalar and unable to promote.
+            vsrPool.updateSchema(activeVSR.getDeclaredSchema());
         } else {
             logger.debug("no changes in schema despite change in mapping version");
         }
@@ -381,9 +389,21 @@ public class VSRManager implements AutoCloseable {
 
     /**
      * Initializes the native writer on first use, using the schema from the given VSR.
+     * <p>
+     * This is the moment the Parquet file's schema becomes immutable, so each adaptive
+     * (declared-LIST) column's shape is latched here from its physical shape in this first
+     * exported batch: scalar if no document ever carried several values, LIST if promotion
+     * fired. Later batches of this file conform via {@link ManagedVSR#moveToFrozen}
+     * (canonicalize-to-LIST) or reject recoverably ({@link ManagedVSR#promoteToList}).
      */
     private void maybeInitializeWriter(ManagedVSR vsr) throws IOException {
         if (writer.isInitialized() == false) {
+            for (Field declared : vsr.getDeclaredSchema().getFields()) {
+                if (AdaptiveListPromoter.isAdaptable(declared)) {
+                    Field physical = vsr.getSchema().findField(declared.getName());
+                    shapePolicy.lock(declared.getName(), physical.getType() instanceof ArrowType.List);
+                }
+            }
             String indexName = indexSettings.getIndex().getName();
             ParquetSortConfig sortConfig = new ParquetSortConfig(indexSettings);
             try (ArrowSchema schema = vsr.exportSchema()) {

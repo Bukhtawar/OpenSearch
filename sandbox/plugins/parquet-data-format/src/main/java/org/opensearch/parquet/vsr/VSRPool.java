@@ -38,10 +38,23 @@ public class VSRPool implements AutoCloseable {
     private volatile Schema schema;
     private final ArrowBufferPool bufferPool;
     private final String poolId;
+    private final AdaptiveShapePolicy shapePolicy;
     private final AtomicReference<ManagedVSR> activeVSR;
     private final AtomicReference<ManagedVSR> frozenVSR;
     private final AtomicInteger vsrCounter;
     private final int maxRowsPerVSR;
+
+    /**
+     * Creates a new VSRPool with a private shape latch (test use).
+     *
+     * @param poolId unique identifier for this pool
+     * @param schema Arrow schema for VSR creation
+     * @param bufferPool shared Arrow buffer pool
+     * @param maxRowsPerVSR row threshold triggering rotation
+     */
+    public VSRPool(String poolId, Schema schema, ArrowBufferPool bufferPool, int maxRowsPerVSR) {
+        this(poolId, schema, bufferPool, maxRowsPerVSR, new AdaptiveShapePolicy());
+    }
 
     /**
      * Creates a new VSRPool.
@@ -50,11 +63,13 @@ public class VSRPool implements AutoCloseable {
      * @param schema Arrow schema for VSR creation
      * @param bufferPool shared Arrow buffer pool
      * @param maxRowsPerVSR row threshold triggering rotation
+     * @param shapePolicy per-file shape latch shared by every VSR this pool creates
      */
-    public VSRPool(String poolId, Schema schema, ArrowBufferPool bufferPool, int maxRowsPerVSR) {
+    VSRPool(String poolId, Schema schema, ArrowBufferPool bufferPool, int maxRowsPerVSR, AdaptiveShapePolicy shapePolicy) {
         this.poolId = poolId;
         this.schema = schema;
         this.bufferPool = bufferPool;
+        this.shapePolicy = shapePolicy;
         this.activeVSR = new AtomicReference<>();
         this.frozenVSR = new AtomicReference<>();
         this.vsrCounter = new AtomicInteger(0);
@@ -173,7 +188,7 @@ public class VSRPool implements AutoCloseable {
     private ManagedVSR createNewVSR() {
         String vsrId = poolId + "-vsr-" + vsrCounter.incrementAndGet();
         BufferAllocator allocator = bufferPool.createChildAllocator(vsrId);
-        return new ManagedVSR(vsrId, schema, allocator);
+        return new ManagedVSR(vsrId, schema, allocator, shapePolicy);
     }
 
     /**

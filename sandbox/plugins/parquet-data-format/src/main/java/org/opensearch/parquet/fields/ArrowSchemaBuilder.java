@@ -42,9 +42,9 @@ public final class ArrowSchemaBuilder {
     /**
      * Creates an Arrow Schema from the MapperService.
      *
-     * <p>A field whose mapper declares {@code multi_value: true}
-     * ({@link MappedFieldType#isMultiValued()}) is emitted as a {@code LIST<element>} column;
-     * every other field keeps its scalar column.
+     * <p>A field whose {@link ParquetField} supports list storage ({@link ParquetField#supportsMultiValue()})
+     * is emitted as a {@code LIST<element>} column unconditionally; every other field keeps its
+     * scalar column. No mapping declaration is required.
      * TODO - Get the mapping version while creating the schema
      *
      * @param mapperService the mapper service containing field mappings
@@ -62,16 +62,12 @@ public final class ArrowSchemaBuilder {
 
                 ParquetField parquetField = ArrowFieldRegistry.getParquetField(mapper.typeName());
                 if (parquetField != null) {
-                    boolean multiValue = isMultiValued(mapper);
-                    if (multiValue && parquetField.supportsMultiValue() == false) {
-                        throw new IllegalArgumentException(
-                            "Field ["
-                                + mapper.name()
-                                + "] of type ["
-                                + mapper.typeName()
-                                + "] does not support [multi_value] storage in the parquet data format"
-                        );
-                    }
+                    // POC (Lucene-style auto multi-value): cardinality is a codec capability, not a
+                    // mapping declaration. Every field type that supports LIST storage is emitted as
+                    // a LIST column unconditionally — the analogue of Lucene keyword fields always
+                    // using SORTED_SET doc values, with singleton the common case rather than a
+                    // separate schema shape. No `multi_value` mapping parameter is consulted.
+                    boolean multiValue = parquetField.supportsMultiValue();
                     fields.add(parquetField.toArrowField(mapper.name(), multiValue));
                     handleNormalizedField(mapper, documentMapper, fields, parquetField, multiValue);
                 } else {
@@ -101,11 +97,6 @@ public final class ArrowSchemaBuilder {
                 fields.add(parquetField.toArrowField(rawValueField.name(), multiValue));
             }
         }
-    }
-
-    /** Reads the {@code multi_value} declaration from the mapper's field type. */
-    private static boolean isMultiValued(Mapper mapper) {
-        return mapper instanceof FieldMapper fieldMapper && fieldMapper.fieldType().isMultiValued();
     }
 
     private static boolean isUnsupportedMetadataField(Mapper mapper) {

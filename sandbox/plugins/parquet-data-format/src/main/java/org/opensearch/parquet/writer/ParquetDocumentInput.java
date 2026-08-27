@@ -19,6 +19,8 @@ import org.opensearch.index.mapper.MapperParsingException;
 import org.opensearch.index.mapper.SeqNoFieldMapper;
 import org.opensearch.index.mapper.VersionFieldMapper;
 import org.opensearch.parquet.ParquetDataFormatPlugin;
+import org.opensearch.parquet.fields.ArrowFieldRegistry;
+import org.opensearch.parquet.fields.ParquetField;
 
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -56,9 +58,12 @@ public class ParquetDocumentInput implements DocumentInput<List<FieldValuePair>>
         }
         FieldValuePair existing = seen.get(fieldType);
         if (existing == null) {
-            // Fields declared `multi_value: true` in the mapping start out as a list of one so the
-            // value shape reaching the VSR is the same whether the document had one value or several.
-            FieldValuePair pair = fieldType.isMultiValued()
+            // POC (Lucene-style auto multi-value): whether a field can hold several values per
+            // document is a property of its column codec, not a mapping declaration. Any field
+            // whose ParquetField supports LIST storage accumulates values — a single value is
+            // just a list of one — mirroring Lucene, where keyword fields always index into
+            // SORTED_SET doc values and singleton is an encoding optimization, not a schema shape.
+            FieldValuePair pair = supportsMultiValue(fieldType)
                 ? FieldValuePair.multiValued(fieldType, value)
                 : new FieldValuePair(fieldType, value);
             seen.put(fieldType, pair);
@@ -71,10 +76,16 @@ public class ParquetDocumentInput implements DocumentInput<List<FieldValuePair>>
                     + fieldType.name()
                     + "] of type: ["
                     + fieldType.typeName()
-                    + "]. Set [multi_value: true] on the field mapping to store multiple values."
+                    + "]: this field type does not support multi-valued storage in the parquet data format."
             );
         }
         existing.addValue(value);
+    }
+
+    /** Whether this field's Parquet codec stores values as a LIST column (multi-value capable). */
+    private static boolean supportsMultiValue(MappedFieldType fieldType) {
+        ParquetField parquetField = ArrowFieldRegistry.getParquetField(fieldType.typeName());
+        return parquetField != null && parquetField.supportsMultiValue();
     }
 
     @Override
