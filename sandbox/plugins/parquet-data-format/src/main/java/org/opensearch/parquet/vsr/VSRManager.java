@@ -273,7 +273,11 @@ public class VSRManager implements AutoCloseable {
             }
         }
         if (changed) {
-            vsrPool.updateSchema(activeVSR.getSchema());
+            // Propagate the DECLARED schema, not the physical one: under adaptive encoding the
+            // active VSR's physical schema shows declared-LIST columns as their optimistic
+            // scalar seeds. New VSRs created after rotation must be seeded from the declared
+            // shape or their columns would be permanently scalar and unable to promote.
+            vsrPool.updateSchema(activeVSR.getDeclaredSchema());
         } else {
             logger.debug("no changes in schema despite change in mapping version");
         }

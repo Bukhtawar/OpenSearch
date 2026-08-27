@@ -33,6 +33,7 @@ import org.opensearch.parquet.engine.ParquetDataFormat;
 import org.opensearch.parquet.fields.ParquetField;
 import org.opensearch.parquet.fields.core.data.text.KeywordParquetField;
 import org.opensearch.parquet.memory.ArrowBufferPool;
+import org.opensearch.parquet.writer.MismatchedInputException;
 import org.opensearch.parquet.writer.ParquetDocumentInput;
 import org.opensearch.threadpool.FixedExecutorBuilder;
 import org.opensearch.threadpool.ThreadPool;
@@ -582,6 +583,271 @@ public class VSRManagerTests extends ParquetBaseTests {
         }
     }
 
+    /**
+     * Adaptive encoding lifecycle: singleton docs accumulate on the scalar fast path, the
+     * first genuinely multi-valued doc promotes the column in place carrying prior rows as
+     * single-element lists, and later rows write through the list path.
+     */
+    public void testAdaptivePromotionOnFirstArrayCarriesPriorRows() throws Exception {
+        String filePath = createTempDir().resolve("adaptive-promote.parquet").toString();
+        VSRManager manager = new VSRManager(filePath, indexSettings, schema, bufferPool, 100, threadPool, 0L);
+        try {
+            manager.reconcileSchema(schemaWithMultiValue("tags"));
+            KeywordFieldMapper.KeywordFieldType tags = new KeywordFieldMapper.KeywordFieldType("tags");
+            tags.setMultiValued(true);
+            assignTestCapabilities(tags, PARQUET_FORMAT);
+            NumberFieldMapper.NumberFieldType valField = new NumberFieldMapper.NumberFieldType("val", NumberFieldMapper.NumberType.INTEGER);
+            assignTestCapabilities(valField, PARQUET_FORMAT);
+
+            // Row 0: singleton — scalar fast path. Row 1: field absent — null. Both pre-promotion.
+            ParquetDocumentInput doc0 = new ParquetDocumentInput();
+            populateMetadataFields(doc0);
+            doc0.setRowId(DocumentInput.ROW_ID_FIELD, 0);
+            doc0.addField(valField, 1);
+            doc0.addField(tags, "first");
+            manager.addDocument(doc0);
+
+            ParquetDocumentInput doc1 = new ParquetDocumentInput();
+            populateMetadataFields(doc1);
+            doc1.setRowId(DocumentInput.ROW_ID_FIELD, 1);
+            doc1.addField(valField, 2);
+            manager.addDocument(doc1);
+
+            assertTrue("column must still be the optimistic scalar", manager.getActiveManagedVSR().isPromotable("tags"));
+            assertTrue(manager.getActiveManagedVSR().getVector("tags") instanceof VarCharVector);
+
+            // Row 2: the first real array — triggers in-place promotion.
+            ParquetDocumentInput doc2 = new ParquetDocumentInput();
+            populateMetadataFields(doc2);
+            doc2.setRowId(DocumentInput.ROW_ID_FIELD, 2);
+            doc2.addField(valField, 3);
+            doc2.addField(tags, "x");
+            doc2.addField(tags, "y");
+            manager.addDocument(doc2);
+
+            assertFalse("column must have been promoted", manager.getActiveManagedVSR().isPromotable("tags"));
+            ListVector listVector = (ListVector) manager.getActiveManagedVSR().getVector("tags");
+            assertEquals("pre-promotion singleton must carry over as a one-element list", List.of("first"), listElements(listVector, 0));
+            assertTrue("pre-promotion absent row must carry over as a null list", listVector.isNull(1));
+            assertEquals(List.of("x", "y"), listElements(listVector, 2));
+
+            // Row 3: singleton after promotion — written through the list path.
+            ParquetDocumentInput doc3 = new ParquetDocumentInput();
+            populateMetadataFields(doc3);
+            doc3.setRowId(DocumentInput.ROW_ID_FIELD, 3);
+            doc3.addField(valField, 4);
+            doc3.addField(tags, "last");
+            manager.addDocument(doc3);
+            assertEquals(List.of("last"), listElements(listVector, 3));
+
+            ParquetFileMetadata metadata = manager.flush();
+            assertNotNull(metadata);
+            assertEquals(4, metadata.numRows());
+        } finally {
+            manager.close();
+        }
+    }
+
+    /**
+     * Freeze-time canonicalization: a declared-LIST column that only ever saw singletons is
+     * promoted wholesale when the VSR freezes, so the exported batch always matches the
+     * declared LIST schema — the flush-time encoding decision, pinned to LIST.
+     */
+    public void testAdaptiveColumnCanonicalizedToListAtFreeze() throws Exception {
+        String filePath = createTempDir().resolve("adaptive-freeze.parquet").toString();
+        VSRManager manager = new VSRManager(filePath, indexSettings, schema, bufferPool, 100, threadPool, 0L);
+        try {
+            manager.reconcileSchema(schemaWithMultiValue("tags"));
+            KeywordFieldMapper.KeywordFieldType tags = new KeywordFieldMapper.KeywordFieldType("tags");
+            tags.setMultiValued(true);
+            assignTestCapabilities(tags, PARQUET_FORMAT);
+            NumberFieldMapper.NumberFieldType valField = new NumberFieldMapper.NumberFieldType("val", NumberFieldMapper.NumberType.INTEGER);
+            assignTestCapabilities(valField, PARQUET_FORMAT);
+
+            for (int i = 0; i < 3; i++) {
+                ParquetDocumentInput doc = new ParquetDocumentInput();
+                populateMetadataFields(doc);
+                doc.setRowId(DocumentInput.ROW_ID_FIELD, i);
+                doc.addField(valField, i);
+                doc.addField(tags, "v" + i);
+                manager.addDocument(doc);
+            }
+            ManagedVSR active = manager.getActiveManagedVSR();
+            assertTrue("all-singleton column must still be scalar before freeze", active.isPromotable("tags"));
+
+            // Freeze directly (bypassing flush) to pin where canonicalization happens.
+            active.moveToFrozen();
+            Field tagsField = active.getSchema().getFields().stream().filter(f -> f.getName().equals("tags")).findFirst().orElseThrow();
+            assertEquals("frozen batch must expose the declared LIST shape", ArrowType.List.INSTANCE, tagsField.getType());
+            assertEquals(ParquetField.LIST_ELEMENT_NAME, tagsField.getChildren().get(0).getName());
+        } finally {
+            manager.close();
+        }
+    }
+
+    /**
+     * A document that triggers promotion mid-write and then fails on a later field leaves the
+     * promotion in place (content-preserving, so it must not be undone) with the failed row
+     * partially written. The row was never admitted (rowCount unchanged), so the next document
+     * reuses the same row index and must be able to rewrite it through the list path — this
+     * exercises Arrow's ListVector offset/lastSet rewind for an index written twice.
+     */
+    public void testFailedDocAfterPromotionLeavesVSRWritable() throws Exception {
+        String filePath = createTempDir().resolve("promotion-failed-doc.parquet").toString();
+        VSRManager manager = new VSRManager(filePath, indexSettings, schema, bufferPool, 100, threadPool, 0L);
+        try {
+            manager.reconcileSchema(schemaWithMultiValue("tags"));
+            KeywordFieldMapper.KeywordFieldType tags = new KeywordFieldMapper.KeywordFieldType("tags");
+            tags.setMultiValued(true);
+            assignTestCapabilities(tags, PARQUET_FORMAT);
+            NumberFieldMapper.NumberFieldType valField = new NumberFieldMapper.NumberFieldType("val", NumberFieldMapper.NumberType.INTEGER);
+            assignTestCapabilities(valField, PARQUET_FORMAT);
+            // A field with Parquet capabilities but no vector in the VSR: addDocument writes
+            // earlier pairs, then throws MismatchedInputException on this one.
+            KeywordFieldMapper.KeywordFieldType unknown = new KeywordFieldMapper.KeywordFieldType("unknown_field");
+            assignTestCapabilities(unknown, PARQUET_FORMAT);
+
+            // Row 0: clean singleton — scalar fast path.
+            ParquetDocumentInput doc0 = new ParquetDocumentInput();
+            populateMetadataFields(doc0);
+            doc0.setRowId(DocumentInput.ROW_ID_FIELD, 0);
+            doc0.addField(valField, 1);
+            doc0.addField(tags, "keep");
+            manager.addDocument(doc0);
+
+            // Failing doc at row 1: the array promotes the column, then the unknown field throws.
+            ParquetDocumentInput badDoc = new ParquetDocumentInput();
+            populateMetadataFields(badDoc);
+            badDoc.setRowId(DocumentInput.ROW_ID_FIELD, 1);
+            badDoc.addField(tags, "doomed1");
+            badDoc.addField(tags, "doomed2");
+            badDoc.addField(unknown, "boom");
+            expectThrows(MismatchedInputException.class, () -> manager.addDocument(badDoc));
+
+            // Promotion must persist (it is content-preserving) and the pre-existing row intact.
+            assertFalse("promotion must not be rolled back", manager.getActiveManagedVSR().isPromotable("tags"));
+            ListVector listVector = (ListVector) manager.getActiveManagedVSR().getVector("tags");
+            assertEquals(List.of("keep"), listElements(listVector, 0));
+            // The failed row was never admitted.
+            assertEquals(1, manager.getAcceptedRows());
+            assertEquals(1, manager.getActiveManagedVSR().getRowCount());
+
+            // The caller-driven rollback for a rejected doc is a no-op at the admitted count.
+            manager.rollbackTo(1);
+
+            // Row 1 (same index the failed doc partially wrote) must be rewritable — both the
+            // list column (offset/lastSet rewind) and via a subsequent array.
+            ParquetDocumentInput doc1 = new ParquetDocumentInput();
+            populateMetadataFields(doc1);
+            doc1.setRowId(DocumentInput.ROW_ID_FIELD, 1);
+            doc1.addField(valField, 2);
+            doc1.addField(tags, "replay-a");
+            doc1.addField(tags, "replay-b");
+            doc1.addField(tags, "replay-c");
+            manager.addDocument(doc1);
+
+            ParquetDocumentInput doc2 = new ParquetDocumentInput();
+            populateMetadataFields(doc2);
+            doc2.setRowId(DocumentInput.ROW_ID_FIELD, 2);
+            doc2.addField(valField, 3);
+            doc2.addField(tags, "tail");
+            manager.addDocument(doc2);
+
+            assertEquals(List.of("keep"), listElements(listVector, 0));
+            assertEquals("failed row must be fully overwritten by the readmitted doc", List.of("replay-a", "replay-b", "replay-c"), listElements(listVector, 1));
+            assertEquals(List.of("tail"), listElements(listVector, 2));
+
+            ParquetFileMetadata metadata = manager.flush();
+            assertNotNull(metadata);
+            assertEquals(3, metadata.numRows());
+        } finally {
+            manager.close();
+        }
+    }
+
+    /**
+     * Same failed-doc-after-promotion setup, but the promotion is triggered by a LATER doc than
+     * the failed one: the failed doc writes a singleton through the scalar fast path, is
+     * rejected on its unknown field, and the next doc's array promotes — the stale scalar slot
+     * from the never-admitted row must be carried into the list as the readmitted row's value
+     * only if rewritten, and the promotion row accounting must use admitted rows only.
+     */
+    public void testFailedScalarWriteThenPromotionUsesAdmittedRowsOnly() throws Exception {
+        String filePath = createTempDir().resolve("promotion-after-failed-scalar.parquet").toString();
+        VSRManager manager = new VSRManager(filePath, indexSettings, schema, bufferPool, 100, threadPool, 0L);
+        try {
+            manager.reconcileSchema(schemaWithMultiValue("tags"));
+            KeywordFieldMapper.KeywordFieldType tags = new KeywordFieldMapper.KeywordFieldType("tags");
+            tags.setMultiValued(true);
+            assignTestCapabilities(tags, PARQUET_FORMAT);
+            NumberFieldMapper.NumberFieldType valField = new NumberFieldMapper.NumberFieldType("val", NumberFieldMapper.NumberType.INTEGER);
+            assignTestCapabilities(valField, PARQUET_FORMAT);
+            KeywordFieldMapper.KeywordFieldType unknown = new KeywordFieldMapper.KeywordFieldType("unknown_field");
+            assignTestCapabilities(unknown, PARQUET_FORMAT);
+
+            // Failing doc at row 0: singleton scalar write, then rejection.
+            ParquetDocumentInput badDoc = new ParquetDocumentInput();
+            populateMetadataFields(badDoc);
+            badDoc.setRowId(DocumentInput.ROW_ID_FIELD, 0);
+            badDoc.addField(tags, "stale");
+            badDoc.addField(unknown, "boom");
+            expectThrows(MismatchedInputException.class, () -> manager.addDocument(badDoc));
+            assertEquals(0, manager.getAcceptedRows());
+            assertTrue("no array seen yet — column must still be scalar", manager.getActiveManagedVSR().isPromotable("tags"));
+
+            // Row 0 rewritten by a doc whose array triggers promotion at rowCount=0: the
+            // promotion must carry ZERO admitted rows (the stale scalar slot is unreachable
+            // through admitted accounting) and the array lands as row 0's value.
+            ParquetDocumentInput doc0 = new ParquetDocumentInput();
+            populateMetadataFields(doc0);
+            doc0.setRowId(DocumentInput.ROW_ID_FIELD, 0);
+            doc0.addField(valField, 1);
+            doc0.addField(tags, "real-a");
+            doc0.addField(tags, "real-b");
+            manager.addDocument(doc0);
+
+            ListVector listVector = (ListVector) manager.getActiveManagedVSR().getVector("tags");
+            assertEquals(List.of("real-a", "real-b"), listElements(listVector, 0));
+            assertEquals(1, manager.flush().numRows());
+        } finally {
+            manager.close();
+        }
+    }
+
+    /**
+     * A declared-LIST column added by a late mapping update that no document ever writes must
+     * survive freeze-time canonicalization: its scalar seed has under-allocated buffers, and
+     * the promoter must not crash scanning validity — every row exports as a null list.
+     */
+    public void testNeverWrittenAdaptiveColumnSurvivesFreeze() throws Exception {
+        String filePath = createTempDir().resolve("never-written-freeze.parquet").toString();
+        VSRManager manager = new VSRManager(filePath, indexSettings, schema, bufferPool, 100, threadPool, 0L);
+        try {
+            reconcileMetadata(manager);
+            NumberFieldMapper.NumberFieldType valField = new NumberFieldMapper.NumberFieldType("val", NumberFieldMapper.NumberType.INTEGER);
+            assignTestCapabilities(valField, PARQUET_FORMAT);
+
+            // Two rows admitted BEFORE the LIST column exists.
+            for (int i = 0; i < 2; i++) {
+                ParquetDocumentInput doc = new ParquetDocumentInput();
+                populateMetadataFields(doc);
+                doc.setRowId(DocumentInput.ROW_ID_FIELD, i);
+                doc.addField(valField, i);
+                manager.addDocument(doc);
+            }
+            // Late mapping update introduces the LIST column; no document ever writes it.
+            manager.reconcileSchema(schemaWithMultiValue("tags"));
+            assertTrue(manager.getActiveManagedVSR().isPromotable("tags"));
+
+            // Flush freezes and canonicalizes the never-written scalar seed.
+            ParquetFileMetadata metadata = manager.flush();
+            assertNotNull(metadata);
+            assertEquals(2, metadata.numRows());
+        } finally {
+            manager.close();
+        }
+    }
+
     public void testMultiValueFieldWritesEmptyListDistinctFromAbsent() throws Exception {
         String filePath = createTempDir().resolve("multi-value-empty.parquet").toString();
         VSRManager manager = new VSRManager(filePath, indexSettings, schema, bufferPool, 100, threadPool, 0L);
@@ -599,8 +865,11 @@ public class VSRManagerTests extends ParquetBaseTests {
             doc.addField(valField, 1);
             manager.addDocument(doc);
 
-            ListVector listVector = (ListVector) manager.getActiveManagedVSR().getVector("tags");
-            assertTrue(listVector.isNull(0));
+            // Adaptive encoding: a column no document ever multi-valued is still an optimistic
+            // scalar accumulator here; the row reads back null either way, and freeze-time
+            // canonicalization (inside flush) exports it as a null list.
+            assertTrue(manager.getActiveManagedVSR().isPromotable("tags"));
+            assertTrue(manager.getActiveManagedVSR().getVector("tags").isNull(0));
             assertEquals(1, manager.flush().numRows());
         } finally {
             manager.close();
@@ -613,20 +882,39 @@ public class VSRManagerTests extends ParquetBaseTests {
         try {
             assertTrue(manager.reconcileSchema(schemaWithMultiValue("tags")));
 
-            // reconcileSchema used to rebuild each Field from name + FieldType, dropping children
-            // and leaving a ListVector with no element vector to write into.
-            ListVector listVector = (ListVector) manager.getActiveManagedVSR().getVector("tags");
-            assertNotNull(listVector);
-            // A dropped child would leave the data vector as an uninitialized ZeroVector.
+            // Adaptive encoding: the declared LIST column is seeded as an optimistic scalar of
+            // its element type, so the physical vector is a VarCharVector until promotion.
+            assertTrue(manager.getActiveManagedVSR().isPromotable("tags"));
+            assertTrue(
+                "adaptive seed must be the element-typed scalar, got "
+                    + manager.getActiveManagedVSR().getVector("tags").getClass().getSimpleName(),
+                manager.getActiveManagedVSR().getVector("tags") instanceof VarCharVector
+            );
+
+            // The DECLARED schema must keep the LIST shape with its element child intact:
+            // reconcileSchema propagates it to the pool, so a dropped child here would leave
+            // rotated VSRs (and the exported file schema) without an element vector.
+            Field declaredTags = manager.getActiveManagedVSR()
+                .getDeclaredSchema()
+                .getFields()
+                .stream()
+                .filter(f -> f.getName().equals("tags"))
+                .findFirst()
+                .orElseThrow();
+            assertEquals(ArrowType.List.INSTANCE, declaredTags.getType());
+            assertEquals(1, declaredTags.getChildren().size());
+            assertEquals(ParquetField.LIST_ELEMENT_NAME, declaredTags.getChildren().get(0).getName());
+            assertEquals(new ArrowType.Utf8(), declaredTags.getChildren().get(0).getType());
+
+            // After promotion the physical schema must carry the same declared shape: the
+            // schema — which is what exportSchema hands to the native writer, and therefore
+            // what determines the Parquet leaf path "tags.list.element" — keeps the declared
+            // element name even though Arrow renames the vector's own child to "$data$".
+            ListVector listVector = (ListVector) manager.getActiveManagedVSR().promoteToList("tags");
             assertTrue(
                 "list vector must have a typed element vector, got " + listVector.getDataVector().getClass().getSimpleName(),
                 listVector.getDataVector() instanceof VarCharVector
             );
-
-            // Assert on the VSR *schema* rather than the vector's own field: Arrow Java renames a
-            // list vector's child to "$data$" internally, but the schema — which is what
-            // exportSchema hands to the native writer, and therefore what determines the Parquet
-            // leaf path "tags.list.element" — keeps the declared name.
             Field tagsField = manager.getActiveManagedVSR()
                 .getSchema()
                 .getFields()
@@ -782,6 +1070,230 @@ public class VSRManagerTests extends ParquetBaseTests {
         manager.addDocument(doc);
         assertEquals(1, manager.getActiveManagedVSR().getRowCount());
         manager.flush();
+    }
+
+    /**
+     * Correctness gap 1: rollback of the very document whose array triggered mid-batch
+     * promotion. The promotion must survive (un-promoting is unsafe), the rolled-back row's
+     * list state must be fully rewound, and — the ghost case — a following document that
+     * leaves the field ABSENT must read back a null list, not the rejected document's values.
+     */
+    public void testRollbackOfPromotionTriggeringDocLeavesNoGhost() throws Exception {
+        String filePath = createTempDir().resolve("rollback-promotion.parquet").toString();
+        VSRManager manager = new VSRManager(filePath, indexSettings, schema, bufferPool, 100, threadPool, 0L);
+        try {
+            manager.reconcileSchema(schemaWithMultiValue("tags"));
+            KeywordFieldMapper.KeywordFieldType tags = new KeywordFieldMapper.KeywordFieldType("tags");
+            tags.setMultiValued(true);
+            assignTestCapabilities(tags, PARQUET_FORMAT);
+
+            // Row 0: singleton on the scalar fast path.
+            ParquetDocumentInput doc0 = new ParquetDocumentInput();
+            populateMetadataFields(doc0);
+            doc0.setRowId(DocumentInput.ROW_ID_FIELD, 0);
+            doc0.addField(tags, "a");
+            manager.addDocument(doc0);
+            assertTrue(manager.getActiveManagedVSR().isPromotable("tags"));
+
+            // Row 1: the promotion-triggering array — accepted by parquet, then rejected by
+            // the secondary format: CompositeWriter rolls the composite back to 1 row.
+            ParquetDocumentInput doc1 = new ParquetDocumentInput();
+            populateMetadataFields(doc1);
+            doc1.setRowId(DocumentInput.ROW_ID_FIELD, 1);
+            doc1.addField(tags, "ghost1");
+            doc1.addField(tags, "ghost2");
+            manager.addDocument(doc1);
+            assertFalse("array doc must have promoted the column", manager.getActiveManagedVSR().isPromotable("tags"));
+            manager.rollbackTo(1L);
+
+            // Promotion survives rollback: the column stays LIST, holding row 0 as ["a"].
+            ListVector listVector = (ListVector) manager.getActiveManagedVSR().getVector("tags");
+            assertEquals(List.of("a"), listElements(listVector, 0));
+
+            // Row 1 reused by a doc WITHOUT the field: must be a null list, not the ghost.
+            ParquetDocumentInput doc2 = new ParquetDocumentInput();
+            populateMetadataFields(doc2);
+            doc2.setRowId(DocumentInput.ROW_ID_FIELD, 1);
+            manager.addDocument(doc2);
+            assertTrue("rolled-back slot reused by an absent field must be null", listVector.isNull(1));
+
+            // Row 2: writes resume through the list path, offsets self-consistent.
+            ParquetDocumentInput doc3 = new ParquetDocumentInput();
+            populateMetadataFields(doc3);
+            doc3.setRowId(DocumentInput.ROW_ID_FIELD, 2);
+            doc3.addField(tags, "p");
+            doc3.addField(tags, "q");
+            manager.addDocument(doc3);
+
+            assertEquals(List.of("a"), listElements(listVector, 0));
+            assertTrue(listVector.isNull(1));
+            assertEquals(List.of("p", "q"), listElements(listVector, 2));
+
+            ParquetFileMetadata metadata = manager.flush();
+            assertNotNull(metadata);
+            assertEquals(3, metadata.numRows());
+        } finally {
+            manager.close();
+        }
+    }
+
+    /**
+     * Correctness gap 1 (pre-promotion variant): a singleton document written on the scalar
+     * fast path is rolled back while the column is still the optimistic scalar. The trimmed
+     * slot must read as null, and freeze-time canonicalization must carry it over as a null
+     * list — not resurrect the rejected value.
+     */
+    public void testRollbackOnScalarPathThenFreezeCarriesNoGhost() throws Exception {
+        String filePath = createTempDir().resolve("rollback-scalar.parquet").toString();
+        VSRManager manager = new VSRManager(filePath, indexSettings, schema, bufferPool, 100, threadPool, 0L);
+        try {
+            manager.reconcileSchema(schemaWithMultiValue("tags"));
+            KeywordFieldMapper.KeywordFieldType tags = new KeywordFieldMapper.KeywordFieldType("tags");
+            tags.setMultiValued(true);
+            assignTestCapabilities(tags, PARQUET_FORMAT);
+
+            ParquetDocumentInput doc0 = new ParquetDocumentInput();
+            populateMetadataFields(doc0);
+            doc0.setRowId(DocumentInput.ROW_ID_FIELD, 0);
+            doc0.addField(tags, "keep");
+            manager.addDocument(doc0);
+
+            ParquetDocumentInput doc1 = new ParquetDocumentInput();
+            populateMetadataFields(doc1);
+            doc1.setRowId(DocumentInput.ROW_ID_FIELD, 1);
+            doc1.addField(tags, "ghost");
+            manager.addDocument(doc1);
+            manager.rollbackTo(1L);
+            assertTrue("column must still be the optimistic scalar", manager.getActiveManagedVSR().isPromotable("tags"));
+
+            // Row 1 reused by an absent-field doc, then freeze-time canonicalization.
+            ParquetDocumentInput doc2 = new ParquetDocumentInput();
+            populateMetadataFields(doc2);
+            doc2.setRowId(DocumentInput.ROW_ID_FIELD, 1);
+            manager.addDocument(doc2);
+
+            ParquetFileMetadata metadata = manager.flush();
+            assertNotNull(metadata);
+            assertEquals(2, metadata.numRows());
+        } finally {
+            manager.close();
+        }
+    }
+
+    /**
+     * Correctness gap 2: a LIST column added by mapping update (reconcileSchema) while the
+     * active VSR already holds rows. The new column must seed as an adaptive scalar, prior
+     * rows must carry over as null lists on promotion, and the promotion-triggering array
+     * must land intact.
+     */
+    public void testReconcileAddsListColumnMidBatchThenPromotes() throws Exception {
+        String filePath = createTempDir().resolve("reconcile-midbatch.parquet").toString();
+        VSRManager manager = new VSRManager(filePath, indexSettings, schema, bufferPool, 100, threadPool, 0L);
+        try {
+            reconcileMetadata(manager);
+            NumberFieldMapper.NumberFieldType valField = new NumberFieldMapper.NumberFieldType("val", NumberFieldMapper.NumberType.INTEGER);
+            assignTestCapabilities(valField, PARQUET_FORMAT);
+
+            // Row 0 exists before the mapping update introduces `tags`.
+            ParquetDocumentInput doc0 = new ParquetDocumentInput();
+            populateMetadataFields(doc0);
+            doc0.setRowId(DocumentInput.ROW_ID_FIELD, 0);
+            doc0.addField(valField, 1);
+            manager.addDocument(doc0);
+
+            // Mapping update mid-batch: declared LIST column joins an active VSR with 1 row.
+            manager.reconcileSchema(schemaWithMultiValue("tags"));
+            assertTrue("reconciled LIST column must seed as adaptive scalar", manager.getActiveManagedVSR().isPromotable("tags"));
+
+            KeywordFieldMapper.KeywordFieldType tags = new KeywordFieldMapper.KeywordFieldType("tags");
+            tags.setMultiValued(true);
+            assignTestCapabilities(tags, PARQUET_FORMAT);
+
+            // Row 1: array — promotes with one pre-existing row to carry over.
+            ParquetDocumentInput doc1 = new ParquetDocumentInput();
+            populateMetadataFields(doc1);
+            doc1.setRowId(DocumentInput.ROW_ID_FIELD, 1);
+            doc1.addField(valField, 2);
+            doc1.addField(tags, "m");
+            doc1.addField(tags, "n");
+            manager.addDocument(doc1);
+
+            ListVector listVector = (ListVector) manager.getActiveManagedVSR().getVector("tags");
+            assertTrue("row predating the mapping update must be a null list", listVector.isNull(0));
+            assertEquals(List.of("m", "n"), listElements(listVector, 1));
+
+            ParquetFileMetadata metadata = manager.flush();
+            assertNotNull(metadata);
+            assertEquals(2, metadata.numRows());
+        } finally {
+            manager.close();
+        }
+    }
+
+    /**
+     * Correctness gap 3: bulk with a rejected document adjacent to the promotion boundary.
+     * The rollback must not disturb the accepted array that triggered promotion (before it)
+     * nor the arrays written after writes resume — the neighbor-corruption invariant from
+     * PR #22685's bulk tests, extended to the adaptive encoding.
+     */
+    public void testBulkNeighborsSurviveRollbackAtPromotionBoundary() throws Exception {
+        String filePath = createTempDir().resolve("bulk-neighbors.parquet").toString();
+        VSRManager manager = new VSRManager(filePath, indexSettings, schema, bufferPool, 100, threadPool, 0L);
+        try {
+            manager.reconcileSchema(schemaWithMultiValue("tags"));
+            KeywordFieldMapper.KeywordFieldType tags = new KeywordFieldMapper.KeywordFieldType("tags");
+            tags.setMultiValued(true);
+            assignTestCapabilities(tags, PARQUET_FORMAT);
+
+            // Row 0: singleton. Row 1: promotion-triggering array (ACCEPTED — stays).
+            ParquetDocumentInput doc0 = new ParquetDocumentInput();
+            populateMetadataFields(doc0);
+            doc0.setRowId(DocumentInput.ROW_ID_FIELD, 0);
+            doc0.addField(tags, "a");
+            manager.addDocument(doc0);
+
+            ParquetDocumentInput doc1 = new ParquetDocumentInput();
+            populateMetadataFields(doc1);
+            doc1.setRowId(DocumentInput.ROW_ID_FIELD, 1);
+            doc1.addField(tags, "x");
+            doc1.addField(tags, "y");
+            manager.addDocument(doc1);
+
+            // Row 2: written, then rejected by the secondary format — rolled back.
+            ParquetDocumentInput doc2 = new ParquetDocumentInput();
+            populateMetadataFields(doc2);
+            doc2.setRowId(DocumentInput.ROW_ID_FIELD, 2);
+            doc2.addField(tags, "bad1");
+            doc2.addField(tags, "bad2");
+            doc2.addField(tags, "bad3");
+            manager.addDocument(doc2);
+            manager.rollbackTo(2L);
+
+            // Rows 2-3: writes resume; slot 2 is reused.
+            ParquetDocumentInput doc3 = new ParquetDocumentInput();
+            populateMetadataFields(doc3);
+            doc3.setRowId(DocumentInput.ROW_ID_FIELD, 2);
+            doc3.addField(tags, "z");
+            manager.addDocument(doc3);
+
+            ParquetDocumentInput doc4 = new ParquetDocumentInput();
+            populateMetadataFields(doc4);
+            doc4.setRowId(DocumentInput.ROW_ID_FIELD, 3);
+            doc4.addField(tags, "b");
+            manager.addDocument(doc4);
+
+            ListVector listVector = (ListVector) manager.getActiveManagedVSR().getVector("tags");
+            assertEquals("neighbor before the rollback must be intact", List.of("a"), listElements(listVector, 0));
+            assertEquals("the accepted promotion-trigger must be intact", List.of("x", "y"), listElements(listVector, 1));
+            assertEquals("the reused slot must hold the resumed doc, not the rejected one", List.of("z"), listElements(listVector, 2));
+            assertEquals(List.of("b"), listElements(listVector, 3));
+
+            ParquetFileMetadata metadata = manager.flush();
+            assertNotNull(metadata);
+            assertEquals(4, metadata.numRows());
+        } finally {
+            manager.close();
+        }
     }
 
 }
