@@ -335,11 +335,13 @@ public class OpenSearchSchemaBuilder {
                 // validator rather than a planning-time IllegalArgumentException.
                 continue;
             }
-            // `multi_value: true` is a mapping parameter, so it appears directly in the field's
-            // properties: such a field is stored as a Parquet LIST column and must be typed
-            // ARRAY here or the planner would bind it as its element type. Nullable so a
-            // document without the field (a null list) matches the column type.
-            if (Boolean.TRUE.equals(fieldProps.get("multi_value"))) {
+            // POC (Lucene-style auto multi-value): keyword fields are always stored as Parquet
+            // LIST columns (see ArrowSchemaBuilder), so they are uniformly typed ARRAY here —
+            // the type is stable whether documents carried one value or several, exactly as
+            // Lucene's SortedSetDocValues API is uniform over singleton and multi-valued docs.
+            // The legacy `multi_value` declaration is still honored for other types.
+            // Nullable so a document without the field (a null list) matches the column type.
+            if ("keyword".equals(fieldType) || Boolean.TRUE.equals(fieldProps.get("multi_value"))) {
                 columnType = typeFactory.createTypeWithNullability(typeFactory.createArrayType(columnType, -1), true);
             }
             builder.add(fieldName, columnType);

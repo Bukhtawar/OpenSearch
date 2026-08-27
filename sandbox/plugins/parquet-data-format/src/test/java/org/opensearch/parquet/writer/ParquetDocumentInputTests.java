@@ -126,15 +126,32 @@ public class ParquetDocumentInputTests extends ParquetBaseTests {
         assertEquals(List.of("solo"), pair.getValue());
     }
 
-    public void testUndeclaredFieldStillRejectsMultipleValues() {
+    public void testUndeclaredKeywordFieldAccumulatesMultipleValues() {
+        // Capability-driven multi-value (Lucene-style): whether a field accepts several values
+        // per document is a property of its column codec, not a mapping declaration. A keyword
+        // field accumulates without any `multi_value` declaration — singleton vs array is an
+        // encoding concern handled by the adaptive VSR layer, never a schema shape.
         ParquetDocumentInput input = new ParquetDocumentInput();
         populateMetadataFields(input);
         MappedFieldType other = new KeywordFieldMapper.KeywordFieldType("other");
         assignTestCapabilities(other, PARQUET_FORMAT);
 
         input.addField(other, "one");
-        MapperParsingException e = expectThrows(MapperParsingException.class, () -> input.addField(other, "two"));
-        assertTrue(e.getMessage().contains("multi_value"));
+        input.addField(other, "two");
+        assertEquals(2L, input.getFieldCount("other"));
+    }
+
+    public void testNonListCapableFieldStillRejectsMultipleValues() {
+        // A field whose codec has no LIST storage (numeric) must still reject a second value:
+        // the capability gate replaced the mapping-declaration gate, it didn't remove the gate.
+        ParquetDocumentInput input = new ParquetDocumentInput();
+        populateMetadataFields(input);
+        MappedFieldType count = new NumberFieldMapper.NumberFieldType("count", NumberFieldMapper.NumberType.INTEGER);
+        assignTestCapabilities(count, PARQUET_FORMAT);
+
+        input.addField(count, 1);
+        MapperParsingException e = expectThrows(MapperParsingException.class, () -> input.addField(count, 2));
+        assertTrue(e.getMessage().contains("does not support multi-valued storage"));
     }
 
     public void testMultiValueFieldCountIsValueCountNotEntryCount() {
