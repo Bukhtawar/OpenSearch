@@ -140,6 +140,53 @@ pub fn get_sort_value(
             SortKey::NullLast
         });
     }
+    // LIST sort columns compare by their minimum element, mirroring Lucene's
+    // SortedSetSelector.MIN default for sorting on multi-valued fields. The sort
+    // direction is applied by the comparator (cmp_sort_values), exactly as Lucene
+    // applies `reverse` on top of the selected value. An empty list, or a list of
+    // only null elements, sorts as null.
+    if let ArrowDataType::List(_) = dtype {
+        return list_min_sort_key(col, row, null_first);
+    }
+    scalar_sort_key(col.as_ref(), row, dtype)
+}
+
+/// Extracts the minimum element of a list cell as its sort key.
+#[inline]
+fn list_min_sort_key(
+    col: &arrow::array::ArrayRef,
+    row: usize,
+    null_first: bool,
+) -> MergeResult<SortKey> {
+    let list = col.as_list::<i32>();
+    let values = list.value(row);
+    let elem_dtype = values.data_type().clone();
+    let mut min: Option<SortKey> = None;
+    for i in 0..values.len() {
+        if values.is_null(i) {
+            continue;
+        }
+        let key = scalar_sort_key(values.as_ref(), i, &elem_dtype)?;
+        min = Some(match min {
+            Some(current) if current <= key => current,
+            _ => key,
+        });
+    }
+    Ok(min.unwrap_or(if null_first {
+        SortKey::NullFirst
+    } else {
+        SortKey::NullLast
+    }))
+}
+
+/// Extracts a scalar sort key from a non-null position of an array.
+/// Shared by scalar sort columns and per-element extraction inside list cells.
+#[inline]
+fn scalar_sort_key(
+    col: &dyn arrow::array::Array,
+    row: usize,
+    dtype: &ArrowDataType,
+) -> MergeResult<SortKey> {
     let key = match dtype {
         // Integer types → SortKey::Int
         ArrowDataType::Int64 => SortKey::Int(col.as_primitive::<Int64Type>().value(row)),

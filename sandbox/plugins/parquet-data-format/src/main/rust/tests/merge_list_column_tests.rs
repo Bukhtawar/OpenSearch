@@ -190,17 +190,24 @@ fn sorted_merge_keeps_list_values_with_their_row() {
 }
 
 #[test]
-fn sorted_merge_on_list_column_as_sort_key_errors_cleanly() {
-    // heap.rs `get_sort_value` has no arm for List, so sorting BY a list column must surface a
-    // clean MergeError rather than panicking or silently producing garbage.
+fn sorted_merge_on_list_column_sorts_by_min_element() {
+    // Sorting BY a list column uses the minimum element per row (Lucene
+    // SortedSetSelector.MIN semantics). Empty lists and null lists sort as null.
     let tmp = tempdir().unwrap();
     let a = tmp.path().join("a.parquet").to_string_lossy().to_string();
     let b = tmp.path().join("b.parquet").to_string_lossy().to_string();
     let out = tmp.path().join("merged.parquet").to_string_lossy().to_string();
-    write_list_file(&a, &[1], &[Some(vec!["a"])]);
-    write_list_file(&b, &[2], &[Some(vec!["b"])]);
+    // Each input is internally sorted by its min element (merge contract).
+    // A: min keys b, m, null(empty list)
+    write_list_file(
+        &a,
+        &[10, 11, 23],
+        &[Some(vec!["z", "b"]), Some(vec!["m"]), Some(vec![])],
+    );
+    // B: min keys a, c, null(null list)
+    write_list_file(&b, &[20, 21, 22], &[Some(vec!["a", "x"]), Some(vec!["c"]), None]);
 
-    let res = merge_sorted(
+    merge_sorted(
         &[a, b],
         &out,
         "merge-list-sortkey",
@@ -208,18 +215,114 @@ fn sorted_merge_on_list_column_as_sort_key_errors_cleanly() {
         &[false],
         &[false],
         0,
+    )
+    .expect("sorting by a LIST column must merge by min element");
+
+    let pairs = read_pairs(&out);
+    let ids: Vec<i64> = pairs.iter().map(|(id, _)| *id).collect();
+    // min-element order: a(20) < b(10) < c(21) < m(11), then the two null-key rows.
+    assert_eq!(&ids[..4], &[20, 10, 21, 11], "rows must merge in min-element order");
+    let mut tail = ids[4..].to_vec();
+    tail.sort_unstable();
+    assert_eq!(tail, vec![22, 23], "empty and null lists must sort as null (last)");
+    // Values must ride along intact, order and duplicates preserved.
+    assert_eq!(pairs[0].1, v(&["a", "x"]));
+    assert_eq!(pairs[1].1, v(&["z", "b"]));
+    assert_eq!(pairs[2].1, v(&["c"]));
+    assert_eq!(pairs[3].1, v(&["m"]));
+}
+
+/// Schema for a legacy file that stored `tags` as a scalar Utf8 column.
+fn scalar_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("tags", DataType::Utf8, true),
+        Field::new("__row_id__", DataType::Int64, false),
+    ]))
+}
+
+/// Build a legacy-shape file where `tags` is a plain scalar Utf8 column.
+fn write_scalar_file(path: &str, ids: &[i64], rows: &[Option<&str>]) {
+    assert_eq!(ids.len(), rows.len());
+    let schema = scalar_schema();
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int64Array::from(ids.to_vec())) as ArrayRef,
+            Arc::new(StringArray::from(rows.to_vec())) as ArrayRef,
+            Arc::new(Int64Array::from((0..ids.len() as i64).collect::<Vec<_>>())) as ArrayRef,
+        ],
+    )
+    .unwrap();
+    let file = File::create(path).unwrap();
+    let mut w = ArrowWriter::try_new(file, schema, None).unwrap();
+    w.write(&batch).unwrap();
+    w.close().unwrap();
+}
+
+/// Mixed-encoding unification: a legacy scalar file merged with a LIST file must
+/// produce a LIST output column, with scalar rows promoted to singleton lists and
+/// null scalars becoming null lists (absent field), for the unsorted path.
+#[test]
+fn unsorted_merge_unifies_scalar_and_list_files() {
+    let tmp = tempdir().unwrap();
+    let legacy = tmp.path().join("legacy.parquet").to_string_lossy().to_string();
+    let modern = tmp.path().join("modern.parquet").to_string_lossy().to_string();
+    let out = tmp.path().join("merged.parquet").to_string_lossy().to_string();
+    write_scalar_file(&legacy, &[1, 2], &[Some("solo"), None]);
+    write_list_file(&modern, &[3, 4], &[Some(vec!["a", "b"]), None]);
+
+    merge_unsorted(&[legacy, modern], &out, "merge-mixed-unsorted", 0)
+        .expect("mixed scalar/list inputs must merge");
+
+    // read_pairs asserts the output column decodes as a ListArray.
+    let pairs = read_pairs(&out);
+    assert_eq!(
+        pairs,
+        vec![
+            (1, v(&["solo"])),
+            (2, None),
+            (3, v(&["a", "b"])),
+            (4, None),
+        ]
     );
-    match res {
-        Err(e) => {
-            let msg = e.to_string();
-            println!("sorting by a LIST column errored as expected: {msg}");
-            assert!(
-                msg.contains("Unsupported sort column type"),
-                "expected an explicit unsupported-sort-type error, got: {msg}"
-            );
-        }
-        Ok(_) => panic!("sorting by a LIST column should not silently succeed"),
-    }
+}
+
+/// Mixed-encoding unification through the sorted path: k-way merge interleaves
+/// rows from a scalar file and a LIST file; sort keys extracted from each shape
+/// must be comparable (scalar value vs min element) and the output must be LIST.
+#[test]
+fn sorted_merge_unifies_scalar_and_list_files() {
+    let tmp = tempdir().unwrap();
+    let legacy = tmp.path().join("legacy.parquet").to_string_lossy().to_string();
+    let modern = tmp.path().join("modern.parquet").to_string_lossy().to_string();
+    let out = tmp.path().join("merged.parquet").to_string_lossy().to_string();
+    // Sort by `tags` itself so scalar-vs-list key extraction is exercised.
+    // legacy mins: "b", "p"; modern mins: "a", "k".
+    write_scalar_file(&legacy, &[1, 2], &[Some("b"), Some("p")]);
+    write_list_file(&modern, &[3, 4], &[Some(vec!["a", "z"]), Some(vec!["k"])]);
+
+    merge_sorted(
+        &[legacy, modern],
+        &out,
+        "merge-mixed-sorted",
+        &["tags".to_string()],
+        &[false],
+        &[false],
+        0,
+    )
+    .expect("mixed scalar/list inputs must merge sorted");
+
+    let pairs = read_pairs(&out);
+    assert_eq!(
+        pairs,
+        vec![
+            (3, v(&["a", "z"])),
+            (1, v(&["b"])),
+            (4, v(&["k"])),
+            (2, v(&["p"])),
+        ]
+    );
 }
 
 /// Multi-batch cursors + deferred column decode.

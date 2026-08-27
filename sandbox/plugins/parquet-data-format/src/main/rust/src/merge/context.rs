@@ -75,7 +75,11 @@ impl MergeContext {
             }
         }
 
-        let union_data_schema = ArrowSchema::try_merge(arrow_schemas).map_err(|e| {
+        // Normalize scalar/LIST shape conflicts (legacy scalar files merged with
+        // list-encoded files) before union: the LIST shape wins, and pad_batch
+        // promotes scalar batches to singleton lists at read time.
+        let unified_schemas = super::schema::unify_list_shapes(arrow_schemas);
+        let union_data_schema = ArrowSchema::try_merge(unified_schemas).map_err(|e| {
             MergeError::Logic(format!(
                 "Failed to compute union schema across input files: {}",
                 e
