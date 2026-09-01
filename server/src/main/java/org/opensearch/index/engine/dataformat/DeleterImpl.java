@@ -9,11 +9,13 @@
 package org.opensearch.index.engine.dataformat;
 
 import org.apache.lucene.index.Term;
+import org.apache.lucene.util.RamUsageEstimator;
 import org.opensearch.common.util.concurrent.ReleasableLock;
 
 import java.io.IOException;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
@@ -26,12 +28,18 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  */
 public class DeleterImpl<T extends Writer<?>> implements Deleter {
 
+    private static final long BYTES_PER_QUEUE_NODE = RamUsageEstimator.alignObjectSize(
+        RamUsageEstimator.NUM_BYTES_OBJECT_HEADER + 2L * RamUsageEstimator.NUM_BYTES_OBJECT_REF
+    );
+
     private final Writer<?> writer;
     private final long deleterGeneration;
     private final ReentrantReadWriteLock deleterLock;
     private final ReleasableLock deleterReadLock;
     private final ReleasableLock deleterWriteLock;
     private final Queue<String> bufferedDeletes = new ConcurrentLinkedQueue<>();
+    /** Running footprint of {@link #bufferedDeletes}, maintained incrementally so reads never scan the queue. */
+    private final AtomicLong bufferedDeletesRamBytesUsed = new AtomicLong();
     private volatile boolean active = true;
 
     public DeleterImpl(T writer) {
@@ -68,8 +76,27 @@ public class DeleterImpl<T extends Writer<?>> implements Deleter {
             }
 
             bufferedDeletes.add(id);
+            bufferedDeletesRamBytesUsed.addAndGet(BYTES_PER_QUEUE_NODE + RamUsageEstimator.sizeOf(id));
             return true;
         }
+    }
+
+    @Override
+    public void recordPositionalDelete(long rowId) {
+        writer.recordPositionalDelete(rowId);
+    }
+
+    /**
+     * Estimated heap held by the ids buffered here, released when this generation retires.
+     *
+     * <p>Row-id deletes are deliberately not counted here. The queue holding them lives on the paired
+     * writer and is reported through that writer's own {@code getHeapBytesUsed()}, which is already
+     * rolled into {@code DataFormatAwareEngine#getHeapBytesUsed}. Counting them in both places would
+     * double them in the total the memory controller sees.
+     */
+    @Override
+    public long ramBytesUsed() {
+        return bufferedDeletesRamBytesUsed.get();
     }
 
     @Override
@@ -87,6 +114,7 @@ public class DeleterImpl<T extends Writer<?>> implements Deleter {
             active = false;
             Queue<String> snapshot = new ConcurrentLinkedQueue<>(bufferedDeletes);
             bufferedDeletes.clear();
+            bufferedDeletesRamBytesUsed.set(0L);
             return snapshot;
         }
     }
