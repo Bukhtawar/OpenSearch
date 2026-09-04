@@ -69,6 +69,33 @@ impl CrossRtStream {
     }
 
     /// Creates a CrossRtStream that runs the DataFusion stream on the CPU executor.
+    /// Build a `CrossRtStream` over ALREADY-materialized batches — no executor spawn, no
+    /// cross-runtime channel round-trips. The items are pushed into the channel buffer
+    /// synchronously; polling drains the buffer then reports EOF. Used by the single-row
+    /// get-by-`__row_id__` point read, where the whole result is one batch already decoded on
+    /// the calling (cpu-executor) task, so the spawn + lazy pulling of the general path is pure
+    /// overhead (the `thread_sync` parking in profiles).
+    pub fn from_materialized(
+        schema: SchemaRef,
+        items: Vec<Result<RecordBatch, DataFusionError>>,
+    ) -> Self {
+        let (tx, rx) = channel(items.len().max(1));
+        for it in items {
+            // Buffer capacity >= len, so this never blocks/fails.
+            let _ = tx.try_send(it);
+        }
+        drop(tx); // close the sender → ReceiverStream yields buffered items then None
+        Self {
+            // driver is never polled (driver_ready = true); there is no background task.
+            driver: async {}.boxed(),
+            driver_ready: true,
+            inner: ReceiverStream::new(rx),
+            inner_done: false,
+            schema,
+            phantom_corrector: None,
+        }
+    }
+
     pub fn new_with_df_error_stream(
         stream: SendableRecordBatchStream,
         exec: DedicatedExecutor,

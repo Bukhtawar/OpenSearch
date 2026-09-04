@@ -33,6 +33,135 @@ use crate::helper::{
 };
 use crate::session_context::SessionContextHandle;
 
+/// BENCHMARK WIRING SWITCH for get-by-`__row_id__` (see `execute_query`).
+/// `true`  → improved fast path (`point_read_by_row_id`); `false` → baseline full-query path.
+/// Flip + recompile to A/B the two get-by-id paths on the same index.
+const POINT_READ_MODE: bool = true;
+
+/// Direct get-by-`__row_id__` point read. Bypasses the query engine entirely — no
+/// SessionContext, no ListingTable registration, no logical/physical planning — which is
+/// where the by-row-id path spent most of its CPU (analyzer + optimizer + create_physical_plan).
+///
+/// Locates the target physical row from the parquet footer (row-group prefix sum), reads
+/// exactly that row via a `RowSelection` (all columns), and wraps the parquet stream exactly
+/// like [`execute_query`] so the handle/return contract to Java is unchanged.
+///
+/// `row_id` is the physical `__row_id__` within this single-file shard view (the resolver
+/// resolves an `_id` to a `(generation, rowId)`; the get path opens one file per generation).
+async fn point_read_by_row_id(
+    object_metas: Arc<Vec<ObjectMeta>>,
+    store: Arc<dyn ObjectStore>,
+    cpu_executor: DedicatedExecutor,
+    runtime: &DataFusionRuntime,
+    context_id: i64,
+    row_id: i64,
+) -> Result<i64, DataFusionError> {
+    use datafusion::parquet::arrow::arrow_reader::{
+        ArrowReaderMetadata, ArrowReaderOptions, RowSelection, RowSelector,
+    };
+    use datafusion::parquet::arrow::ParquetRecordBatchStreamBuilder;
+    use futures::TryStreamExt;
+
+    if row_id < 0 {
+        return Err(DataFusionError::Execution(format!(
+            "point read: negative row_id {row_id}"
+        )));
+    }
+    let meta = object_metas.first().ok_or_else(|| {
+        DataFusionError::Execution("point read: shard view has no parquet file".to_string())
+    })?;
+
+    // Footer via the node's file-metadata cache — no per-get footer re-read (that cold read
+    // was the throughput regression). Footer-only here; the column-scoped OffsetIndex is
+    // attached below (also cached) so the RowSelection can skip to the single target page.
+    let metadata_cache = runtime.runtime_env.cache_manager.get_file_metadata_cache();
+    let (_schema, _size, pq_meta) =
+        crate::indexed_table::parquet_bridge::load_parquet_metadata_with_meta(
+            Arc::clone(&store),
+            &meta.location,
+            meta.clone(),
+            metadata_cache,
+        )
+        .await
+        .map_err(|e| DataFusionError::Execution(format!("point read: metadata: {e}")))?;
+
+    // Locate (row group, rg-local offset) via a prefix sum over row-group row counts.
+    let mut acc: i64 = 0;
+    let mut located: Option<(usize, usize)> = None;
+    for i in 0..pq_meta.num_row_groups() {
+        let n = pq_meta.row_group(i).num_rows();
+        if row_id < acc + n {
+            located = Some((i, (row_id - acc) as usize));
+            break;
+        }
+        acc += n;
+    }
+    let (rg, rg_offset) = located.ok_or_else(|| {
+        DataFusionError::Execution(format!(
+            "point read: row_id {row_id} out of range (file has {acc} rows)"
+        ))
+    })?;
+
+    // 0.2a — Cached page index: attach a column-scoped OffsetIndex (all projected leaf
+    // columns, no predicate ColumnIndex) via the shared, cached loader. With the OffsetIndex
+    // present, the RowSelection below skips directly to the page holding the target row per
+    // column, instead of decoding every page of the row group. On any failure the loader
+    // returns None and we build from the footer alone (decode the whole RG) — never wrong.
+    let num_leaf_cols = pq_meta.file_metadata().schema_descr().num_columns();
+    let offset_cols: Vec<usize> = (0..num_leaf_cols).collect();
+    let augmented = crate::cache::page_index::load_scoped_page_index_cols(
+        &store,
+        &meta.location,
+        &pq_meta,
+        &[], // no predicate columns → no (heavy) ColumnIndex; only the cheap OffsetIndex
+        &offset_cols,
+    )
+    .await;
+    let arm = match augmented {
+        Some(with_index) => {
+            ArrowReaderMetadata::try_new(with_index, ArrowReaderOptions::new().with_page_index(true))
+        }
+        None => ArrowReaderMetadata::try_new(Arc::clone(&pq_meta), ArrowReaderOptions::new()),
+    }
+    .map_err(|e| DataFusionError::Execution(format!("point read: reader metadata: {e}")))?;
+
+    // 0.2b — Retained local fd: read data byte-ranges from a cached open descriptor (pread)
+    // for local files, avoiding a per-get open/stat/close; falls back to the object store for
+    // anything that does not resolve to a local file of the expected size.
+    let reader = crate::local_file_reader::make_point_reader(
+        Arc::clone(&store),
+        meta.location.clone(),
+        meta.size,
+    );
+    let builder = ParquetRecordBatchStreamBuilder::new_with_metadata(reader, arm);
+
+    let schema = builder.schema().clone();
+    let selection = RowSelection::from(vec![RowSelector::skip(rg_offset), RowSelector::select(1)]);
+    let pq_stream = builder
+        .with_row_groups(vec![rg])
+        .with_row_selection(selection)
+        .build()
+        .map_err(|e| DataFusionError::Execution(format!("point read: build stream: {e}")))?;
+
+    // B (single-row synchronous delivery): eagerly drain the one-row result here — this runs on
+    // the cpu_executor task that invoked us (via df_execute_query's spawn), so decode stays off the
+    // IO thread. Then deliver via a PRE-MATERIALIZED CrossRtStream (batch already buffered),
+    // avoiding the executor spawn + cross-runtime channel round-trips that dominate `thread_sync`
+    // for a 1-row get. No abort handle to register — the read is already complete.
+    let _ = &cpu_executor; // materialized path needs no spawn
+    let batches = pq_stream
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|e| DataFusionError::Execution(format!("point read: collect row: {e}")))?;
+    let items = batches.into_iter().map(Ok).collect::<Vec<_>>();
+    let cross_rt_stream = CrossRtStream::from_materialized(schema, items);
+    let wrapped = datafusion::physical_plan::stream::RecordBatchStreamAdapter::new(
+        cross_rt_stream.schema(),
+        cross_rt_stream,
+    );
+    Ok(Box::into_raw(Box::new(wrapped)) as i64)
+}
+
 /// Execute a vanilla parquet query: substrait plan → DataFusion → CrossRtStream.
 /// File access goes through DataFusion's registered object store.
 ///
@@ -56,6 +185,31 @@ pub async fn execute_query(
     sort_orders: &[String],
     internal_search: crate::datafusion_query_config::InternalSearch,
 ) -> Result<i64, DataFusionError> {
+    // Fast path: a get-by-`__row_id__` point lookup needs no query engine. Read the single
+    // target row directly from parquet, bypassing SessionContext, ListingTable registration,
+    // and logical/physical planning (the dominant cost of this path).
+    //
+    // BENCHMARK WIRING SWITCH (get-by-id A/B):
+    //   POINT_READ_MODE = true  → IMPROVED path (`point_read_by_row_id`: cached page index + retained fd).
+    //   POINT_READ_MODE = false → BASELINE path (fall through to the full query engine below:
+    //                             `SELECT * WHERE __row_id__ = n LIMIT 1` via SessionContext +
+    //                             ListingTable + physical planning — the original get-by-id path).
+    // Both return the full `_source` (all columns). Flip this const + recompile to compare the two.
+    if let crate::datafusion_query_config::InternalSearch::ByRowId(row_id) = &internal_search {
+        if POINT_READ_MODE {
+            return point_read_by_row_id(
+                object_metas.clone(),
+                std::sync::Arc::clone(&shard_store),
+                cpu_executor.clone(),
+                runtime,
+                context_id,
+                *row_id,
+            )
+            .await;
+        }
+        // else: baseline — fall through to the full-query path below (handles ByRowId as SELECT *).
+    }
+
     // Build per-query RuntimeEnv (optional pool overlay) + register the shard store.
     let runtime_env = build_query_runtime_env_with_store(
         runtime,
@@ -529,4 +683,168 @@ pub fn wrap_stream_as_handle_with_plan(
         None => crate::api::QueryStreamHandle::new(wrapped, query_context, None),
     };
     Box::into_raw(Box::new(handle)) as i64
+}
+
+#[cfg(test)]
+mod point_read_pageskip_tests {
+    //! Isolates the 0.2a page-skip mechanism: does a single-row `RowSelection` over a
+    //! multi-page column actually decode fewer pages? Compares footer-only metadata,
+    //! parquet-native page-index metadata, and the scoped `load_scoped_page_index_cols`
+    //! path this code uses. Runs without a node (pure parquet round-trip).
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use arrow::array::{ArrayRef, Int64Array, StringArray};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use datafusion::parquet::arrow::arrow_reader::{
+        ArrowReaderMetadata, ArrowReaderOptions, RowSelection, RowSelector,
+    };
+    use datafusion::parquet::arrow::async_reader::ParquetObjectReader;
+    use datafusion::parquet::arrow::ArrowWriter;
+    use datafusion::parquet::basic::{Compression, ZstdLevel};
+    use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
+    use futures::TryStreamExt;
+    use object_store::{local::LocalFileSystem, path::Path as ObjPath, ObjectStore};
+
+    async fn time_point_reads(
+        store: &Arc<dyn ObjectStore>,
+        loc: &ObjPath,
+        size: u64,
+        arm: &ArrowReaderMetadata,
+        n_rows: usize,
+        iters: usize,
+    ) -> std::time::Duration {
+        let t0 = Instant::now();
+        for k in 0..iters {
+            let row = (k * 2_654_435_761) % n_rows; // scatter across rows
+            let reader = ParquetObjectReader::new(Arc::clone(store), loc.clone()).with_file_size(size);
+            let stream = datafusion::parquet::arrow::ParquetRecordBatchStreamBuilder::new_with_metadata(
+                reader,
+                arm.clone(),
+            )
+            .with_row_groups(vec![0])
+            .with_row_selection(RowSelection::from(vec![
+                RowSelector::skip(row),
+                RowSelector::select(1),
+            ]))
+            .build()
+            .unwrap();
+            let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
+            let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+            assert_eq!(rows, 1, "expected exactly 1 row");
+        }
+        t0.elapsed()
+    }
+
+    #[tokio::test]
+    async fn page_skip_reduces_decode_work() {
+        let n = 30000usize;
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("big", DataType::Utf8, false),
+        ]));
+        let ids: ArrayRef = Arc::new(Int64Array::from((0..n as i64).collect::<Vec<_>>()));
+        // Distinct, ~incompressible ~1KB values per row → ZSTD can't shrink them, so decoding a
+        // page is real CPU work and the column spans ~30 pages. If page-skip works, reading one
+        // row decodes 1 page instead of 30 — an unambiguous, decode-dominated difference.
+        let mut seed: u64 = 0x9e3779b97f4a7c15;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let big_vals: Vec<String> = (0..n)
+            .map(|_| {
+                (0..1024)
+                    .map(|_| {
+                        let r = (next() % 62) as u8;
+                        (if r < 26 {
+                            b'a' + r
+                        } else if r < 52 {
+                            b'A' + r - 26
+                        } else {
+                            b'0' + r - 52
+                        }) as char
+                    })
+                    .collect::<String>()
+            })
+            .collect();
+        let bigs: ArrayRef =
+            Arc::new(StringArray::from(big_vals.iter().map(|s| s.as_str()).collect::<Vec<_>>()));
+        let batch = RecordBatch::try_new(schema.clone(), vec![ids, bigs]).unwrap();
+
+        let props = WriterProperties::builder()
+            .set_compression(Compression::ZSTD(ZstdLevel::try_new(3).unwrap()))
+            .set_data_page_size_limit(1024 * 1024)
+            .set_data_page_row_count_limit(20000)
+            .set_max_row_group_size(1_000_000)
+            .set_dictionary_enabled(false)
+            .set_statistics_enabled(EnabledStatistics::Page)
+            .build();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.parquet");
+        {
+            let file = std::fs::File::create(&path).unwrap();
+            let mut w = ArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();
+            w.write(&batch).unwrap();
+            w.close().unwrap();
+        }
+        let size = std::fs::metadata(&path).unwrap().len();
+
+        let store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        // LocalFileSystem::new() is rooted at "/"; object_store Path drops the leading slash.
+        let loc = ObjPath::from(path.to_str().unwrap().trim_start_matches('/'));
+
+        // (A) parquet-native metadata WITH page index.
+        let mut reader = ParquetObjectReader::new(Arc::clone(&store), loc.clone()).with_file_size(size);
+        let arm_pi = ArrowReaderMetadata::load_async(
+            &mut reader,
+            ArrowReaderOptions::new().with_page_index(true),
+        )
+        .await
+        .unwrap();
+        let oi = arm_pi.metadata().offset_index().expect("offset index present");
+        let big_pages = oi[0][1].page_locations().len();
+        assert!(big_pages > 1, "expected multi-page big col, got {big_pages}");
+        println!("big col pages = {big_pages}");
+
+        // (B) footer-only metadata (no page index).
+        let mut reader2 = ParquetObjectReader::new(Arc::clone(&store), loc.clone()).with_file_size(size);
+        let arm_footer =
+            ArrowReaderMetadata::load_async(&mut reader2, ArrowReaderOptions::new()).await.unwrap();
+
+        // (C) the scoped loader path this code uses (footer + grafted OffsetIndex).
+        let footer_only = Arc::clone(arm_footer.metadata());
+        let ncols = footer_only.file_metadata().schema_descr().num_columns();
+        let offset_cols: Vec<usize> = (0..ncols).collect();
+        let augmented = crate::cache::page_index::load_scoped_page_index_cols(
+            &store, &loc, &footer_only, &[], &offset_cols,
+        )
+        .await;
+        assert!(augmented.is_some(), "scoped loader returned None");
+        let augmented = augmented.unwrap();
+        assert!(
+            augmented.offset_index().is_some(),
+            "scoped metadata missing offset index"
+        );
+        let arm_scoped =
+            ArrowReaderMetadata::try_new(augmented, ArrowReaderOptions::new().with_page_index(true))
+                .unwrap();
+
+        let iters = 200usize;
+        let t_footer = time_point_reads(&store, &loc, size, &arm_footer, n, iters).await;
+        let t_pi = time_point_reads(&store, &loc, size, &arm_pi, n, iters).await;
+        let t_scoped = time_point_reads(&store, &loc, size, &arm_scoped, n, iters).await;
+        // Informational: page-skip should make the indexed variants faster on this many-page,
+        // incompressible column. Timing is machine-dependent, so it is printed, not asserted.
+        println!(
+            "point reads x{iters}: footer_only={t_footer:?}  page_index={t_pi:?}  scoped={t_scoped:?}"
+        );
+        // Deterministic guarantees (non-flaky): the scoped loader augments the footer with an
+        // offset index over a genuinely multi-page column, and each variant returns exactly the
+        // one selected row (asserted inside time_point_reads). big_pages > 1 was asserted above.
+    }
 }

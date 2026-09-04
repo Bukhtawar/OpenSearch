@@ -59,6 +59,8 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use futures::TryStreamExt;
 use object_store::{ObjectStore, ObjectStoreExt};
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
 use roaring::RoaringBitmap;
 
 use crate::cancellation;
@@ -283,6 +285,18 @@ impl QueryStreamHandle {
 }
 
 /// Build ObjectMeta for each file using the given object store.
+/// Process-wide cache of `ObjectMeta` keyed by absolute file path. Parquet generation files are
+/// immutable and uniquely named, so their size/last-modified never change — caching lets the
+/// get-by-id hot path skip the per-get `store.head()` stat (see `create_object_metas`).
+const MAX_OBJECT_META_CACHE: usize = 4096;
+static OBJECT_META_CACHE: Lazy<DashMap<String, object_store::ObjectMeta>> = Lazy::new(DashMap::new);
+
+/// Shared default `RuntimeEnv` for the local (get/hot) path. Built once instead of per get, so the
+/// `store_ptr == 0` branch of `create_reader` reuses its registered LocalFileSystem object store
+/// rather than allocating a fresh RuntimeEnv + store on every call.
+static DEFAULT_RT: Lazy<datafusion::execution::runtime_env::RuntimeEnv> =
+    Lazy::new(|| RuntimeEnvBuilder::new().build().expect("default RuntimeEnv build"));
+
 pub async fn create_object_metas(
     store: &dyn object_store::ObjectStore,
     base_path: &str,
@@ -295,6 +309,11 @@ pub async fn create_object_metas(
         } else {
             format!("{}/{}", base_path.trim_end_matches('/'), filename)
         };
+        // Cache hit: immutable generation file → reuse its ObjectMeta, skip the head() stat.
+        if let Some(cached) = OBJECT_META_CACHE.get(full_path.as_str()) {
+            metas.push(cached.clone());
+            continue;
+        }
         let path = object_store::path::Path::from(full_path.as_str());
         let meta = store.head(&path).await.map_err(|e| {
             DataFusionError::Execution(format!(
@@ -302,6 +321,17 @@ pub async fn create_object_metas(
                 full_path, e
             ))
         })?;
+        // Bounded insert (files are unique + immutable, so eviction only costs a future stat).
+        // NB: bind the victim key in its OWN statement so the `iter()` shard read-guard drops at the
+        // `;` BEFORE `remove()`; an `if let` scrutinee would extend the guard across `remove()` and
+        // self-deadlock on the same shard (write lock vs. held read lock).
+        if OBJECT_META_CACHE.len() >= MAX_OBJECT_META_CACHE {
+            let victim = OBJECT_META_CACHE.iter().next().map(|e| e.key().clone());
+            if let Some(k) = victim {
+                OBJECT_META_CACHE.remove(&k);
+            }
+        }
+        OBJECT_META_CACHE.insert(full_path, meta.clone());
         metas.push(meta);
     }
     Ok(metas)
@@ -865,8 +895,9 @@ pub fn create_reader(
             Arc::clone(boxed);
         mc_arc
     } else {
-        let default_rt = RuntimeEnvBuilder::new().build()?;
-        default_rt.object_store(&table_url)?
+        // Reuse the shared default RuntimeEnv's registered LocalFileSystem instead of building a
+        // fresh RuntimeEnv + object store per get.
+        DEFAULT_RT.object_store(&table_url)?
     };
 
     // A Java-supplied store (store_ptr > 0) is a remote/warm store: fetch the whole

@@ -33,6 +33,7 @@ pub mod helper;
 pub mod indexed_executor;
 pub mod indexed_table;
 pub mod local_executor;
+pub mod local_file_reader;
 pub mod memory;
 pub mod memory_guard;
 pub mod native_error;
