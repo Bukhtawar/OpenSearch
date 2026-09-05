@@ -2278,6 +2278,9 @@ public class DataFormatAwareEngine implements Indexer {
                 if (result.exists() == false) {
                     return Engine.GetResult.NOT_EXISTS;
                 }
+                // Enforce read-time version / if_seq_no conflicts on the segment-resolved result,
+                // mirroring the versionMap branch above (which checks before the translog read).
+                documentLookup.applyReadVersionConflicts(get, result);
                 maybeCacheResolvedVersion(
                     get.uid().bytes(),
                     new IndexVersionValue(null, result.version(), result.seqNo(), result.primaryTerm()),

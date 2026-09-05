@@ -3893,6 +3893,39 @@ public class DataFormatAwareEngineTests extends OpenSearchTestCase {
     }
 
     /**
+     * Composed full-upsert flow for a committed (non-realtime-servable) doc: a coverage-satisfied
+     * GET returns metadata-only (source == null — the provider performed NO row decode), and the
+     * subsequent re-index consumes the cached resolution — so across the whole update exactly ONE
+     * resolver pass happens and the row is never decoded: getById once, getVersionMetadata never.
+     */
+    public void testCoveredGetSkipsRowDecodeAndSeedsVersionCache() throws Exception {
+        DocumentLookupProvider provider = mock(DocumentLookupProvider.class);
+        when(provider.getById(any(), any(), any(), any())).thenAnswer(invocation -> {
+            Engine.Get get = invocation.getArgument(0);
+            assertNotNull("engine must thread updateFieldPaths through to the provider", get.updateFieldPaths());
+            // Coverage satisfied: metadata-only result, no source materialization (= no parquet decode).
+            return new DocumentLookupResult("1", 1L, true, null, 0L, 1L, Map.of(), Map.of());
+        });
+        try (DataFormatAwareEngine engine = createUpdateEnabledDFAEngineWithLookupProvider(store, createTempDir(), provider)) {
+            engine.index(indexOp(createParsedDocWithInput("1", null)));
+            engine.refresh("test"); // doc now only reachable via the committed (non-realtime) path
+
+            Engine.Get get = realtimeGet("1").updateFieldPaths(java.util.Set.of("name", "value"));
+            Engine.GetResult getResult = engine.getById(get, (source, scope) -> null);
+            assertTrue(getResult.exists());
+            assertNull("covered get must not materialize source", ((DocumentLookupResult.PreMaterialized) getResult).lookup().source());
+
+            // The re-index leg of the update: must be served entirely from the cached resolution.
+            Engine.IndexResult result = engine.index(indexOpWithIfSeqNo(createParsedDocWithInput("1", null), 0L, 1L));
+            assertThat(result.getResultType(), equalTo(Engine.Result.Type.SUCCESS));
+            assertThat(result.getVersion(), equalTo(2L));
+            assertThat(engine.cachedVersionResolveCount(), equalTo(1L));
+            verify(provider, times(1)).getById(any(), any(), any(), any());
+            verify(provider, never()).getVersionMetadata(any(), any(), any(), any());
+        }
+    }
+
+    /**
      * The GET leg of an update resolves version metadata from the secondary index; the re-index leg
      * must reuse that resolution (via the engine's version-lookup cache) instead of paying a second
      * seek: the provider's getVersionMetadata must NOT be consulted.

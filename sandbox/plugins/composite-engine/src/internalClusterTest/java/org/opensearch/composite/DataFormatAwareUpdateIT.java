@@ -357,4 +357,93 @@ public class DataFormatAwareUpdateIT extends AbstractCompositeEngineIT {
 
         assertEquals("only the emptied generation is dropped", 2L, getTotalRowCount(acquireAndGetSnapshot(INDEX)));
     }
+
+    /**
+     * Update-API full replace on a COMMITTED doc (non-realtime path: refresh moved it out of the
+     * version map, so the GET leg resolves via Lucene and would normally decode the Parquet row).
+     * With detect_noop=false and a doc covering every column, the coverage check skips the row
+     * decode — this test pins the end-to-end semantics of that path on the real composite engine:
+     * correct merge result, version increment, and conditional-update conflict detection intact.
+     */
+    public void testCoveredFullDocUpdateAcrossRefresh() {
+        createManualRefreshIndex();
+
+        IndexResponse created = indexDoc("k1", "v_old", 1);
+        assertEquals(DocWriteResponse.Result.CREATED, created.getResult());
+        refreshIndex(INDEX); // commit: k1 now only reachable via the non-realtime (Lucene+Parquet) path
+
+        // Full-doc update: covers both mapped fields; detect_noop=false → coverage skip eligible.
+        org.opensearch.action.update.UpdateResponse updated = client().prepareUpdate(INDEX, "k1")
+            .setDoc("name", "v_new", "value", 2)
+            .setDetectNoop(false)
+            .get();
+        assertEquals(DocWriteResponse.Result.UPDATED, updated.getResult());
+        assertEquals(2L, updated.getVersion());
+
+        refreshIndex(INDEX);
+        GetResponse row = client().prepareGet(INDEX, "k1").setRealtime(false).get();
+        assertTrue(row.isExists());
+        assertEquals("v_new", name(row));
+        assertEquals(2, value(row));
+        assertEquals(2L, row.getVersion());
+
+        // The covered path must still enforce optimistic concurrency on the re-index leg.
+        refreshIndex(INDEX);
+        VersionConflictEngineException conflict = expectThrows(
+            VersionConflictEngineException.class,
+            () -> client().prepareUpdate(INDEX, "k1")
+                .setDoc("name", "stale", "value", 9)
+                .setDetectNoop(false)
+                .setIfSeqNo(0L) // stale: the doc is at seqNo 1 after the update
+                .setIfPrimaryTerm(1L)
+                .get()
+        );
+        assertEquals(RestStatus.CONFLICT, conflict.status());
+    }
+
+    /**
+     * Update-API PARTIAL update on a committed doc: not covered (omits {@code value}), so the GET
+     * leg must fall back to the Parquet row decode and the merge must retain the omitted field.
+     */
+    public void testPartialDocUpdateAcrossRefreshRetainsOmittedFields() {
+        createManualRefreshIndex();
+
+        indexDoc("k1", "v_old", 7);
+        refreshIndex(INDEX);
+
+        org.opensearch.action.update.UpdateResponse updated = client().prepareUpdate(INDEX, "k1")
+            .setDoc("name", "v_new")
+            .setDetectNoop(false)
+            .get();
+        assertEquals(DocWriteResponse.Result.UPDATED, updated.getResult());
+
+        refreshIndex(INDEX);
+        GetResponse row = client().prepareGet(INDEX, "k1").setRealtime(false).get();
+        assertTrue(row.isExists());
+        assertEquals("v_new", name(row));
+        assertEquals("partial update must retain the omitted field from the stored row", 7, value(row));
+        assertEquals(2L, row.getVersion());
+    }
+
+    /**
+     * Covered full-doc update WITHIN the refresh window (realtime path: version map + translog).
+     * Coverage machinery must not disturb the realtime flow.
+     */
+    public void testCoveredFullDocUpdateWithinRefreshWindow() {
+        createManualRefreshIndex();
+
+        indexDoc("k1", "v_old", 1);
+        // No refresh: k1 is still in the live version map / translog.
+        org.opensearch.action.update.UpdateResponse updated = client().prepareUpdate(INDEX, "k1")
+            .setDoc("name", "v_new", "value", 2)
+            .setDetectNoop(false)
+            .get();
+        assertEquals(DocWriteResponse.Result.UPDATED, updated.getResult());
+        assertEquals(2L, updated.getVersion());
+
+        refreshIndex(INDEX);
+        GetResponse row = client().prepareGet(INDEX, "k1").setRealtime(false).get();
+        assertEquals("v_new", name(row));
+        assertEquals(2, value(row));
+    }
 }
