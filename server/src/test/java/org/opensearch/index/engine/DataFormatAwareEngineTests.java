@@ -109,7 +109,10 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -3874,6 +3877,95 @@ public class DataFormatAwareEngineTests extends OpenSearchTestCase {
 
     private Engine.Get realtimeGet(String id) {
         return new Engine.Get(true, true, id, new Term(IdFieldMapper.NAME, Uid.encodeId(id)));
+    }
+
+    /** Update-enabled (append-only off) DFA engine carrying the given lookup provider. */
+    private DataFormatAwareEngine createUpdateEnabledDFAEngineWithLookupProvider(
+        Store store,
+        Path translogPath,
+        DocumentLookupProvider provider
+    ) throws IOException {
+        String uuid = Translog.createEmptyTranslog(translogPath, SequenceNumbers.NO_OPS_PERFORMED, shardId, primaryTerm.get());
+        bootstrapStoreWithMetadata(store, uuid);
+        return new DataFormatAwareEngine(
+            buildDFAEngineConfig(store, translogPath, List.of(), List.of(), IndexModule.TieringState.HOT.name(), provider, false)
+        );
+    }
+
+    /**
+     * The GET leg of an update resolves version metadata from the secondary index; the re-index leg
+     * must reuse that resolution (via the engine's version-lookup cache) instead of paying a second
+     * seek: the provider's getVersionMetadata must NOT be consulted.
+     */
+    public void testResolveDocVersionReusesGetByIdResolution() throws Exception {
+        DocumentLookupProvider provider = mock(DocumentLookupProvider.class);
+        // GET fall-through resolves the committed doc: version=1, seqNo=0, primaryTerm=1.
+        when(provider.getById(any(), any(), any(), any())).thenReturn(
+            new DocumentLookupResult("1", 1L, true, null, 0L, 1L, Map.of(), Map.of())
+        );
+        try (DataFormatAwareEngine engine = createUpdateEnabledDFAEngineWithLookupProvider(store, createTempDir(), provider)) {
+            engine.index(indexOp(createParsedDocWithInput("1", null)));
+            engine.refresh("test"); // rotate the versionMap so the GET takes the fall-through path
+
+            DocumentLookupResult getResult = getByIdLookup(engine, realtimeGet("1"));
+            assertTrue("doc must resolve via provider fall-through", getResult.exists());
+
+            // Re-index with the ifSeqNo/ifPrimaryTerm the GET returned — the update flow.
+            Engine.IndexResult result = engine.index(indexOpWithIfSeqNo(createParsedDocWithInput("1", null), 0L, 1L));
+            assertThat(result.getResultType(), equalTo(Engine.Result.Type.SUCCESS));
+            assertThat("version must advance from the cached resolution", result.getVersion(), equalTo(2L));
+            assertThat("re-index must be served from the version-lookup cache", engine.cachedVersionResolveCount(), equalTo(1L));
+            verify(provider, never()).getVersionMetadata(any(), any(), any(), any());
+        }
+    }
+
+    /** A refresh between the GET and the re-index must invalidate the cached resolution (fall back to provider). */
+    public void testCachedVersionResolutionInvalidatedByRefresh() throws Exception {
+        DocumentLookupProvider provider = mock(DocumentLookupProvider.class);
+        when(provider.getById(any(), any(), any(), any())).thenReturn(
+            new DocumentLookupResult("1", 1L, true, null, 0L, 1L, Map.of(), Map.of())
+        );
+        when(provider.getVersionMetadata(any(), any(), any(), any())).thenReturn(
+            new DocumentLookupResult("1", 1L, true, null, 0L, 1L, Map.of(), Map.of())
+        );
+        try (DataFormatAwareEngine engine = createUpdateEnabledDFAEngineWithLookupProvider(store, createTempDir(), provider)) {
+            engine.index(indexOp(createParsedDocWithInput("1", null)));
+            engine.refresh("test");
+
+            assertTrue(getByIdLookup(engine, realtimeGet("1")).exists());
+            engine.refresh("between-get-and-index"); // must kill the cached value
+
+            Engine.IndexResult result = engine.index(indexOpWithIfSeqNo(createParsedDocWithInput("1", null), 0L, 1L));
+            assertThat(result.getResultType(), equalTo(Engine.Result.Type.SUCCESS));
+            assertThat("stale cache entry must not be served", engine.cachedVersionResolveCount(), equalTo(0L));
+            verify(provider, times(1)).getVersionMetadata(any(), any(), any(), any());
+        }
+    }
+
+    /**
+     * A write that lands between the GET and the re-index supersedes the cached resolution via the
+     * versionMap (checked first), so a stale ifSeqNo from the GET still triggers a version conflict.
+     */
+    public void testCachedVersionResolutionDoesNotMaskConcurrentWriteConflict() throws Exception {
+        DocumentLookupProvider provider = mock(DocumentLookupProvider.class);
+        when(provider.getById(any(), any(), any(), any())).thenReturn(
+            new DocumentLookupResult("1", 1L, true, null, 0L, 1L, Map.of(), Map.of())
+        );
+        try (DataFormatAwareEngine engine = createUpdateEnabledDFAEngineWithLookupProvider(store, createTempDir(), provider)) {
+            engine.index(indexOp(createParsedDocWithInput("1", null)));
+            engine.refresh("test");
+
+            assertTrue(getByIdLookup(engine, realtimeGet("1")).exists()); // caches (v1, seqNo 0)
+
+            // Concurrent unconditional write bumps the doc to v2/seqNo 1 (versionMap now holds it).
+            Engine.IndexResult concurrent = engine.index(indexOp(createParsedDocWithInput("1", null)));
+            assertThat(concurrent.getResultType(), equalTo(Engine.Result.Type.SUCCESS));
+
+            // The update's re-index still carries the GET-time ifSeqNo=0 — must conflict.
+            Engine.IndexResult stale = engine.index(indexOpWithIfSeqNo(createParsedDocWithInput("1", null), 0L, 1L));
+            assertThat(stale.getResultType(), equalTo(Engine.Result.Type.FAILURE));
+            assertThat(stale.getFailure(), instanceOf(VersionConflictEngineException.class));
+        }
     }
 
     private DocumentLookupProvider mockLookupProvider() throws IOException {

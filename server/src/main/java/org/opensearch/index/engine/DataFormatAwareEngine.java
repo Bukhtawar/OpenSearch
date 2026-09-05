@@ -114,6 +114,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -250,6 +251,30 @@ public class DataFormatAwareEngine implements Indexer {
     private final CounterMetric numIndexVersionsLookups = new CounterMetric();
 
     /**
+     * Short-lived handoff of version metadata resolved by a realtime GET ({@link #getById}) to the
+     * version resolve of the derived index operation ({@link #resolveDocVersion}). An update-by-id
+     * otherwise pays the per-id secondary-index seek twice within one bulk item: once to fetch the
+     * document for merging and once, microseconds later, to re-resolve version/seqNo/primaryTerm
+     * for the optimistic-concurrency check of the re-index.
+     *
+     * Correctness invariant: an entry is trusted only when (a) the {@link LiveVersionMap} — always
+     * consulted first — has no entry for the uid, and (b) no refresh has begun since the reader
+     * that produced the value was acquired (generation match). Any write concurrent with the GET
+     * either still has its versionMap entry (shadowing this cache) or a refresh has begun since
+     * (bumping {@link #versionLookupCacheGeneration} and invalidating this cache), because the
+     * cache is cleared at refresh START while versionMap entries survive until refresh END.
+     * Entries are inserted and consumed under the per-uid lock, and consumed at most once.
+     */
+    private final ConcurrentHashMap<BytesRef, CachedVersionLookup> versionLookupCache = new ConcurrentHashMap<>();
+    private final AtomicLong versionLookupCacheGeneration = new AtomicLong();
+    private final CounterMetric numCachedVersionResolves = new CounterMetric();
+    private static final int VERSION_LOOKUP_CACHE_MAX_ENTRIES = 10_000;
+
+    /** A resolved version value plus the cache generation it was resolved under. */
+    private record CachedVersionLookup(VersionValue versionValue, long generation) {
+    }
+
+    /**
      * System property to enable or disable pluggable dataformat merge operations.
      * Set to "true" to enable merges (e.g., {@code -Dopensearch.pluggable.dataformat.merge.enabled=true}).
      * Defaults to "false" (merges disabled) as the merge implementations are not yet complete
@@ -295,6 +320,19 @@ public class DataFormatAwareEngine implements Indexer {
         this.versionMap = new LiveVersionMap();
 
         List<ReferenceManager.RefreshListener> refreshListeners = new ArrayList<>();
+        // Must run BEFORE the versionMap listener: the version-lookup cache dies at refresh start,
+        // strictly before versionMap entries are pruned at refresh end. This ordering is what makes
+        // the cache safe — see the invariant on versionLookupCache.
+        refreshListeners.add(new ReferenceManager.RefreshListener() {
+            @Override
+            public void beforeRefresh() {
+                versionLookupCacheGeneration.incrementAndGet();
+                versionLookupCache.clear();
+            }
+
+            @Override
+            public void afterRefresh(boolean didRefresh) {}
+        });
         refreshListeners.add(versionMap);
         if (engineConfig.getInternalRefreshListener() != null) {
             refreshListeners.addAll(engineConfig.getInternalRefreshListener());
@@ -2232,10 +2270,20 @@ public class DataFormatAwareEngine implements Indexer {
                 }
             }
 
-            // Fall through: read from parquet
+            // Fall through: read from parquet. Capture the cache generation BEFORE acquiring the
+            // reader so the cached value is provably no older than the last refresh boundary.
+            final long lookupGeneration = versionLookupCacheGeneration.get();
             try (GatedCloseable<Reader> readerRef = acquireReader()) {
                 DocumentLookupResult result = documentLookup.lookupFromReader(get, readerRef.get());
-                return result.exists() ? result.toGetResult() : Engine.GetResult.NOT_EXISTS;
+                if (result.exists() == false) {
+                    return Engine.GetResult.NOT_EXISTS;
+                }
+                maybeCacheResolvedVersion(
+                    get.uid().bytes(),
+                    new IndexVersionValue(null, result.version(), result.seqNo(), result.primaryTerm()),
+                    lookupGeneration
+                );
+                return result.toGetResult();
             }
         } // readLock
     }
@@ -2435,6 +2483,11 @@ public class DataFormatAwareEngine implements Indexer {
         assert incrementVersionLookup();
         VersionValue versionValue = getVersionFromMap(op.uid().bytes());
         if (versionValue == null) {
+            versionValue = pollCachedResolvedVersion(op.uid().bytes());
+            if (versionValue != null) {
+                numCachedVersionResolves.inc();
+                return versionValue;
+            }
             if (documentLookupProvider == null) {
                 return null;
             }
@@ -2463,6 +2516,50 @@ public class DataFormatAwareEngine implements Indexer {
 
     long getGcDeletesInMillis() {
         return engineConfig.getIndexSettings().getGcDeletesInMillis();
+    }
+
+    /**
+     * Records version metadata resolved by a GET so a subsequent version resolve for the same uid
+     * (the re-index leg of an update) can skip the secondary-index seek. {@code lookupGeneration}
+     * must have been captured BEFORE the reader that produced {@code resolved} was acquired; if a
+     * refresh has begun since, the entry is not written (versionMap pruning could otherwise hide a
+     * concurrent write). Inserted under the per-uid lock so a concurrent writer's versionMap entry
+     * always wins. Rows without complete version metadata are never cached.
+     */
+    private void maybeCacheResolvedVersion(BytesRef uid, VersionValue resolved, long lookupGeneration) {
+        if (resolved.seqNo < 0 || resolved.term <= 0 || resolved.version < 0) {
+            return;
+        }
+        if (versionLookupCache.size() >= VERSION_LOOKUP_CACHE_MAX_ENTRIES) {
+            return;
+        }
+        try (Releasable ignored = versionMap.acquireLock(uid)) {
+            if (getVersionFromMap(uid) != null) {
+                return; // a concurrent write superseded the value we resolved
+            }
+            if (versionLookupCacheGeneration.get() != lookupGeneration) {
+                return; // a refresh raced the lookup
+            }
+            versionLookupCache.put(BytesRef.deepCopyOf(uid), new CachedVersionLookup(resolved, lookupGeneration));
+        }
+    }
+
+    /**
+     * Consumes (at most once) a version value cached by {@link #maybeCacheResolvedVersion}.
+     * Returns {@code null} when absent or when a refresh has begun since it was cached. Callers
+     * must hold the per-uid lock and have found no versionMap entry for the uid.
+     */
+    private VersionValue pollCachedResolvedVersion(BytesRef uid) {
+        CachedVersionLookup cached = versionLookupCache.remove(uid);
+        if (cached == null) {
+            return null;
+        }
+        return cached.generation() == versionLookupCacheGeneration.get() ? cached.versionValue() : null;
+    }
+
+    // visible for tests
+    long cachedVersionResolveCount() {
+        return numCachedVersionResolves.count();
     }
 
     private boolean incrementVersionLookup() { // only used by asserts
