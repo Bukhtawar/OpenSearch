@@ -2154,6 +2154,26 @@ public abstract class Engine implements LifecycleAware, Closeable {
             return ifPrimaryTerm;
         }
 
+        /**
+         * Leaf field paths of an update document whose values fully replace the stored subtree at
+         * that path (any non-object value: scalar, null, or array). When set, a pluggable-engine
+         * get MAY skip materializing {@code _source} and return a metadata-only result if these
+         * paths cover every column the stored document could have — the caller has declared it
+         * does not need the old content. {@code null} (the default) requests a normal get.
+         */
+        @Nullable
+        private java.util.Set<String> updateFieldPaths;
+
+        public Get updateFieldPaths(@Nullable java.util.Set<String> updateFieldPaths) {
+            this.updateFieldPaths = updateFieldPaths;
+            return this;
+        }
+
+        @Nullable
+        public java.util.Set<String> updateFieldPaths() {
+            return updateFieldPaths;
+        }
+
     }
 
     /**

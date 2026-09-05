@@ -81,6 +81,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -136,10 +137,34 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         long ifPrimaryTerm,
         FetchSourceContext fetchSourceContext
     ) {
+        return get(id, gFields, realtime, version, versionType, ifSeqNo, ifPrimaryTerm, fetchSourceContext, null);
+    }
+
+    private GetResult get(
+        String id,
+        String[] gFields,
+        boolean realtime,
+        long version,
+        VersionType versionType,
+        long ifSeqNo,
+        long ifPrimaryTerm,
+        FetchSourceContext fetchSourceContext,
+        @Nullable Set<String> updateFieldPaths
+    ) {
         currentMetric.inc();
         try {
             long now = System.nanoTime();
-            GetResult getResult = innerGet(id, gFields, realtime, version, versionType, ifSeqNo, ifPrimaryTerm, fetchSourceContext);
+            GetResult getResult = innerGet(
+                id,
+                gFields,
+                realtime,
+                version,
+                versionType,
+                ifSeqNo,
+                ifPrimaryTerm,
+                fetchSourceContext,
+                updateFieldPaths
+            );
 
             if (getResult.isExists()) {
                 existsMetric.inc(System.nanoTime() - now);
@@ -153,6 +178,17 @@ public final class ShardGetService extends AbstractIndexShardComponent {
     }
 
     public GetResult getForUpdate(String id, long ifSeqNo, long ifPrimaryTerm) {
+        return getForUpdate(id, ifSeqNo, ifPrimaryTerm, null);
+    }
+
+    /**
+     * Get for the update flow. When {@code updateFieldPaths} is non-null, it carries the incoming
+     * update document's covering leaf paths; a pluggable engine may then return an exists result
+     * WITHOUT {@code _source} when those paths cover every stored column (the update is a full
+     * replace and the caller does not need the old document). Callers passing non-null paths MUST
+     * treat an exists+null-source result as "covered", not as a missing-source error.
+     */
+    public GetResult getForUpdate(String id, long ifSeqNo, long ifPrimaryTerm, @Nullable Set<String> updateFieldPaths) {
         return get(
             id,
             new String[] { RoutingFieldMapper.NAME },
@@ -161,7 +197,8 @@ public final class ShardGetService extends AbstractIndexShardComponent {
             VersionType.INTERNAL,
             ifSeqNo,
             ifPrimaryTerm,
-            FetchSourceContext.FETCH_SOURCE
+            FetchSourceContext.FETCH_SOURCE,
+            updateFieldPaths
         );
     }
 
@@ -219,7 +256,8 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         VersionType versionType,
         long ifSeqNo,
         long ifPrimaryTerm,
-        FetchSourceContext fetchSourceContext
+        FetchSourceContext fetchSourceContext,
+        @Nullable Set<String> updateFieldPaths
     ) {
         fetchSourceContext = normalizeFetchSourceContent(fetchSourceContext, gFields);
 
@@ -231,6 +269,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
                     .versionType(versionType)
                     .setIfSeqNo(ifSeqNo)
                     .setIfPrimaryTerm(ifPrimaryTerm)
+                    .updateFieldPaths(updateFieldPaths)
             )
         ) {
             if (get == null || get.exists() == false) {

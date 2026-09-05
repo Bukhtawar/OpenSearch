@@ -58,11 +58,77 @@ public class DocumentLookupService {
     }
 
     public DocumentLookupResult getById(String id, IndexReaderProvider.Reader reader, Index index) throws IOException {
+        return getById(id, null, reader, index);
+    }
+
+    /**
+     * Get-by-id with an optional update coverage check. When {@code coveringPaths} is non-null it
+     * holds the incoming update document's covering leaf paths (paths whose values replace the
+     * stored subtree wholesale). If those paths cover every non-metadata column of the file the
+     * document lives in, the old row contributes nothing to the merged result — so this returns a
+     * metadata-only result ({@code source == null}) and skips the row fetch entirely. Requires the
+     * resolver to supply version metadata from doc values; legacy segments without it, unknown
+     * schemas, and uncovered documents all fall back to the normal row fetch.
+     */
+    public DocumentLookupResult getById(String id, Set<String> coveringPaths, IndexReaderProvider.Reader reader, Index index)
+        throws IOException {
         DocumentMetadata metadata = documentResolver.resolveMetadata(reader, id);
         if (metadata == null) {
             return DocumentLookupResult.notFound(id);
         }
+        if (coveringPaths != null && metadata.hasVersionMetadata()) {
+            WriterFileSet fileSet = reader.catalogSnapshot().findFileSet(executor.formatName(), metadata.writerGeneration());
+            if (fileSet != null) {
+                Set<String> columns = executor.columnPaths(fileSet);
+                if (columns != null && isCovered(coveringPaths, columns)) {
+                    return new DocumentLookupResult(
+                        id,
+                        metadata.version(),
+                        true,
+                        null,
+                        metadata.seqNo(),
+                        metadata.primaryTerm(),
+                        Map.of(),
+                        Map.of()
+                    );
+                }
+            }
+        }
         return buildResultFromRow(id, fetchRow(metadata, reader));
+    }
+
+    /**
+     * Whether every non-metadata column is covered by some covering path: equal to it, or a
+     * descendant of it (a non-object value at {@code user} replaces all of {@code user.*}).
+     */
+    static boolean isCovered(Set<String> coveringPaths, Set<String> columnPaths) {
+        for (String column : columnPaths) {
+            if (isMetadataColumn(column)) {
+                continue;
+            }
+            String path = column;
+            boolean covered = false;
+            while (true) {
+                if (coveringPaths.contains(path)) {
+                    covered = true;
+                    break;
+                }
+                int idx = path.lastIndexOf('.');
+                if (idx < 0) {
+                    break;
+                }
+                path = path.substring(0, idx);
+            }
+            if (covered == false) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Engine/storage metadata columns excluded from {@code _source} and from coverage checks. */
+    private static boolean isMetadataColumn(String name) {
+        return METADATA_FIELDS.contains(name) || SeqNoFieldMapper.PRIMARY_TERM_NAME.equals(name) || DocumentInput.ROW_ID_FIELD.equals(name);
     }
 
     /**
@@ -151,13 +217,10 @@ public class DocumentLookupService {
         for (Map.Entry<String, Object> e : row.entrySet()) {
             // Exclude registered metadata fields, plus the two columns that are not registered mappers:
             // _primary_term (a sub-column emitted by the _seq_no mapper) and __row_id__ (engine-internal).
-            String name = e.getKey();
-            if (METADATA_FIELDS.contains(name)
-                || SeqNoFieldMapper.PRIMARY_TERM_NAME.equals(name)
-                || DocumentInput.ROW_ID_FIELD.equals(name)) {
+            if (isMetadataColumn(e.getKey())) {
                 continue;
             }
-            filtered.put(name, e.getValue());
+            filtered.put(e.getKey(), e.getValue());
         }
 
         BytesReference source;

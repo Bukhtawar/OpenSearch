@@ -12,6 +12,8 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.analytics.exec.ArrowValues;
@@ -34,9 +36,12 @@ import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -218,6 +223,87 @@ public class GetService implements Closeable {
                     return ArrowValues.toSourceMap(root, 0);
                 }
             }
+        }
+
+        /** Cached dotted leaf column paths per immutable parquet file (directory + file name). */
+        private final ConcurrentHashMap<String, Set<String>> fileColumnPathsCache = new ConcurrentHashMap<>();
+
+        private static final int COLUMN_PATHS_CACHE_MAX_ENTRIES = 512;
+
+        /**
+         * Resolves the file's schema by running the existing by-row-id point read on row 0 and
+         * flattening the result stream's Arrow schema — no Rust changes and no per-row decode
+         * beyond one probe per file, since file sets are immutable and the result is cached.
+         * The Arrow SCHEMA (not the row's value map) is authoritative: a value map would drop
+         * null-valued columns and under-report the schema, making coverage unsafely easy to pass.
+         */
+        @Override
+        public Set<String> columnPaths(WriterFileSet parquetSet) throws IOException {
+            String parquetDir = parquetSet.directory();
+            String parquetFile = parquetSet.files().iterator().next();
+            String cacheKey = parquetDir + "/" + parquetFile;
+            Set<String> cached = fileColumnPathsCache.get(cacheKey);
+            if (cached != null) {
+                return cached;
+            }
+            long runtimePtr = dfPlugin.getDataFusionService().getNativeRuntime().get();
+            MonoFileWriterSet segment = MonoFileWriterSet.of(parquetDir, parquetSet.writerGeneration(), parquetFile, 0L);
+            try (ReaderHandle readerHandle = new ReaderHandle(parquetDir, List.of(segment), null, List.of(), List.of())) {
+                long streamPtr = executeInternalSearch(
+                    readerHandle.getPointer(),
+                    runtimePtr,
+                    NativeBridge.INTERNAL_SEARCH_BY_ROW_ID,
+                    0L,
+                    "DataFusion schema probe failed"
+                );
+                Set<String> columns = readColumnPaths(streamPtr);
+                if (columns != null && fileColumnPathsCache.size() < COLUMN_PATHS_CACHE_MAX_ENTRIES) {
+                    fileColumnPathsCache.put(cacheKey, columns);
+                }
+                return columns;
+            }
+        }
+
+        private Set<String> readColumnPaths(long streamPtr) {
+            try (
+                StreamHandle streamHandle = new StreamHandle(streamPtr, dfPlugin.getDataFusionService().getNativeRuntime());
+                DatafusionResultStream stream = new DatafusionResultStream(streamHandle, sharedAllocator, importStagingAllocator)
+            ) {
+                var iter = stream.iterator();
+                if (!iter.hasNext()) return null;
+                var batch = iter.next();
+                try (VectorSchemaRoot root = batch.getArrowRoot()) {
+                    Set<String> paths = new HashSet<>();
+                    for (Field field : root.getSchema().getFields()) {
+                        flattenFieldPaths("", field, paths);
+                    }
+                    return Set.copyOf(paths);
+                }
+            }
+        }
+
+        /**
+         * Flattens an Arrow field to dotted leaf paths. Structs recurse; a list's element children
+         * (list-of-struct) recurse under the list's own path, since the whole list is replaced as a
+         * unit by any covering value at that path; everything else is a leaf.
+         */
+        private static void flattenFieldPaths(String prefix, Field field, Set<String> out) {
+            String path = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
+            List<Field> children = field.getChildren();
+            if (field.getType() instanceof ArrowType.Struct && children.isEmpty() == false) {
+                for (Field child : children) {
+                    flattenFieldPaths(path, child, out);
+                }
+            } else if (children.isEmpty() == false
+                && children.get(0).getType() instanceof ArrowType.Struct
+                && children.get(0).getChildren().isEmpty() == false) {
+                    // list-of-struct: flatten the element struct's children under the list's path
+                    for (Field child : children.get(0).getChildren()) {
+                        flattenFieldPaths(path, child, out);
+                    }
+                } else {
+                    out.add(path);
+                }
         }
 
         /**

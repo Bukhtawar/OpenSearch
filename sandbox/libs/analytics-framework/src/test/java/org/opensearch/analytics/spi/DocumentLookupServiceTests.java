@@ -105,6 +105,85 @@ public class DocumentLookupServiceTests extends OpenSearchTestCase {
 
     // ---- getById ------------------------------------------------------------
 
+    public void testGetById_coveredUpdateSkipsRowFetch() throws Exception {
+        when(resolver.resolveMetadata(reader, "doc1")).thenReturn(
+            new DocumentMetadataResolver.DocumentMetadata("doc1", 3L, 7L, 5L, 42L, 2L)
+        );
+        WriterFileSet fs = fileSet(7L, "gen7.parquet");
+        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs);
+        when(executor.columnPaths(fs)).thenReturn(
+            java.util.Set.of("title", "user.name", "user.age", "_id", "_seq_no", "_primary_term", "_version", "__row_id__")
+        );
+
+        DocumentLookupResult result = service.getById("doc1", java.util.Set.of("title", "user"), reader, INDEX);
+
+        assertTrue(result.exists());
+        assertNull("covered update must not materialize source", result.source());
+        assertEquals(5L, result.version());
+        assertEquals(42L, result.seqNo());
+        assertEquals(2L, result.primaryTerm());
+        verify(executor, never()).executeSingleRow(anyLong(), any());
+    }
+
+    public void testGetById_uncoveredUpdateFallsBackToRowFetch() throws Exception {
+        when(resolver.resolveMetadata(reader, "doc1")).thenReturn(
+            new DocumentMetadataResolver.DocumentMetadata("doc1", 3L, 7L, 5L, 42L, 2L)
+        );
+        WriterFileSet fs = fileSet(7L, "gen7.parquet");
+        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs);
+        when(executor.columnPaths(fs)).thenReturn(java.util.Set.of("title", "user.name", "extra"));
+        when(executor.executeSingleRow(3L, fs)).thenReturn(row("title", "t", "user.name", "u", "extra", "e"));
+
+        DocumentLookupResult result = service.getById("doc1", java.util.Set.of("title", "user"), reader, INDEX);
+
+        assertTrue(result.exists());
+        assertNotNull("uncovered update must fetch the row", result.source());
+        verify(executor).executeSingleRow(3L, fs);
+    }
+
+    public void testGetById_unknownSchemaFallsBackToRowFetch() throws Exception {
+        when(resolver.resolveMetadata(reader, "doc1")).thenReturn(
+            new DocumentMetadataResolver.DocumentMetadata("doc1", 3L, 7L, 5L, 42L, 2L)
+        );
+        WriterFileSet fs = fileSet(7L, "gen7.parquet");
+        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs);
+        when(executor.columnPaths(fs)).thenReturn(null);
+        when(executor.executeSingleRow(3L, fs)).thenReturn(row("title", "t"));
+
+        DocumentLookupResult result = service.getById("doc1", java.util.Set.of("title"), reader, INDEX);
+
+        assertTrue(result.exists());
+        assertNotNull(result.source());
+        verify(executor).executeSingleRow(3L, fs);
+    }
+
+    public void testGetById_legacyMetadataWithoutVersionFallsBackToRowFetch() throws Exception {
+        // Row-location-only metadata (no version doc values): coverage must not apply, because the
+        // metadata-only result could not carry version/seqNo/primaryTerm.
+        when(resolver.resolveMetadata(reader, "doc1")).thenReturn(metadata("doc1", 3L, 7L));
+        WriterFileSet fs = fileSet(7L, "gen7.parquet");
+        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs);
+        when(executor.executeSingleRow(3L, fs)).thenReturn(row("title", "t", "_version", 5L, "_seq_no", 42L, "_primary_term", 2L));
+
+        DocumentLookupResult result = service.getById("doc1", java.util.Set.of("title"), reader, INDEX);
+
+        assertTrue(result.exists());
+        assertNotNull(result.source());
+        verify(executor).executeSingleRow(3L, fs);
+        verify(executor, never()).columnPaths(any());
+    }
+
+    public void testIsCovered_prefixAndMetadataSemantics() {
+        // A covering path covers itself and every descendant column.
+        assertTrue(DocumentLookupService.isCovered(java.util.Set.of("user"), java.util.Set.of("user.name", "user.address.city")));
+        // Metadata columns never require coverage.
+        assertTrue(DocumentLookupService.isCovered(java.util.Set.of("title"), java.util.Set.of("title", "_id", "_seq_no", "__row_id__")));
+        // A missing non-metadata column fails coverage.
+        assertFalse(DocumentLookupService.isCovered(java.util.Set.of("title"), java.util.Set.of("title", "body")));
+        // A child covering path does not cover its parent column.
+        assertFalse(DocumentLookupService.isCovered(java.util.Set.of("user.name"), java.util.Set.of("user")));
+    }
+
     public void testGetById_notFoundWhenResolverReturnsNull() throws Exception {
         when(resolver.resolveMetadata(reader, "missing")).thenReturn(null);
 

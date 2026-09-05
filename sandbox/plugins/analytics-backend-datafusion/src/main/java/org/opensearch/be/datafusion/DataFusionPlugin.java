@@ -1079,7 +1079,7 @@ public class DataFusionPlugin extends Plugin
     public DocumentLookupResult getById(Engine.Get get, IndexReaderProvider.Reader reader, Index index, DocumentMetadataResolver resolver)
         throws IOException {
         GetService getService = getServiceOrThrow();
-        return getService.documentLookupService(resolver).getById(get.id(), reader, index);
+        return getService.documentLookupService(resolver).getById(get.id(), get.updateFieldPaths(), reader, index);
     }
 
     @Override
