@@ -65,9 +65,7 @@ import org.opensearch.transport.client.Requests;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.LongSupplier;
 
 /**
@@ -95,83 +93,14 @@ public class UpdateHelper {
     /**
      * Variant taking an optional prefetched get result from the bulk-layer batched prefetch
      * ({@code ShardGetService#multiGetForUpdate}). The prefetched result was produced with the
-     * SAME preconditions and covering paths this method would pass to
-     * {@code getForUpdate} (see {@link #coveringPathsFor}), so it substitutes for the live get
-     * exactly. {@code null} takes the normal per-item get path.
+     * SAME preconditions this method would pass to {@code getForUpdate}, so it substitutes
+     * for the live get exactly. {@code null} takes the normal per-item get path.
      */
     public Result prepare(UpdateRequest request, IndexShard indexShard, LongSupplier nowInMillis, @Nullable GetResult prefetched) {
-        Set<String> coveringPaths = coveringPathsFor(request);
         final GetResult getResult = prefetched != null
             ? prefetched
-            : indexShard.getService().getForUpdate(request.id(), request.ifSeqNo(), request.ifPrimaryTerm(), coveringPaths);
-        if (coveringPaths != null && getResult.isExists() && getResult.internalSourceRef() == null) {
-            // The engine verified coverage and deliberately omitted _source: the update is a full
-            // replace, so the index request is built straight from the incoming doc — no merge.
-            return prepareCoveredReplace(request, getResult);
-        }
+            : indexShard.getService().getForUpdate(request.id(), request.ifSeqNo(), request.ifPrimaryTerm());
         return prepare(indexShard.shardId(), request, getResult, nowInMillis);
-    }
-
-    /**
-     * The covering leaf paths the engine-side coverage check uses for this request, or {@code null}
-     * when the request is ineligible (scripted, no doc, or noop detection on — all of which need
-     * the old source regardless). Shared by the per-item path and the bulk prefetch so both build
-     * identical {@code getForUpdate} calls.
-     */
-    public static Set<String> coveringPathsFor(UpdateRequest request) {
-        if (request.script() == null && request.doc() != null && request.detectNoop() == false) {
-            // Doc update with noop detection off: the old source is only needed to preserve fields
-            // the incoming doc omits. Declare the incoming doc's covering paths so the engine can
-            // skip materializing _source entirely when they cover every stored column.
-            return coveringFieldPaths(request.doc().sourceAsMap());
-        }
-        return null;
-    }
-
-    /**
-     * Builds the index request for a coverage-verified full replace: the incoming doc's leaf paths
-     * cover every column the stored document could have, so merging with the old source would
-     * reproduce the incoming doc exactly. Mirrors {@link #prepareUpdateIndexRequest} minus the merge.
-     */
-    Result prepareCoveredReplace(UpdateRequest request, GetResult getResult) {
-        final IndexRequest currentRequest = request.doc();
-        final String routing = calculateRouting(getResult, currentRequest);
-        final Map<String, Object> sourceAsMap = currentRequest.sourceAsMap();
-        final IndexRequest finalIndexRequest = Requests.indexRequest(request.index())
-            .id(request.id())
-            .routing(routing)
-            .source(sourceAsMap, currentRequest.getContentType())
-            .extraFieldValues(currentRequest.extraFieldValues())
-            .setIfSeqNo(getResult.getSeqNo())
-            .setIfPrimaryTerm(getResult.getPrimaryTerm())
-            .waitForActiveShards(request.waitForActiveShards())
-            .timeout(request.timeout())
-            .setRefreshPolicy(request.getRefreshPolicy());
-        return new Result(finalIndexRequest, DocWriteResponse.Result.UPDATED, sourceAsMap, currentRequest.getContentType());
-    }
-
-    /**
-     * Flattens an update document into its covering leaf paths: dotted paths at which the value is
-     * NOT an object. Per {@link XContentHelper#update} merge semantics, objects merge recursively
-     * while any non-object value (scalar, {@code null}, or array) replaces the stored subtree at
-     * that path wholesale — so each such path covers itself and everything below it.
-     */
-    static Set<String> coveringFieldPaths(Map<String, Object> source) {
-        Set<String> paths = new HashSet<>();
-        collectCoveringPaths("", source, paths);
-        return paths;
-    }
-
-    @SuppressWarnings("unchecked")
-    private static void collectCoveringPaths(String prefix, Map<String, Object> map, Set<String> out) {
-        for (Map.Entry<String, Object> entry : map.entrySet()) {
-            String path = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
-            if (entry.getValue() instanceof Map) {
-                collectCoveringPaths(path, (Map<String, Object>) entry.getValue(), out);
-            } else {
-                out.add(path);
-            }
-        }
     }
 
     /**

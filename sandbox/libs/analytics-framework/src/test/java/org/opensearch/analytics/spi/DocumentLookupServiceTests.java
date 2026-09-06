@@ -105,85 +105,6 @@ public class DocumentLookupServiceTests extends OpenSearchTestCase {
 
     // ---- getById ------------------------------------------------------------
 
-    public void testGetById_coveredUpdateSkipsRowFetch() throws Exception {
-        when(resolver.resolveMetadata(reader, "doc1")).thenReturn(
-            new DocumentMetadataResolver.DocumentMetadata("doc1", 3L, 7L, 5L, 42L, 2L)
-        );
-        WriterFileSet fs = fileSet(7L, "gen7.parquet");
-        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs);
-        when(executor.columnPaths(fs)).thenReturn(
-            java.util.Set.of("title", "user.name", "user.age", "_id", "_seq_no", "_primary_term", "_version", "__row_id__")
-        );
-
-        DocumentLookupResult result = service.getById("doc1", java.util.Set.of("title", "user"), reader, INDEX);
-
-        assertTrue(result.exists());
-        assertNull("covered update must not materialize source", result.source());
-        assertEquals(5L, result.version());
-        assertEquals(42L, result.seqNo());
-        assertEquals(2L, result.primaryTerm());
-        verify(executor, never()).executeSingleRow(anyLong(), any());
-    }
-
-    public void testGetById_uncoveredUpdateFallsBackToRowFetch() throws Exception {
-        when(resolver.resolveMetadata(reader, "doc1")).thenReturn(
-            new DocumentMetadataResolver.DocumentMetadata("doc1", 3L, 7L, 5L, 42L, 2L)
-        );
-        WriterFileSet fs = fileSet(7L, "gen7.parquet");
-        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs);
-        when(executor.columnPaths(fs)).thenReturn(java.util.Set.of("title", "user.name", "extra"));
-        when(executor.executeSingleRow(3L, fs)).thenReturn(row("title", "t", "user.name", "u", "extra", "e"));
-
-        DocumentLookupResult result = service.getById("doc1", java.util.Set.of("title", "user"), reader, INDEX);
-
-        assertTrue(result.exists());
-        assertNotNull("uncovered update must fetch the row", result.source());
-        verify(executor).executeSingleRow(3L, fs);
-    }
-
-    public void testGetById_unknownSchemaFallsBackToRowFetch() throws Exception {
-        when(resolver.resolveMetadata(reader, "doc1")).thenReturn(
-            new DocumentMetadataResolver.DocumentMetadata("doc1", 3L, 7L, 5L, 42L, 2L)
-        );
-        WriterFileSet fs = fileSet(7L, "gen7.parquet");
-        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs);
-        when(executor.columnPaths(fs)).thenReturn(null);
-        when(executor.executeSingleRow(3L, fs)).thenReturn(row("title", "t"));
-
-        DocumentLookupResult result = service.getById("doc1", java.util.Set.of("title"), reader, INDEX);
-
-        assertTrue(result.exists());
-        assertNotNull(result.source());
-        verify(executor).executeSingleRow(3L, fs);
-    }
-
-    public void testGetById_legacyMetadataWithoutVersionFallsBackToRowFetch() throws Exception {
-        // Row-location-only metadata (no version doc values): coverage must not apply, because the
-        // metadata-only result could not carry version/seqNo/primaryTerm.
-        when(resolver.resolveMetadata(reader, "doc1")).thenReturn(metadata("doc1", 3L, 7L));
-        WriterFileSet fs = fileSet(7L, "gen7.parquet");
-        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs);
-        when(executor.executeSingleRow(3L, fs)).thenReturn(row("title", "t", "_version", 5L, "_seq_no", 42L, "_primary_term", 2L));
-
-        DocumentLookupResult result = service.getById("doc1", java.util.Set.of("title"), reader, INDEX);
-
-        assertTrue(result.exists());
-        assertNotNull(result.source());
-        verify(executor).executeSingleRow(3L, fs);
-        verify(executor, never()).columnPaths(any());
-    }
-
-    public void testIsCovered_prefixAndMetadataSemantics() {
-        // A covering path covers itself and every descendant column.
-        assertTrue(DocumentLookupService.isCovered(java.util.Set.of("user"), java.util.Set.of("user.name", "user.address.city")));
-        // Metadata columns never require coverage.
-        assertTrue(DocumentLookupService.isCovered(java.util.Set.of("title"), java.util.Set.of("title", "_id", "_seq_no", "__row_id__")));
-        // A missing non-metadata column fails coverage.
-        assertFalse(DocumentLookupService.isCovered(java.util.Set.of("title"), java.util.Set.of("title", "body")));
-        // A child covering path does not cover its parent column.
-        assertFalse(DocumentLookupService.isCovered(java.util.Set.of("user.name"), java.util.Set.of("user")));
-    }
-
     public void testGetById_notFoundWhenResolverReturnsNull() throws Exception {
         when(resolver.resolveMetadata(reader, "missing")).thenReturn(null);
 
@@ -395,41 +316,13 @@ public class DocumentLookupServiceTests extends OpenSearchTestCase {
         when(executor.executeRows(List.of(5L, 2L), fs7)).thenReturn(Map.of(5L, row("f", "va"), 2L, row("f", "vb")));
         when(executor.executeRows(List.of(9L), fs8)).thenReturn(Map.of(9L, row("f", "vc")));
 
-        Map<String, DocumentLookupResult> results = service.getByIds(
-            List.of(
-                new DocumentLookupService.BatchGet("a", null),
-                new DocumentLookupService.BatchGet("b", null),
-                new DocumentLookupService.BatchGet("c", null)
-            ),
-            reader,
-            INDEX
-        );
+        Map<String, DocumentLookupResult> results = service.getByIds(List.of("a", "b", "c"), reader, INDEX);
 
         assertEquals(3, results.size());
         assertTrue(results.get("a").exists());
         assertTrue(results.get("b").exists());
         assertTrue(results.get("c").exists());
         verify(executor, never()).executeSingleRow(anyLong(), any());
-    }
-
-    public void testGetByIds_coveredIdSkipsFetchWhileOthersBatch() throws Exception {
-        when(resolver.resolveMetadata(reader, "cov")).thenReturn(new DocumentMetadataResolver.DocumentMetadata("cov", 4L, 7L, 3L, 20L, 1L));
-        when(resolver.resolveMetadata(reader, "raw")).thenReturn(new DocumentMetadataResolver.DocumentMetadata("raw", 6L, 7L, 2L, 21L, 1L));
-        WriterFileSet fs7 = fileSet(7L, "gen7.parquet");
-        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs7);
-        when(executor.columnPaths(fs7)).thenReturn(java.util.Set.of("title", "_id", "_seq_no", "_primary_term", "_version"));
-        when(executor.executeRows(List.of(6L), fs7)).thenReturn(Map.of(6L, row("title", "t")));
-
-        Map<String, DocumentLookupResult> results = service.getByIds(
-            List.of(new DocumentLookupService.BatchGet("cov", java.util.Set.of("title")), new DocumentLookupService.BatchGet("raw", null)),
-            reader,
-            INDEX
-        );
-
-        assertTrue(results.get("cov").exists());
-        assertNull("covered id must stay metadata-only", results.get("cov").source());
-        assertEquals(3L, results.get("cov").version());
-        assertNotNull("uncovered id fetches through the batch", results.get("raw").source());
     }
 
     public void testGetByIds_missingIdMapsToNotFound() throws Exception {
@@ -441,11 +334,7 @@ public class DocumentLookupServiceTests extends OpenSearchTestCase {
         when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs7);
         when(executor.executeRows(List.of(1L), fs7)).thenReturn(Map.of(1L, row("f", "v")));
 
-        Map<String, DocumentLookupResult> results = service.getByIds(
-            List.of(new DocumentLookupService.BatchGet("ghost", null), new DocumentLookupService.BatchGet("real", null)),
-            reader,
-            INDEX
-        );
+        Map<String, DocumentLookupResult> results = service.getByIds(List.of("ghost", "real"), reader, INDEX);
 
         assertFalse(results.get("ghost").exists());
         assertTrue(results.get("real").exists());
@@ -458,14 +347,7 @@ public class DocumentLookupServiceTests extends OpenSearchTestCase {
         when(resolver.resolveMetadata(reader, "b")).thenReturn(new DocumentMetadataResolver.DocumentMetadata("b", 6L, 7L, 1L, 11L, 1L));
         when(executor.executeRows(List.of(5L, 6L), fs7)).thenReturn(Map.of(5L, row("f", "v")));
 
-        expectThrows(
-            IllegalStateException.class,
-            () -> service.getByIds(
-                List.of(new DocumentLookupService.BatchGet("a", null), new DocumentLookupService.BatchGet("b", null)),
-                reader,
-                INDEX
-            )
-        );
+        expectThrows(IllegalStateException.class, () -> service.getByIds(List.of("a", "b"), reader, INDEX));
     }
 
     public void testExtractLong_number() {

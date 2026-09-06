@@ -47,8 +47,7 @@ public interface DocumentLookupProvider {
     /**
      * Batched form of {@link #getById}: resolves all gets against the same reader snapshot,
      * letting implementations amortize storage reads across the batch (e.g. one native call
-     * per file instead of one per document). Each get's {@code updateFieldPaths} carries its
-     * coverage-check paths exactly as in the single-get path.
+     * per file instead of one per document).
      *
      * <p>The default delegates to per-get {@link #getById}; implementations with a cheaper
      * bulk path should override. Returns a map keyed by id with an entry for every get.

@@ -450,14 +450,14 @@ public class DataFormatAwareUpdateIT extends AbstractCompositeEngineIT {
         assertEquals(33, value(client().prepareGet(INDEX, "c3").setRealtime(false).get()));
     }
 
-    public void testCoveredFullDocUpdateAcrossRefresh() {
+    public void testFullDocUpdateAcrossRefresh() {
         createManualRefreshIndex();
 
         IndexResponse created = indexDoc("k1", "v_old", 1);
         assertEquals(DocWriteResponse.Result.CREATED, created.getResult());
         refreshIndex(INDEX); // commit: k1 now only reachable via the non-realtime (Lucene+Parquet) path
 
-        // Full-doc update: covers both mapped fields; detect_noop=false → coverage skip eligible.
+        // Full-doc update replacing both mapped fields, noop detection off.
         org.opensearch.action.update.UpdateResponse updated = client().prepareUpdate(INDEX, "k1")
             .setDoc("name", "v_new", "value", 2)
             .setDetectNoop(false)
@@ -472,7 +472,7 @@ public class DataFormatAwareUpdateIT extends AbstractCompositeEngineIT {
         assertEquals(2, value(row));
         assertEquals(2L, row.getVersion());
 
-        // The covered path must still enforce optimistic concurrency on the re-index leg.
+        // Optimistic concurrency must be enforced on the re-index leg.
         refreshIndex(INDEX);
         VersionConflictEngineException conflict = expectThrows(
             VersionConflictEngineException.class,
@@ -487,8 +487,8 @@ public class DataFormatAwareUpdateIT extends AbstractCompositeEngineIT {
     }
 
     /**
-     * Update-API PARTIAL update on a committed doc: not covered (omits {@code value}), so the GET
-     * leg must fall back to the Parquet row decode and the merge must retain the omitted field.
+     * Update-API PARTIAL update on a committed doc: the GET leg reads the stored Parquet row and
+     * the merge must retain the omitted field.
      */
     public void testPartialDocUpdateAcrossRefreshRetainsOmittedFields() {
         createManualRefreshIndex();
@@ -511,10 +511,9 @@ public class DataFormatAwareUpdateIT extends AbstractCompositeEngineIT {
     }
 
     /**
-     * Covered full-doc update WITHIN the refresh window (realtime path: version map + translog).
-     * Coverage machinery must not disturb the realtime flow.
+     * Full-doc update WITHIN the refresh window (realtime path: version map + translog).
      */
-    public void testCoveredFullDocUpdateWithinRefreshWindow() {
+    public void testFullDocUpdateWithinRefreshWindow() {
         createManualRefreshIndex();
 
         indexDoc("k1", "v_old", 1);

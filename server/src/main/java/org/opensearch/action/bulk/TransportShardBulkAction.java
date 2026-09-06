@@ -653,14 +653,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     continue;
                 }
                 UpdateRequest updateRequest = (UpdateRequest) docWriteRequest;
-                specs.add(
-                    new ShardGetService.UpdateGetSpec(
-                        updateRequest.id(),
-                        updateRequest.ifSeqNo(),
-                        updateRequest.ifPrimaryTerm(),
-                        UpdateHelper.coveringPathsFor(updateRequest)
-                    )
-                );
+                specs.add(new ShardGetService.UpdateGetSpec(updateRequest.id(), updateRequest.ifSeqNo(), updateRequest.ifPrimaryTerm()));
             }
             if (specs.size() < 2) {
                 return null; // nothing to amortize

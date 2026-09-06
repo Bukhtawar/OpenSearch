@@ -27,7 +27,7 @@ import org.opensearch.indices.IndicesModule;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,106 +59,41 @@ public class DocumentLookupService {
     }
 
     public DocumentLookupResult getById(String id, IndexReaderProvider.Reader reader, Index index) throws IOException {
-        return getById(id, null, reader, index);
-    }
-
-    /**
-     * Get-by-id with an optional update coverage check. When {@code coveringPaths} is non-null it
-     * holds the incoming update document's covering leaf paths (paths whose values replace the
-     * stored subtree wholesale). If those paths cover every non-metadata column of the file the
-     * document lives in, the old row contributes nothing to the merged result — so this returns a
-     * metadata-only result ({@code source == null}) and skips the row fetch entirely. Requires the
-     * resolver to supply version metadata from doc values; legacy segments without it, unknown
-     * schemas, and uncovered documents all fall back to the normal row fetch.
-     */
-    public DocumentLookupResult getById(String id, Set<String> coveringPaths, IndexReaderProvider.Reader reader, Index index)
-        throws IOException {
         DocumentMetadata metadata = documentResolver.resolveMetadata(reader, id);
         if (metadata == null) {
             return DocumentLookupResult.notFound(id);
-        }
-        if (coveringPaths != null && metadata.hasVersionMetadata()) {
-            WriterFileSet fileSet = reader.catalogSnapshot().findFileSet(executor.formatName(), metadata.writerGeneration());
-            if (fileSet != null) {
-                Set<String> columns = executor.columnPaths(fileSet);
-                if (columns != null && isCovered(coveringPaths, columns)) {
-                    return new DocumentLookupResult(
-                        id,
-                        metadata.version(),
-                        true,
-                        null,
-                        metadata.seqNo(),
-                        metadata.primaryTerm(),
-                        Map.of(),
-                        Map.of()
-                    );
-                }
-            }
         }
         return buildResultFromRow(id, fetchRow(metadata, reader));
     }
 
     /**
-     * A single id in a {@link #getByIds} batch: the document id plus the optional covering leaf
-     * paths of the incoming update document (same semantics as
-     * {@link #getById(String, Set, IndexReaderProvider.Reader, Index)}; {@code null} disables the
-     * coverage check for that id).
-     */
-    public record BatchGet(String id, Set<String> coveringPaths) {
-    }
-
-    /**
-     * Batched form of {@link #getById}: resolves every id via the secondary index, applies the
-     * per-id coverage check (covered ids never reach the row fetch at all), then fetches the
-     * remaining rows grouped by writer generation through {@link DocumentRowReader#executeRows}
-     * — one backend call per file instead of one per document, amortizing session setup and
-     * page decompression across the batch.
+     * Batched form of {@link #getById}: resolves every id via the secondary index, then fetches
+     * the rows grouped by writer generation through {@link DocumentRowReader#executeRows} — one
+     * backend call per file instead of one per document, amortizing session setup and page
+     * decompression across the batch.
      *
      * <p>Ids are resolved in sorted order for terms-dictionary locality. The returned map is
      * keyed by id and contains an entry for every requested id (missing documents map to
      * {@link DocumentLookupResult#notFound}).
      */
-    public Map<String, DocumentLookupResult> getByIds(List<BatchGet> gets, IndexReaderProvider.Reader reader, Index index)
-        throws IOException {
+    public Map<String, DocumentLookupResult> getByIds(List<String> ids, IndexReaderProvider.Reader reader, Index index) throws IOException {
         Map<String, DocumentLookupResult> results = new LinkedHashMap<>();
-        if (gets.isEmpty()) {
+        if (ids.isEmpty()) {
             return results;
         }
         // Resolve in id order for terms-dict locality; output order is re-established at the end.
-        List<BatchGet> sorted = new ArrayList<>(gets);
-        sorted.sort(Comparator.comparing(BatchGet::id));
+        List<String> sorted = new ArrayList<>(ids);
+        Collections.sort(sorted);
 
         // generation -> resolved metadata needing a row fetch
         Map<Long, List<DocumentMetadata>> pendingByGeneration = new LinkedHashMap<>();
         Map<String, DocumentLookupResult> resolved = new LinkedHashMap<>();
 
-        for (BatchGet get : sorted) {
-            DocumentMetadata metadata = documentResolver.resolveMetadata(reader, get.id());
+        for (String id : sorted) {
+            DocumentMetadata metadata = documentResolver.resolveMetadata(reader, id);
             if (metadata == null) {
-                resolved.put(get.id(), DocumentLookupResult.notFound(get.id()));
+                resolved.put(id, DocumentLookupResult.notFound(id));
                 continue;
-            }
-            if (get.coveringPaths() != null && metadata.hasVersionMetadata()) {
-                WriterFileSet fileSet = reader.catalogSnapshot().findFileSet(executor.formatName(), metadata.writerGeneration());
-                if (fileSet != null) {
-                    Set<String> columns = executor.columnPaths(fileSet);
-                    if (columns != null && isCovered(get.coveringPaths(), columns)) {
-                        resolved.put(
-                            get.id(),
-                            new DocumentLookupResult(
-                                get.id(),
-                                metadata.version(),
-                                true,
-                                null,
-                                metadata.seqNo(),
-                                metadata.primaryTerm(),
-                                Map.of(),
-                                Map.of()
-                            )
-                        );
-                        continue;
-                    }
-                }
             }
             pendingByGeneration.computeIfAbsent(metadata.writerGeneration(), g -> new ArrayList<>()).add(metadata);
         }
@@ -195,39 +130,10 @@ public class DocumentLookupService {
         }
 
         // Re-establish caller order.
-        for (BatchGet get : gets) {
-            results.put(get.id(), resolved.get(get.id()));
+        for (String id : ids) {
+            results.put(id, resolved.get(id));
         }
         return results;
-    }
-
-    /**
-     * Whether every non-metadata column is covered by some covering path: equal to it, or a
-     * descendant of it (a non-object value at {@code user} replaces all of {@code user.*}).
-     */
-    static boolean isCovered(Set<String> coveringPaths, Set<String> columnPaths) {
-        for (String column : columnPaths) {
-            if (isMetadataColumn(column)) {
-                continue;
-            }
-            String path = column;
-            boolean covered = false;
-            while (true) {
-                if (coveringPaths.contains(path)) {
-                    covered = true;
-                    break;
-                }
-                int idx = path.lastIndexOf('.');
-                if (idx < 0) {
-                    break;
-                }
-                path = path.substring(0, idx);
-            }
-            if (covered == false) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /** Engine/storage metadata columns excluded from {@code _source} and from coverage checks. */

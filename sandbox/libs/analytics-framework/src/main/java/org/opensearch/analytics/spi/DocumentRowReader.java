@@ -15,7 +15,6 @@ import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Backend-specific execution contract for reading document rows. Backends implement this
@@ -75,16 +74,4 @@ public interface DocumentRowReader {
      */
     List<Map<String, Object>> executeRowsAboveSeqNo(List<WriterFileSet> fileSets, long fromSeqNoExclusive) throws IOException;
 
-    /**
-     * The dotted leaf column paths of the given file set's schema (e.g. {@code user.name}),
-     * including metadata columns. Used for update coverage checks: when an update document's
-     * covering paths span every non-metadata column, the stored row need not be read at all.
-     * File sets are immutable, so implementations should cache per file.
-     *
-     * @return the column paths, or {@code null} when the backend cannot provide them (callers
-     *         must then fall back to reading the row)
-     */
-    default Set<String> columnPaths(WriterFileSet fileSet) throws IOException {
-        return null;
-    }
 }
