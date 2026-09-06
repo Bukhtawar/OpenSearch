@@ -1602,6 +1602,24 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
+     * Opportunistic batched get (bulk-update prefetch). Returns results only for gets the engine
+     * could serve from committed segments in one pass; absent ids MUST be fetched via
+     * {@link #get(Engine.Get)}. Returns an empty map when the engine has no batched path.
+     */
+    public java.util.Map<String, Engine.GetResult> getAll(java.util.List<Engine.Get> gets) {
+        readAllowed();
+        DocumentMapper mapper = mapperService.documentMapper();
+        if (mapper == null) {
+            return java.util.Map.of();
+        }
+        try {
+            return getIndexer().getByIds(gets);
+        } catch (IOException e) {
+            throw new OpenSearchException("batched get-by-id failed", e);
+        }
+    }
+
+    /**
      * Writes all indexing changes to disk and opens a new searcher reflecting all changes.  This can throw {@link AlreadyClosedException}.
      */
     public void refresh(String source) {

@@ -41,6 +41,30 @@ public interface DocumentRowReader {
     Map<String, Object> executeSingleRow(long rowId, WriterFileSet fileSet) throws IOException;
 
     /**
+     * Fetch multiple rows from ONE pre-resolved file set in a single backend call, amortizing
+     * per-call session setup, page decompression, and transport across the batch. Row ids must
+     * be non-negative; implementations may require nothing about their order (this default and
+     * the native implementation both sort internally as needed).
+     *
+     * <p>The default delegates to per-row {@link #executeSingleRow} so existing backends keep
+     * working; backends with a cheaper bulk path should override.
+     *
+     * @param rowIds the row offsets to fetch, all within {@code fileSet}
+     * @param fileSet the file set to read from
+     * @return map from row id to its field-name → value map; ids whose row was not found are absent
+     */
+    default Map<Long, Map<String, Object>> executeRows(List<Long> rowIds, WriterFileSet fileSet) throws IOException {
+        Map<Long, Map<String, Object>> out = new java.util.LinkedHashMap<>();
+        for (Long rowId : rowIds) {
+            Map<String, Object> row = executeSingleRow(rowId, fileSet);
+            if (row != null) {
+                out.put(rowId, row);
+            }
+        }
+        return out;
+    }
+
+    /**
      * Fetch all rows with {@code _seq_no > fromSeqNoExclusive} from the Core-resolved file sets
      * (one per segment for this backend's format).
      *

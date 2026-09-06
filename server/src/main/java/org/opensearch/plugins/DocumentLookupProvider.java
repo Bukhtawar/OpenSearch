@@ -43,6 +43,28 @@ public interface DocumentLookupProvider {
         throws IOException;
 
     /**
+     * Batched form of {@link #getById}: resolves all gets against the same reader snapshot,
+     * letting implementations amortize storage reads across the batch (e.g. one native call
+     * per file instead of one per document). Each get's {@code updateFieldPaths} carries its
+     * coverage-check paths exactly as in the single-get path.
+     *
+     * <p>The default delegates to per-get {@link #getById}; implementations with a cheaper
+     * bulk path should override. Returns a map keyed by id with an entry for every get.
+     */
+    default java.util.Map<String, DocumentLookupResult> getByIds(
+        List<Engine.Get> gets,
+        IndexReaderProvider.Reader reader,
+        Index index,
+        DocumentMetadataResolver resolver
+    ) throws IOException {
+        java.util.Map<String, DocumentLookupResult> results = new java.util.LinkedHashMap<>();
+        for (Engine.Get get : gets) {
+            results.put(get.id(), getById(get, reader, index, resolver));
+        }
+        return results;
+    }
+
+    /**
      * Resolves only version metadata ({@code _version}/{@code _seq_no}/{@code _primary_term}) for an id,
      * skipping {@code _source} reconstruction. The {@code resolver} resolves the document's row location.
      */

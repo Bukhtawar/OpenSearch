@@ -152,6 +152,99 @@ public class GetService implements Closeable {
             }
         }
 
+        /** Unique context ids for batch fetches; negative range so they never collide with QTF task ids. */
+        private static final java.util.concurrent.atomic.AtomicLong BATCH_CONTEXT_IDS = new java.util.concurrent.atomic.AtomicLong(
+            -1_000_000L
+        );
+
+        /**
+         * Batched point read: fetches all requested rows of one parquet file through a single
+         * native {@code fetch_by_row_ids} call (the QTF fetch-phase primitive), so reader/session
+         * setup, page decompression, and the Arrow FFI import are paid once per file instead of
+         * once per document. The reader spans exactly one segment, so local row ids are global.
+         * Falls back to per-row reads when the file's schema cannot be probed.
+         */
+        @Override
+        public Map<Long, Map<String, Object>> executeRows(List<Long> rowIds, WriterFileSet parquetSet) throws IOException {
+            if (rowIds.isEmpty()) {
+                return Map.of();
+            }
+            if (rowIds.size() == 1) {
+                Map<String, Object> row = executeSingleRow(rowIds.get(0), parquetSet);
+                return row == null ? Map.of() : Map.of(rowIds.get(0), row);
+            }
+            FileSchema schema = fileSchema(parquetSet);
+            if (schema == null) {
+                return DocumentRowReader.super.executeRows(rowIds, parquetSet);
+            }
+            // Native contract: ascending, non-empty. Dedupe defensively; results are keyed by row id.
+            long[] sorted = rowIds.stream().mapToLong(Long::longValue).distinct().sorted().toArray();
+            for (long rowId : sorted) {
+                if (rowId < 0) {
+                    throw new IllegalArgumentException("rowId must be non-negative, got: " + rowId);
+                }
+            }
+            String parquetDir = parquetSet.directory();
+            String parquetFile = parquetSet.files().iterator().next();
+            long runtimePtr = dfPlugin.getDataFusionService().getNativeRuntime().get();
+            MonoFileWriterSet segment = MonoFileWriterSet.of(parquetDir, parquetSet.writerGeneration(), parquetFile, 0L);
+            try (ReaderHandle readerHandle = new ReaderHandle(parquetDir, List.of(segment), null, List.of(), List.of())) {
+                org.apache.arrow.vector.BigIntVector rowIdVector = new org.apache.arrow.vector.BigIntVector(
+                    org.opensearch.index.engine.dataformat.DocumentInput.ROW_ID_FIELD,
+                    sharedAllocator
+                );
+                try {
+                    rowIdVector.allocateNew(sorted.length);
+                    for (int i = 0; i < sorted.length; i++) {
+                        rowIdVector.set(i, sorted[i]);
+                    }
+                    rowIdVector.setValueCount(sorted.length);
+                    long streamPtr = NativeBridge.fetchByRowIds(
+                        readerHandle.getPointer(),
+                        rowIdVector.getDataBuffer().memoryAddress(),
+                        sorted.length,
+                        schema.topLevelColumns().toArray(new String[0]),
+                        runtimePtr,
+                        BATCH_CONTEXT_IDS.decrementAndGet()
+                    );
+                    return readRowsKeyedByRowId(streamPtr);
+                } finally {
+                    // The stream is fully drained inside readRowsKeyedByRowId before this runs,
+                    // so the native call no longer references the vector's off-heap buffer.
+                    rowIdVector.close();
+                }
+            }
+        }
+
+        /** Drains a result stream into a map keyed by each row's {@code __row_id__} column. */
+        private Map<Long, Map<String, Object>> readRowsKeyedByRowId(long streamPtr) {
+            Map<Long, Map<String, Object>> results = new java.util.LinkedHashMap<>();
+            try (
+                StreamHandle streamHandle = new StreamHandle(streamPtr, dfPlugin.getDataFusionService().getNativeRuntime());
+                DatafusionResultStream stream = new DatafusionResultStream(streamHandle, sharedAllocator, importStagingAllocator)
+            ) {
+                var iter = stream.iterator();
+                while (iter.hasNext()) {
+                    var batch = iter.next();
+                    try (VectorSchemaRoot root = batch.getArrowRoot()) {
+                        FieldVector idVec = root.getVector(IdFieldMapper.NAME);
+                        for (int i = 0; i < root.getRowCount(); i++) {
+                            Map<String, Object> row = ArrowValues.toSourceMap(root, i);
+                            if (idVec != null && !idVec.isNull(i)) {
+                                row.put(IdFieldMapper.NAME, Uid.decodeId((byte[]) idVec.getObject(i)));
+                            }
+                            Object rowIdVal = row.get(org.opensearch.index.engine.dataformat.DocumentInput.ROW_ID_FIELD);
+                            if (rowIdVal instanceof Number == false) {
+                                throw new IllegalStateException("Batch fetch returned a row without a numeric __row_id__ column");
+                            }
+                            results.put(((Number) rowIdVal).longValue(), row);
+                        }
+                    }
+                }
+            }
+            return results;
+        }
+
         @Override
         public List<Map<String, Object>> executeRowsAboveSeqNo(List<WriterFileSet> fileSets, long seqNoFloor) throws IOException {
             if (fileSets.isEmpty()) {
@@ -225,10 +318,14 @@ public class GetService implements Closeable {
             }
         }
 
-        /** Cached dotted leaf column paths per immutable parquet file (directory + file name). */
-        private final ConcurrentHashMap<String, Set<String>> fileColumnPathsCache = new ConcurrentHashMap<>();
+        /** Cached schema (dotted leaf paths + top-level column names) per immutable parquet file. */
+        private final ConcurrentHashMap<String, FileSchema> fileSchemaCache = new ConcurrentHashMap<>();
 
         private static final int COLUMN_PATHS_CACHE_MAX_ENTRIES = 512;
+
+        /** A file's schema, probed once: dotted leaf paths (coverage checks) + top-level names (batch projection). */
+        private record FileSchema(Set<String> leafPaths, List<String> topLevelColumns) {
+        }
 
         /**
          * Resolves the file's schema by running the existing by-row-id point read on row 0 and
@@ -239,10 +336,15 @@ public class GetService implements Closeable {
          */
         @Override
         public Set<String> columnPaths(WriterFileSet parquetSet) throws IOException {
+            FileSchema schema = fileSchema(parquetSet);
+            return schema == null ? null : schema.leafPaths();
+        }
+
+        private FileSchema fileSchema(WriterFileSet parquetSet) throws IOException {
             String parquetDir = parquetSet.directory();
             String parquetFile = parquetSet.files().iterator().next();
             String cacheKey = parquetDir + "/" + parquetFile;
-            Set<String> cached = fileColumnPathsCache.get(cacheKey);
+            FileSchema cached = fileSchemaCache.get(cacheKey);
             if (cached != null) {
                 return cached;
             }
@@ -256,15 +358,15 @@ public class GetService implements Closeable {
                     0L,
                     "DataFusion schema probe failed"
                 );
-                Set<String> columns = readColumnPaths(streamPtr);
-                if (columns != null && fileColumnPathsCache.size() < COLUMN_PATHS_CACHE_MAX_ENTRIES) {
-                    fileColumnPathsCache.put(cacheKey, columns);
+                FileSchema schema = readFileSchema(streamPtr);
+                if (schema != null && fileSchemaCache.size() < COLUMN_PATHS_CACHE_MAX_ENTRIES) {
+                    fileSchemaCache.put(cacheKey, schema);
                 }
-                return columns;
+                return schema;
             }
         }
 
-        private Set<String> readColumnPaths(long streamPtr) {
+        private FileSchema readFileSchema(long streamPtr) {
             try (
                 StreamHandle streamHandle = new StreamHandle(streamPtr, dfPlugin.getDataFusionService().getNativeRuntime());
                 DatafusionResultStream stream = new DatafusionResultStream(streamHandle, sharedAllocator, importStagingAllocator)
@@ -274,10 +376,12 @@ public class GetService implements Closeable {
                 var batch = iter.next();
                 try (VectorSchemaRoot root = batch.getArrowRoot()) {
                     Set<String> paths = new HashSet<>();
+                    List<String> topLevel = new ArrayList<>();
                     for (Field field : root.getSchema().getFields()) {
+                        topLevel.add(field.getName());
                         flattenFieldPaths("", field, paths);
                     }
-                    return Set.copyOf(paths);
+                    return new FileSchema(Set.copyOf(paths), List.copyOf(topLevel));
                 }
             }
         }

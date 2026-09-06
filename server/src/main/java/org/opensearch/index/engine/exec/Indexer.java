@@ -209,6 +209,16 @@ public interface Indexer
     Engine.GetResult getById(Engine.Get get, BiFunction<String, Engine.SearcherScope, Engine.Searcher> searcherFactory) throws IOException;
 
     /**
+     * Opportunistic batched get-by-id (bulk-update prefetch). Returns results ONLY for gets fully
+     * servable from committed segments without a read conflict; callers MUST fall back to
+     * {@link #getById} for absent ids. The default returns an empty map (batching unsupported),
+     * which makes the fallback total — engines with a cheaper bulk path override.
+     */
+    default java.util.Map<String, Engine.GetResult> getByIds(java.util.List<Engine.Get> gets) throws IOException {
+        return java.util.Map.of();
+    }
+
+    /**
      * Returns {@code true} if there are merges queued but not yet started.
      * <p>
      * Implementations must override explicitly — there is no default to ensure each engine

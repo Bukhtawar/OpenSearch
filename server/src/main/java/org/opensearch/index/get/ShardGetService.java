@@ -77,6 +77,7 @@ import org.opensearch.index.shard.IndexShard;
 import org.opensearch.search.fetch.subphase.FetchSourceContext;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -200,6 +201,73 @@ public final class ShardGetService extends AbstractIndexShardComponent {
             FetchSourceContext.FETCH_SOURCE,
             updateFieldPaths
         );
+    }
+
+    /**
+     * One id of a {@link #multiGetForUpdate} batch, carrying the same preconditions and coverage
+     * paths its single-get counterpart would pass to {@link #getForUpdate}.
+     *
+     * @opensearch.experimental
+     */
+    @org.opensearch.common.annotation.ExperimentalApi
+    public record UpdateGetSpec(String id, long ifSeqNo, long ifPrimaryTerm, @Nullable Set<String> updateFieldPaths) {
+    }
+
+    /**
+     * Opportunistic batched {@link #getForUpdate}: serves as many ids as the engine can resolve
+     * from committed segments in one pass (one backend call per storage file). The returned map
+     * contains ONLY ids that were fully served; callers MUST fall back to {@link #getForUpdate}
+     * for absent ids (realtime hits, conflicts, engines without a batched path). Never throws
+     * per-id errors — a failing batch degrades to the per-id path, it does not fail the caller.
+     */
+    public Map<String, GetResult> multiGetForUpdate(List<UpdateGetSpec> specs) {
+        if (specs.isEmpty()) {
+            return Map.of();
+        }
+        List<Engine.Get> gets = new ArrayList<>(specs.size());
+        for (UpdateGetSpec spec : specs) {
+            Term uidTerm = new Term(IdFieldMapper.NAME, Uid.encodeId(spec.id()));
+            gets.add(
+                new Engine.Get(true, true, spec.id(), uidTerm).version(Versions.MATCH_ANY)
+                    .versionType(VersionType.INTERNAL)
+                    .setIfSeqNo(spec.ifSeqNo())
+                    .setIfPrimaryTerm(spec.ifPrimaryTerm())
+                    .updateFieldPaths(spec.updateFieldPaths())
+            );
+        }
+        Map<String, Engine.GetResult> engineResults = indexShard.getAll(gets);
+        if (engineResults.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, GetResult> out = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, Engine.GetResult> entry : engineResults.entrySet()) {
+            try (Engine.GetResult get = entry.getValue()) {
+                if (get.exists() == false) {
+                    out.put(
+                        entry.getKey(),
+                        new GetResult(
+                            shardId.getIndexName(),
+                            entry.getKey(),
+                            UNASSIGNED_SEQ_NO,
+                            UNASSIGNED_PRIMARY_TERM,
+                            -1,
+                            false,
+                            null,
+                            null,
+                            null
+                        )
+                    );
+                } else if (get instanceof DocumentLookupResult.PreMaterialized) {
+                    out.put(
+                        entry.getKey(),
+                        buildFromLookup(((DocumentLookupResult.PreMaterialized) get).lookup(), FetchSourceContext.FETCH_SOURCE)
+                    );
+                }
+                // Any other shape is unexpected from the batched path: leave absent so the caller
+                // falls back to the fully-featured single-get flow.
+            }
+        }
+        return out;
     }
 
     /**

@@ -365,6 +365,91 @@ public class DataFormatAwareUpdateIT extends AbstractCompositeEngineIT {
      * decode — this test pins the end-to-end semantics of that path on the real composite engine:
      * correct merge result, version increment, and conditional-update conflict detection intact.
      */
+    /**
+     * A bulk of updates against COMMITTED docs drives the batched get prefetch end to end
+     * (TransportShardBulkAction collects the unique-id update items, resolves them through one
+     * engine pass with one native call per parquet file, and each item consumes its prefetched
+     * result). Mixes every eligibility class in one bulk: a covered full-doc update, partial
+     * updates, a duplicate-id update pair, and an index+update pair on the same id (both
+     * prefetch-ineligible: sequential visibility).
+     */
+    public void testBulkUpdatesOnCommittedDocsUseBatchedPrefetch() {
+        createManualRefreshIndex();
+        for (int i = 1; i <= 6; i++) {
+            indexDoc("k" + i, "v" + i, i);
+        }
+        refreshIndex(INDEX); // all six docs now committed-only
+
+        org.opensearch.action.bulk.BulkResponse bulk = client().prepareBulk()
+            // covered full-doc update (coverage skip inside the batch)
+            .add(client().prepareUpdate(INDEX, "k1").setDoc("name", "v1_new", "value", 11).setDetectNoop(false))
+            // partial update (batched parquet fetch; merge retains name)
+            .add(client().prepareUpdate(INDEX, "k2").setDoc("value", 22).setDetectNoop(false))
+            // duplicate-id pair: excluded from prefetch, must see each other sequentially
+            .add(client().prepareUpdate(INDEX, "k3").setDoc("value", 31).setDetectNoop(false))
+            .add(client().prepareUpdate(INDEX, "k3").setDoc("value", 32).setDetectNoop(false))
+            // index+update pair on one id: excluded from prefetch, update must see the index op's doc
+            .add(client().prepareIndex(INDEX).setId("k4").setSource("name", "v4_indexed", "value", 40))
+            .add(client().prepareUpdate(INDEX, "k4").setDoc("value", 44).setDetectNoop(false))
+            // plain partial update on another committed doc
+            .add(client().prepareUpdate(INDEX, "k5").setDoc("name", "v5_new").setDetectNoop(false))
+            .get();
+        assertFalse(bulk.buildFailureMessage(), bulk.hasFailures());
+
+        refreshIndex(INDEX);
+        GetResponse k1 = client().prepareGet(INDEX, "k1").setRealtime(false).get();
+        assertEquals("v1_new", name(k1));
+        assertEquals(11, value(k1));
+        assertEquals(2L, k1.getVersion());
+
+        GetResponse k2 = client().prepareGet(INDEX, "k2").setRealtime(false).get();
+        assertEquals("batched partial update must retain the omitted field", "v2", name(k2));
+        assertEquals(22, value(k2));
+
+        GetResponse k3 = client().prepareGet(INDEX, "k3").setRealtime(false).get();
+        assertEquals("duplicate-id updates must apply sequentially", 32, value(k3));
+        assertEquals(3L, k3.getVersion());
+
+        GetResponse k4 = client().prepareGet(INDEX, "k4").setRealtime(false).get();
+        assertEquals("update after index op on the same id must see its doc", "v4_indexed", name(k4));
+        assertEquals(44, value(k4));
+        assertEquals(3L, k4.getVersion());
+
+        GetResponse k5 = client().prepareGet(INDEX, "k5").setRealtime(false).get();
+        assertEquals("v5_new", name(k5));
+        assertEquals("batched partial update must retain the omitted field", 5, value(k5));
+
+        GetResponse k6 = client().prepareGet(INDEX, "k6").setRealtime(false).get();
+        assertEquals("untouched doc must be unaffected by the prefetch", 1L, k6.getVersion());
+    }
+
+    /** Conflict preconditions inside a bulk must fail their item alone, prefetch or not. */
+    public void testBulkUpdateConflictFailsItemAlone() {
+        createManualRefreshIndex();
+        indexDoc("c1", "v1", 1);
+        indexDoc("c2", "v2", 2);
+        indexDoc("c3", "v3", 3);
+        refreshIndex(INDEX);
+
+        org.opensearch.action.bulk.BulkResponse bulk = client().prepareBulk()
+            .add(client().prepareUpdate(INDEX, "c1").setDoc("value", 11).setDetectNoop(false))
+            .add(client().prepareUpdate(INDEX, "c2").setDoc("value", 22).setDetectNoop(false).setIfSeqNo(99L).setIfPrimaryTerm(1L))
+            .add(client().prepareUpdate(INDEX, "c3").setDoc("value", 33).setDetectNoop(false))
+            .get();
+
+        assertTrue("bulk must report the conflicting item", bulk.hasFailures());
+        org.opensearch.action.bulk.BulkItemResponse[] items = bulk.getItems();
+        assertFalse(items[0].isFailed());
+        assertTrue("stale if_seq_no item must fail", items[1].isFailed());
+        assertEquals(RestStatus.CONFLICT, items[1].getFailure().getStatus());
+        assertFalse(items[2].isFailed());
+
+        refreshIndex(INDEX);
+        assertEquals(11, value(client().prepareGet(INDEX, "c1").setRealtime(false).get()));
+        assertEquals("conflicting item must not have been applied", 2, value(client().prepareGet(INDEX, "c2").setRealtime(false).get()));
+        assertEquals(33, value(client().prepareGet(INDEX, "c3").setRealtime(false).get()));
+    }
+
     public void testCoveredFullDocUpdateAcrossRefresh() {
         createManualRefreshIndex();
 

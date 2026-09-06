@@ -382,6 +382,92 @@ public class DocumentLookupServiceTests extends OpenSearchTestCase {
 
     // ---- extractLong --------------------------------------------------------
 
+    // ---- getByIds -----------------------------------------------------------
+
+    public void testGetByIds_groupsByGenerationAndBatchesOneCallPerFile() throws Exception {
+        when(resolver.resolveMetadata(reader, "a")).thenReturn(new DocumentMetadataResolver.DocumentMetadata("a", 5L, 7L, 1L, 10L, 1L));
+        when(resolver.resolveMetadata(reader, "b")).thenReturn(new DocumentMetadataResolver.DocumentMetadata("b", 2L, 7L, 1L, 11L, 1L));
+        when(resolver.resolveMetadata(reader, "c")).thenReturn(new DocumentMetadataResolver.DocumentMetadata("c", 9L, 8L, 1L, 12L, 1L));
+        WriterFileSet fs7 = fileSet(7L, "gen7.parquet");
+        WriterFileSet fs8 = fileSet(8L, "gen8.parquet");
+        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs7);
+        when(snapshot.findFileSet(FORMAT, 8L)).thenReturn(fs8);
+        when(executor.executeRows(List.of(5L, 2L), fs7)).thenReturn(Map.of(5L, row("f", "va"), 2L, row("f", "vb")));
+        when(executor.executeRows(List.of(9L), fs8)).thenReturn(Map.of(9L, row("f", "vc")));
+
+        Map<String, DocumentLookupResult> results = service.getByIds(
+            List.of(
+                new DocumentLookupService.BatchGet("a", null),
+                new DocumentLookupService.BatchGet("b", null),
+                new DocumentLookupService.BatchGet("c", null)
+            ),
+            reader,
+            INDEX
+        );
+
+        assertEquals(3, results.size());
+        assertTrue(results.get("a").exists());
+        assertTrue(results.get("b").exists());
+        assertTrue(results.get("c").exists());
+        verify(executor, never()).executeSingleRow(anyLong(), any());
+    }
+
+    public void testGetByIds_coveredIdSkipsFetchWhileOthersBatch() throws Exception {
+        when(resolver.resolveMetadata(reader, "cov")).thenReturn(new DocumentMetadataResolver.DocumentMetadata("cov", 4L, 7L, 3L, 20L, 1L));
+        when(resolver.resolveMetadata(reader, "raw")).thenReturn(new DocumentMetadataResolver.DocumentMetadata("raw", 6L, 7L, 2L, 21L, 1L));
+        WriterFileSet fs7 = fileSet(7L, "gen7.parquet");
+        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs7);
+        when(executor.columnPaths(fs7)).thenReturn(java.util.Set.of("title", "_id", "_seq_no", "_primary_term", "_version"));
+        when(executor.executeRows(List.of(6L), fs7)).thenReturn(Map.of(6L, row("title", "t")));
+
+        Map<String, DocumentLookupResult> results = service.getByIds(
+            List.of(new DocumentLookupService.BatchGet("cov", java.util.Set.of("title")), new DocumentLookupService.BatchGet("raw", null)),
+            reader,
+            INDEX
+        );
+
+        assertTrue(results.get("cov").exists());
+        assertNull("covered id must stay metadata-only", results.get("cov").source());
+        assertEquals(3L, results.get("cov").version());
+        assertNotNull("uncovered id fetches through the batch", results.get("raw").source());
+    }
+
+    public void testGetByIds_missingIdMapsToNotFound() throws Exception {
+        when(resolver.resolveMetadata(reader, "ghost")).thenReturn(null);
+        when(resolver.resolveMetadata(reader, "real")).thenReturn(
+            new DocumentMetadataResolver.DocumentMetadata("real", 1L, 7L, 1L, 30L, 1L)
+        );
+        WriterFileSet fs7 = fileSet(7L, "gen7.parquet");
+        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs7);
+        when(executor.executeRows(List.of(1L), fs7)).thenReturn(Map.of(1L, row("f", "v")));
+
+        Map<String, DocumentLookupResult> results = service.getByIds(
+            List.of(new DocumentLookupService.BatchGet("ghost", null), new DocumentLookupService.BatchGet("real", null)),
+            reader,
+            INDEX
+        );
+
+        assertFalse(results.get("ghost").exists());
+        assertTrue(results.get("real").exists());
+    }
+
+    public void testGetByIds_throwsISEWhenBatchOmitsALocatedRow() throws Exception {
+        when(resolver.resolveMetadata(reader, "a")).thenReturn(new DocumentMetadataResolver.DocumentMetadata("a", 5L, 7L, 1L, 10L, 1L));
+        WriterFileSet fs7 = fileSet(7L, "gen7.parquet");
+        when(snapshot.findFileSet(FORMAT, 7L)).thenReturn(fs7);
+        when(resolver.resolveMetadata(reader, "b")).thenReturn(new DocumentMetadataResolver.DocumentMetadata("b", 6L, 7L, 1L, 11L, 1L));
+        when(executor.executeRows(List.of(5L, 6L), fs7)).thenReturn(Map.of(5L, row("f", "v")));
+
+        expectThrows(
+            IllegalStateException.class,
+            () -> service.getByIds(
+                List.of(new DocumentLookupService.BatchGet("a", null), new DocumentLookupService.BatchGet("b", null)),
+                reader,
+                INDEX
+            )
+        );
+    }
+
     public void testExtractLong_number() {
         assertEquals(5L, DocumentLookupService.extractLong(Map.of("k", 5L), "k", 99L));
         assertEquals(7L, DocumentLookupService.extractLong(Map.of("k", 7), "k", 99L));

@@ -98,6 +98,109 @@ public class DocumentLookupService {
     }
 
     /**
+     * A single id in a {@link #getByIds} batch: the document id plus the optional covering leaf
+     * paths of the incoming update document (same semantics as
+     * {@link #getById(String, Set, IndexReaderProvider.Reader, Index)}; {@code null} disables the
+     * coverage check for that id).
+     */
+    public record BatchGet(String id, Set<String> coveringPaths) {
+    }
+
+    /**
+     * Batched form of {@link #getById}: resolves every id via the secondary index, applies the
+     * per-id coverage check (covered ids never reach the row fetch at all), then fetches the
+     * remaining rows grouped by writer generation through {@link DocumentRowReader#executeRows}
+     * — one backend call per file instead of one per document, amortizing session setup and
+     * page decompression across the batch.
+     *
+     * <p>Ids are resolved in sorted order for terms-dictionary locality. The returned map is
+     * keyed by id and contains an entry for every requested id (missing documents map to
+     * {@link DocumentLookupResult#notFound}).
+     */
+    public Map<String, DocumentLookupResult> getByIds(List<BatchGet> gets, IndexReaderProvider.Reader reader, Index index)
+        throws IOException {
+        Map<String, DocumentLookupResult> results = new LinkedHashMap<>();
+        if (gets.isEmpty()) {
+            return results;
+        }
+        // Resolve in id order for terms-dict locality; output order is re-established at the end.
+        List<BatchGet> sorted = new ArrayList<>(gets);
+        sorted.sort(java.util.Comparator.comparing(BatchGet::id));
+
+        // generation -> resolved metadata needing a row fetch
+        Map<Long, List<DocumentMetadata>> pendingByGeneration = new LinkedHashMap<>();
+        Map<String, DocumentLookupResult> resolved = new LinkedHashMap<>();
+
+        for (BatchGet get : sorted) {
+            DocumentMetadata metadata = documentResolver.resolveMetadata(reader, get.id());
+            if (metadata == null) {
+                resolved.put(get.id(), DocumentLookupResult.notFound(get.id()));
+                continue;
+            }
+            if (get.coveringPaths() != null && metadata.hasVersionMetadata()) {
+                WriterFileSet fileSet = reader.catalogSnapshot().findFileSet(executor.formatName(), metadata.writerGeneration());
+                if (fileSet != null) {
+                    Set<String> columns = executor.columnPaths(fileSet);
+                    if (columns != null && isCovered(get.coveringPaths(), columns)) {
+                        resolved.put(
+                            get.id(),
+                            new DocumentLookupResult(
+                                get.id(),
+                                metadata.version(),
+                                true,
+                                null,
+                                metadata.seqNo(),
+                                metadata.primaryTerm(),
+                                Map.of(),
+                                Map.of()
+                            )
+                        );
+                        continue;
+                    }
+                }
+            }
+            pendingByGeneration.computeIfAbsent(metadata.writerGeneration(), g -> new ArrayList<>()).add(metadata);
+        }
+
+        for (Map.Entry<Long, List<DocumentMetadata>> entry : pendingByGeneration.entrySet()) {
+            long generation = entry.getKey();
+            List<DocumentMetadata> metadatas = entry.getValue();
+            WriterFileSet fileSet = reader.catalogSnapshot().findFileSet(executor.formatName(), generation);
+            if (fileSet == null) {
+                throw new IllegalStateException(
+                    "Resolver located ids at writer generation [" + generation + "] but no matching file set was found"
+                );
+            }
+            List<Long> rowIds = new ArrayList<>(metadatas.size());
+            for (DocumentMetadata metadata : metadatas) {
+                rowIds.add(metadata.rowId());
+            }
+            Map<Long, Map<String, Object>> rows = executor.executeRows(rowIds, fileSet);
+            for (DocumentMetadata metadata : metadatas) {
+                Map<String, Object> row = rows.get(metadata.rowId());
+                if (row == null) {
+                    throw new IllegalStateException(
+                        "Resolver located id ["
+                            + metadata.id()
+                            + "] at writer generation ["
+                            + generation
+                            + "] rowId ["
+                            + metadata.rowId()
+                            + "] but backend returned no row"
+                    );
+                }
+                resolved.put(metadata.id(), buildResultFromRow(metadata.id(), row));
+            }
+        }
+
+        // Re-establish caller order.
+        for (BatchGet get : gets) {
+            results.put(get.id(), resolved.get(get.id()));
+        }
+        return results;
+    }
+
+    /**
      * Whether every non-metadata column is covered by some covering path: equal to it, or a
      * descendant of it (a non-object value at {@code user} replaces all of {@code user.*}).
      */

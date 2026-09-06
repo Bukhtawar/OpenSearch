@@ -1083,6 +1083,21 @@ public class DataFusionPlugin extends Plugin
     }
 
     @Override
+    public java.util.Map<String, DocumentLookupResult> getByIds(
+        List<Engine.Get> gets,
+        IndexReaderProvider.Reader reader,
+        Index index,
+        DocumentMetadataResolver resolver
+    ) throws IOException {
+        GetService getService = getServiceOrThrow();
+        List<org.opensearch.analytics.spi.DocumentLookupService.BatchGet> batch = new java.util.ArrayList<>(gets.size());
+        for (Engine.Get get : gets) {
+            batch.add(new org.opensearch.analytics.spi.DocumentLookupService.BatchGet(get.id(), get.updateFieldPaths()));
+        }
+        return getService.documentLookupService(resolver).getByIds(batch, reader, index);
+    }
+
+    @Override
     public DocumentLookupResult getVersionMetadata(
         String id,
         IndexReaderProvider.Reader reader,

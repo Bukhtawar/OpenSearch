@@ -106,6 +106,7 @@ import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -3922,6 +3923,73 @@ public class DataFormatAwareEngineTests extends OpenSearchTestCase {
             assertThat(engine.cachedVersionResolveCount(), equalTo(1L));
             verify(provider, times(1)).getById(any(), any(), any(), any());
             verify(provider, never()).getVersionMetadata(any(), any(), any(), any());
+        }
+    }
+
+    /**
+     * Batched prefetch contract: committed docs are served through ONE provider batch call;
+     * a doc with a live versionMap entry is left ABSENT (the caller's per-id fallback owns the
+     * realtime path); and each batched resolution seeds the version-lookup cache so the following
+     * re-index skips its second seek.
+     */
+    public void testGetByIdsBatchesCommittedAndLeavesRealtimeAbsent() throws Exception {
+        DocumentLookupProvider provider = mock(DocumentLookupProvider.class);
+        when(provider.getByIds(any(), any(), any(), any())).thenAnswer(invocation -> {
+            List<Engine.Get> gets = invocation.getArgument(0);
+            Map<String, DocumentLookupResult> out = new java.util.LinkedHashMap<>();
+            for (Engine.Get g : gets) {
+                out.put(g.id(), new DocumentLookupResult(g.id(), 1L, true, null, g.id().equals("1") ? 0L : 1L, 1L, Map.of(), Map.of()));
+            }
+            return out;
+        });
+        // Doc "3" is indexed after segments exist, so ITS plan-time resolve consults the provider.
+        when(provider.getVersionMetadata(any(), any(), any(), any())).thenAnswer(
+            invocation -> DocumentLookupResult.notFound(invocation.getArgument(0))
+        );
+        try (DataFormatAwareEngine engine = createUpdateEnabledDFAEngineWithLookupProvider(store, createTempDir(), provider)) {
+            engine.index(indexOp(createParsedDocWithInput("1", null)));
+            engine.index(indexOp(createParsedDocWithInput("2", null)));
+            engine.refresh("test"); // 1 and 2 now committed-only
+            engine.index(indexOp(createParsedDocWithInput("3", null))); // 3 stays realtime (versionMap)
+
+            Map<String, Engine.GetResult> results = engine.getByIds(List.of(realtimeGet("1"), realtimeGet("2"), realtimeGet("3")));
+
+            assertTrue(results.containsKey("1"));
+            assertTrue(results.containsKey("2"));
+            assertFalse("realtime id must be absent — per-id fallback owns it", results.containsKey("3"));
+            assertTrue(results.get("1").exists());
+            verify(provider, times(1)).getByIds(any(), any(), any(), any());
+            verify(provider, never()).getById(any(), any(), any(), any());
+
+            // The batch seeded the version cache: the re-index leg must not consult the provider.
+            Engine.IndexResult result = engine.index(indexOpWithIfSeqNo(createParsedDocWithInput("1", null), 0L, 1L));
+            assertThat(result.getResultType(), equalTo(Engine.Result.Type.SUCCESS));
+            assertThat(engine.cachedVersionResolveCount(), equalTo(1L));
+            verify(provider, never()).getVersionMetadata(eq("1"), any(), any(), any());
+        }
+    }
+
+    /** A batched get whose read preconditions conflict is left absent instead of failing the batch. */
+    public void testGetByIdsLeavesConflictingGetAbsent() throws Exception {
+        DocumentLookupProvider provider = mock(DocumentLookupProvider.class);
+        when(provider.getByIds(any(), any(), any(), any())).thenAnswer(invocation -> {
+            List<Engine.Get> gets = invocation.getArgument(0);
+            Map<String, DocumentLookupResult> out = new java.util.LinkedHashMap<>();
+            for (Engine.Get g : gets) {
+                out.put(g.id(), new DocumentLookupResult(g.id(), 1L, true, null, 0L, 1L, Map.of(), Map.of()));
+            }
+            return out;
+        });
+        try (DataFormatAwareEngine engine = createUpdateEnabledDFAEngineWithLookupProvider(store, createTempDir(), provider)) {
+            engine.index(indexOp(createParsedDocWithInput("1", null)));
+            engine.index(indexOp(createParsedDocWithInput("2", null)));
+            engine.refresh("test");
+
+            Engine.Get conflicting = realtimeGet("1").setIfSeqNo(99L).setIfPrimaryTerm(1L); // stored seqNo is 0
+            Map<String, Engine.GetResult> results = engine.getByIds(List.of(conflicting, realtimeGet("2")));
+
+            assertFalse("conflicting get must be absent, not thrown", results.containsKey("1"));
+            assertTrue(results.get("2").exists());
         }
     }
 

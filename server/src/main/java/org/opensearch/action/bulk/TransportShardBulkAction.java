@@ -113,6 +113,7 @@ import org.opensearch.transport.TransportService;
 import org.opensearch.transport.client.transport.NoNodeAvailableException;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -476,9 +477,21 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
 
             private final BulkPrimaryExecutionContext context = new BulkPrimaryExecutionContext(request, primary);
 
+            /**
+             * Batched update prefetch, computed once per shard bulk (doRun re-enters after mapping
+             * updates; the null check keeps it single-shot). Entries are consumed (removed) on
+             * first use so conflict retries take the live per-item get path.
+             */
+            private java.util.Map<String, org.opensearch.index.get.GetResult> updatePrefetch;
+            private boolean prefetchAttempted;
+
             @Override
             protected void doRun() throws Exception {
                 long startTime = System.nanoTime();
+                if (prefetchAttempted == false) {
+                    prefetchAttempted = true;
+                    updatePrefetch = prefetchUpdateGets(request, primary);
+                }
                 while (context.hasMoreOperationsToExecute()) {
                     if (executeBulkItemRequest(
                         context,
@@ -486,7 +499,8 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                         nowInMillisSupplier,
                         mappingUpdater,
                         waitForMappingUpdate,
-                        ActionListener.wrap(v -> executor.execute(this), this::onRejection)
+                        ActionListener.wrap(v -> executor.execute(this), this::onRejection),
+                        updatePrefetch
                     ) == false) {
                         // We are waiting for a mapping update on another thread, that will invoke this action again once its done
                         // so we just break out here.
@@ -600,13 +614,87 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         Consumer<ActionListener<Void>> waitForMappingUpdate,
         ActionListener<Void> itemDoneListener
     ) throws Exception {
+        return executeBulkItemRequest(
+            context,
+            updateHelper,
+            nowInMillisSupplier,
+            mappingUpdater,
+            waitForMappingUpdate,
+            itemDoneListener,
+            null
+        );
+    }
+
+    /**
+     * Collects the bulk's update items eligible for the batched get prefetch and resolves them in
+     * one engine pass ({@code ShardGetService#multiGetForUpdate}). Eligibility: the item is an
+     * update whose id appears EXACTLY ONCE across the whole bulk (any other item on the same id —
+     * update or not — must observe its predecessors' writes, so those ids take the sequential
+     * per-item path). Opportunistic by contract: any failure or an engine without a batched path
+     * yields {@code null}, and every id absent from the returned map falls back to the live
+     * per-item get inside {@link UpdateHelper#prepare}.
+     */
+    static java.util.Map<String, org.opensearch.index.get.GetResult> prefetchUpdateGets(BulkShardRequest request, IndexShard primary) {
+        try {
+            final java.util.Map<String, Integer> idCounts = new HashMap<>();
+            for (BulkItemRequest item : request.items()) {
+                if (item == null || item.request() == null) {
+                    continue;
+                }
+                idCounts.merge(item.request().id(), 1, Integer::sum);
+            }
+            final java.util.List<org.opensearch.index.get.ShardGetService.UpdateGetSpec> specs = new java.util.ArrayList<>();
+            for (BulkItemRequest item : request.items()) {
+                if (item == null || item.request() == null || item.primaryResponse() != null) {
+                    continue;
+                }
+                DocWriteRequest<?> docWriteRequest = item.request();
+                if (docWriteRequest.opType() != DocWriteRequest.OpType.UPDATE) {
+                    continue;
+                }
+                if (idCounts.getOrDefault(docWriteRequest.id(), 0) != 1) {
+                    continue;
+                }
+                UpdateRequest updateRequest = (UpdateRequest) docWriteRequest;
+                specs.add(
+                    new org.opensearch.index.get.ShardGetService.UpdateGetSpec(
+                        updateRequest.id(),
+                        updateRequest.ifSeqNo(),
+                        updateRequest.ifPrimaryTerm(),
+                        UpdateHelper.coveringPathsFor(updateRequest)
+                    )
+                );
+            }
+            if (specs.size() < 2) {
+                return null; // nothing to amortize
+            }
+            java.util.Map<String, org.opensearch.index.get.GetResult> results = primary.getService().multiGetForUpdate(specs);
+            return results.isEmpty() ? null : new HashMap<>(results);
+        } catch (Exception e) {
+            // Prefetch is purely opportunistic — never let it fail the bulk.
+            logger.debug("bulk update prefetch failed; falling back to per-item gets", e);
+            return null;
+        }
+    }
+
+    static boolean executeBulkItemRequest(
+        BulkPrimaryExecutionContext context,
+        UpdateHelper updateHelper,
+        LongSupplier nowInMillisSupplier,
+        MappingUpdatePerformer mappingUpdater,
+        Consumer<ActionListener<Void>> waitForMappingUpdate,
+        ActionListener<Void> itemDoneListener,
+        java.util.Map<String, org.opensearch.index.get.GetResult> updatePrefetch
+    ) throws Exception {
         final DocWriteRequest.OpType opType = context.getCurrent().opType();
 
         final UpdateHelper.Result updateResult;
         if (opType == DocWriteRequest.OpType.UPDATE) {
             final UpdateRequest updateRequest = (UpdateRequest) context.getCurrent();
+            // Consume-once: a conflict retry of this item finds its entry gone and re-reads live.
+            final org.opensearch.index.get.GetResult prefetched = updatePrefetch == null ? null : updatePrefetch.remove(updateRequest.id());
             try {
-                updateResult = updateHelper.prepare(updateRequest, context.getPrimary(), nowInMillisSupplier);
+                updateResult = updateHelper.prepare(updateRequest, context.getPrimary(), nowInMillisSupplier, prefetched);
             } catch (Exception failure) {
                 // we may fail translating a update to index or delete operation
                 // we use index result to communicate failure while translating update request

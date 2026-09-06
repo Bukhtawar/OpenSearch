@@ -109,6 +109,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -2289,6 +2290,75 @@ public class DataFormatAwareEngine implements Indexer {
                 return result.toGetResult();
             }
         } // readLock
+    }
+
+    /**
+     * Opportunistic batched get-by-id for bulk-update prefetch. Serves as many gets as possible
+     * from committed segments through ONE reader and ONE backend call per parquet file
+     * (amortizing native session setup and page decompression across the batch), and reports
+     * the rest as unservable rather than degrading to per-id reads itself.
+     *
+     * <p>Contract: the returned map contains an entry ONLY for gets that were fully served from
+     * the committed path without a read conflict. A get is ABSENT when (a) its uid has a live
+     * versionMap entry (a realtime read must go through {@link #getById}'s translog path), or
+     * (b) its read preconditions conflict (the per-item {@link #getById} raises the proper
+     * {@link VersionConflictEngineException} for that item alone). Callers MUST fall back to
+     * {@link #getById} for absent ids. Documents that simply don't exist ARE present, mapped to
+     * {@link Engine.GetResult#NOT_EXISTS}.
+     *
+     * <p>Resolved versions seed the version-lookup cache exactly like the single-get path, so a
+     * following re-index skips its second {@code _id} seek under the same refresh-generation
+     * guard.
+     */
+    public Map<String, Engine.GetResult> getByIds(List<Engine.Get> gets) throws IOException {
+        Map<String, Engine.GetResult> out = new LinkedHashMap<>();
+        if (gets.isEmpty() || documentLookup.isSupported() == false) {
+            return out;
+        }
+        try (ReleasableLock ignored = readLock.acquire()) {
+            ensureOpen();
+            List<Engine.Get> committed = new ArrayList<>(gets.size());
+            for (Engine.Get get : gets) {
+                VersionValue versionValue = null;
+                if (get.realtime()) {
+                    try (Releasable ignore = versionMap.acquireLock(get.uid().bytes())) {
+                        versionValue = getVersionFromMap(get.uid().bytes());
+                    }
+                }
+                if (versionValue == null) {
+                    committed.add(get);
+                }
+                // versionMap hit: leave absent — the caller's per-id fallback takes the
+                // realtime/translog path with full conflict semantics.
+            }
+            if (committed.isEmpty()) {
+                return out;
+            }
+            final long lookupGeneration = versionLookupCacheGeneration.get();
+            try (GatedCloseable<Reader> readerRef = acquireReader()) {
+                Map<String, DocumentLookupResult> results = documentLookup.lookupAllFromReader(committed, readerRef.get());
+                for (Engine.Get get : committed) {
+                    DocumentLookupResult result = results.get(get.id());
+                    if (result == null || result.exists() == false) {
+                        out.put(get.id(), Engine.GetResult.NOT_EXISTS);
+                        continue;
+                    }
+                    try {
+                        documentLookup.applyReadVersionConflicts(get, result);
+                    } catch (VersionConflictEngineException e) {
+                        // Leave absent: the caller's per-id fallback re-raises on that item alone.
+                        continue;
+                    }
+                    maybeCacheResolvedVersion(
+                        get.uid().bytes(),
+                        new IndexVersionValue(null, result.version(), result.seqNo(), result.primaryTerm()),
+                        lookupGeneration
+                    );
+                    out.put(get.id(), result.toGetResult());
+                }
+            }
+        } // readLock
+        return out;
     }
 
     /**

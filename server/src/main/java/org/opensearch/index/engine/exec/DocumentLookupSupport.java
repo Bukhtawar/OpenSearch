@@ -60,6 +60,29 @@ public final class DocumentLookupSupport {
     }
 
     /**
+     * Batched form of {@link #lookupFromReader}: resolves all gets against one reader snapshot
+     * through the provider's bulk path. Returns a map keyed by id with an entry for every get.
+     * Read-time conflict checks are NOT applied here — callers apply
+     * {@link #applyReadVersionConflicts} per item so one conflicting id fails alone.
+     */
+    public java.util.Map<String, DocumentLookupResult> lookupAllFromReader(
+        java.util.List<Engine.Get> gets,
+        IndexReaderProvider.Reader reader
+    ) throws IOException {
+        if (provider == null) {
+            throw new UnsupportedOperationException("getById not supported: no DocumentLookupProvider installed");
+        }
+        if (reader.catalogSnapshot().getSegments().isEmpty()) {
+            java.util.Map<String, DocumentLookupResult> results = new java.util.LinkedHashMap<>();
+            for (Engine.Get get : gets) {
+                results.put(get.id(), DocumentLookupResult.notFound(get.id()));
+            }
+            return results;
+        }
+        return provider.getByIds(gets, reader, shardId.getIndex(), resolver);
+    }
+
+    /**
      * Applies read-time version-conflict checks against a resolved {@code result}, mirroring the
      * get semantics in {@code InternalEngine}. A no-op when the document does not exist.
      *

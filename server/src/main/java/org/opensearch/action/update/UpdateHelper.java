@@ -89,21 +89,43 @@ public class UpdateHelper {
      * Prepares an update request by converting it into an index or delete request or an update response (no action).
      */
     public Result prepare(UpdateRequest request, IndexShard indexShard, LongSupplier nowInMillis) {
-        Set<String> coveringPaths = null;
-        if (request.script() == null && request.doc() != null && request.detectNoop() == false) {
-            // Doc update with noop detection off: the old source is only needed to preserve fields
-            // the incoming doc omits. Declare the incoming doc's covering paths so the engine can
-            // skip materializing _source entirely when they cover every stored column.
-            coveringPaths = coveringFieldPaths(request.doc().sourceAsMap());
-        }
-        final GetResult getResult = indexShard.getService()
-            .getForUpdate(request.id(), request.ifSeqNo(), request.ifPrimaryTerm(), coveringPaths);
+        return prepare(request, indexShard, nowInMillis, null);
+    }
+
+    /**
+     * Variant taking an optional prefetched get result from the bulk-layer batched prefetch
+     * ({@code ShardGetService#multiGetForUpdate}). The prefetched result was produced with the
+     * SAME preconditions and covering paths this method would pass to
+     * {@code getForUpdate} (see {@link #coveringPathsFor}), so it substitutes for the live get
+     * exactly. {@code null} takes the normal per-item get path.
+     */
+    public Result prepare(UpdateRequest request, IndexShard indexShard, LongSupplier nowInMillis, @Nullable GetResult prefetched) {
+        Set<String> coveringPaths = coveringPathsFor(request);
+        final GetResult getResult = prefetched != null
+            ? prefetched
+            : indexShard.getService().getForUpdate(request.id(), request.ifSeqNo(), request.ifPrimaryTerm(), coveringPaths);
         if (coveringPaths != null && getResult.isExists() && getResult.internalSourceRef() == null) {
             // The engine verified coverage and deliberately omitted _source: the update is a full
             // replace, so the index request is built straight from the incoming doc — no merge.
             return prepareCoveredReplace(request, getResult);
         }
         return prepare(indexShard.shardId(), request, getResult, nowInMillis);
+    }
+
+    /**
+     * The covering leaf paths the engine-side coverage check uses for this request, or {@code null}
+     * when the request is ineligible (scripted, no doc, or noop detection on — all of which need
+     * the old source regardless). Shared by the per-item path and the bulk prefetch so both build
+     * identical {@code getForUpdate} calls.
+     */
+    public static Set<String> coveringPathsFor(UpdateRequest request) {
+        if (request.script() == null && request.doc() != null && request.detectNoop() == false) {
+            // Doc update with noop detection off: the old source is only needed to preserve fields
+            // the incoming doc omits. Declare the incoming doc's covering paths so the engine can
+            // skip materializing _source entirely when they cover every stored column.
+            return coveringFieldPaths(request.doc().sourceAsMap());
+        }
+        return null;
     }
 
     /**
