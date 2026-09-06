@@ -17,6 +17,9 @@ import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.plugins.DocumentLookupProvider;
 
 import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Shared get-by-id helper for the {@code DataFormatAware*} engines. Centralizes the pluggable lookup
@@ -65,15 +68,13 @@ public final class DocumentLookupSupport {
      * Read-time conflict checks are NOT applied here — callers apply
      * {@link #applyReadVersionConflicts} per item so one conflicting id fails alone.
      */
-    public java.util.Map<String, DocumentLookupResult> lookupAllFromReader(
-        java.util.List<Engine.Get> gets,
-        IndexReaderProvider.Reader reader
-    ) throws IOException {
+    public Map<String, DocumentLookupResult> lookupAllFromReader(List<Engine.Get> gets, IndexReaderProvider.Reader reader)
+        throws IOException {
         if (provider == null) {
             throw new UnsupportedOperationException("getById not supported: no DocumentLookupProvider installed");
         }
         if (reader.catalogSnapshot().getSegments().isEmpty()) {
-            java.util.Map<String, DocumentLookupResult> results = new java.util.LinkedHashMap<>();
+            Map<String, DocumentLookupResult> results = new LinkedHashMap<>();
             for (Engine.Get get : gets) {
                 results.put(get.id(), DocumentLookupResult.notFound(get.id()));
             }

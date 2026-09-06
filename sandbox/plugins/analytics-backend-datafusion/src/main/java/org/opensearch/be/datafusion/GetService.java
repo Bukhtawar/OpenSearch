@@ -10,6 +10,7 @@ package org.opensearch.be.datafusion;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.ArrowType;
@@ -24,6 +25,7 @@ import org.opensearch.be.datafusion.nativelib.ReaderHandle;
 import org.opensearch.be.datafusion.nativelib.StreamHandle;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.core.action.ActionListener;
+import org.opensearch.index.engine.dataformat.DocumentInput;
 import org.opensearch.index.engine.exec.DocumentMetadataResolver;
 import org.opensearch.index.engine.exec.MonoFileWriterSet;
 import org.opensearch.index.engine.exec.WriterFileSet;
@@ -37,12 +39,14 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * DataFusion-backed get-by-id executor. The resolver maps an {@code _id} to a
@@ -153,9 +157,7 @@ public class GetService implements Closeable {
         }
 
         /** Unique context ids for batch fetches; negative range so they never collide with QTF task ids. */
-        private static final java.util.concurrent.atomic.AtomicLong BATCH_CONTEXT_IDS = new java.util.concurrent.atomic.AtomicLong(
-            -1_000_000L
-        );
+        private static final AtomicLong BATCH_CONTEXT_IDS = new AtomicLong(-1_000_000L);
 
         /**
          * Batched point read: fetches all requested rows of one parquet file through a single
@@ -189,10 +191,7 @@ public class GetService implements Closeable {
             long runtimePtr = dfPlugin.getDataFusionService().getNativeRuntime().get();
             MonoFileWriterSet segment = MonoFileWriterSet.of(parquetDir, parquetSet.writerGeneration(), parquetFile, 0L);
             try (ReaderHandle readerHandle = new ReaderHandle(parquetDir, List.of(segment), null, List.of(), List.of())) {
-                org.apache.arrow.vector.BigIntVector rowIdVector = new org.apache.arrow.vector.BigIntVector(
-                    org.opensearch.index.engine.dataformat.DocumentInput.ROW_ID_FIELD,
-                    sharedAllocator
-                );
+                BigIntVector rowIdVector = new BigIntVector(DocumentInput.ROW_ID_FIELD, sharedAllocator);
                 try {
                     rowIdVector.allocateNew(sorted.length);
                     for (int i = 0; i < sorted.length; i++) {
@@ -218,7 +217,7 @@ public class GetService implements Closeable {
 
         /** Drains a result stream into a map keyed by each row's {@code __row_id__} column. */
         private Map<Long, Map<String, Object>> readRowsKeyedByRowId(long streamPtr) {
-            Map<Long, Map<String, Object>> results = new java.util.LinkedHashMap<>();
+            Map<Long, Map<String, Object>> results = new LinkedHashMap<>();
             try (
                 StreamHandle streamHandle = new StreamHandle(streamPtr, dfPlugin.getDataFusionService().getNativeRuntime());
                 DatafusionResultStream stream = new DatafusionResultStream(streamHandle, sharedAllocator, importStagingAllocator)
@@ -233,7 +232,7 @@ public class GetService implements Closeable {
                             if (idVec != null && !idVec.isNull(i)) {
                                 row.put(IdFieldMapper.NAME, Uid.decodeId((byte[]) idVec.getObject(i)));
                             }
-                            Object rowIdVal = row.get(org.opensearch.index.engine.dataformat.DocumentInput.ROW_ID_FIELD);
+                            Object rowIdVal = row.get(DocumentInput.ROW_ID_FIELD);
                             if (rowIdVal instanceof Number == false) {
                                 throw new IllegalStateException("Batch fetch returned a row without a numeric __row_id__ column");
                             }

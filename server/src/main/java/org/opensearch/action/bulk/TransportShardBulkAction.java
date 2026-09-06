@@ -90,6 +90,7 @@ import org.opensearch.index.SegmentReplicationPressureService;
 import org.opensearch.index.engine.Engine;
 import org.opensearch.index.engine.VersionConflictEngineException;
 import org.opensearch.index.get.GetResult;
+import org.opensearch.index.get.ShardGetService;
 import org.opensearch.index.mapper.MapperException;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.mapper.SourceToParse;
@@ -113,7 +114,9 @@ import org.opensearch.transport.TransportService;
 import org.opensearch.transport.client.transport.NoNodeAvailableException;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -478,20 +481,14 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             private final BulkPrimaryExecutionContext context = new BulkPrimaryExecutionContext(request, primary);
 
             /**
-             * Batched update prefetch, computed once per shard bulk (doRun re-enters after mapping
-             * updates; the null check keeps it single-shot). Entries are consumed (removed) on
-             * first use so conflict retries take the live per-item get path.
+             * Batched update prefetch, computed once per shard bulk. Entries are consumed
+             * (removed) on first use so conflict retries take the live per-item get path.
              */
-            private java.util.Map<String, org.opensearch.index.get.GetResult> updatePrefetch;
-            private boolean prefetchAttempted;
+            private final Map<String, GetResult> updatePrefetch = prefetchUpdateGets(request, primary);
 
             @Override
             protected void doRun() throws Exception {
                 long startTime = System.nanoTime();
-                if (prefetchAttempted == false) {
-                    prefetchAttempted = true;
-                    updatePrefetch = prefetchUpdateGets(request, primary);
-                }
                 while (context.hasMoreOperationsToExecute()) {
                     if (executeBulkItemRequest(
                         context,
@@ -634,16 +631,16 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
      * yields {@code null}, and every id absent from the returned map falls back to the live
      * per-item get inside {@link UpdateHelper#prepare}.
      */
-    static java.util.Map<String, org.opensearch.index.get.GetResult> prefetchUpdateGets(BulkShardRequest request, IndexShard primary) {
+    static Map<String, GetResult> prefetchUpdateGets(BulkShardRequest request, IndexShard primary) {
         try {
-            final java.util.Map<String, Integer> idCounts = new HashMap<>();
+            final Map<String, Integer> idCounts = new HashMap<>();
             for (BulkItemRequest item : request.items()) {
                 if (item == null || item.request() == null) {
                     continue;
                 }
                 idCounts.merge(item.request().id(), 1, Integer::sum);
             }
-            final java.util.List<org.opensearch.index.get.ShardGetService.UpdateGetSpec> specs = new java.util.ArrayList<>();
+            final List<ShardGetService.UpdateGetSpec> specs = new ArrayList<>();
             for (BulkItemRequest item : request.items()) {
                 if (item == null || item.request() == null || item.primaryResponse() != null) {
                     continue;
@@ -657,7 +654,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 }
                 UpdateRequest updateRequest = (UpdateRequest) docWriteRequest;
                 specs.add(
-                    new org.opensearch.index.get.ShardGetService.UpdateGetSpec(
+                    new ShardGetService.UpdateGetSpec(
                         updateRequest.id(),
                         updateRequest.ifSeqNo(),
                         updateRequest.ifPrimaryTerm(),
@@ -668,7 +665,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             if (specs.size() < 2) {
                 return null; // nothing to amortize
             }
-            java.util.Map<String, org.opensearch.index.get.GetResult> results = primary.getService().multiGetForUpdate(specs);
+            Map<String, GetResult> results = primary.getService().multiGetForUpdate(specs);
             return results.isEmpty() ? null : new HashMap<>(results);
         } catch (Exception e) {
             // Prefetch is purely opportunistic — never let it fail the bulk.
@@ -684,7 +681,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         MappingUpdatePerformer mappingUpdater,
         Consumer<ActionListener<Void>> waitForMappingUpdate,
         ActionListener<Void> itemDoneListener,
-        java.util.Map<String, org.opensearch.index.get.GetResult> updatePrefetch
+        Map<String, GetResult> updatePrefetch
     ) throws Exception {
         final DocWriteRequest.OpType opType = context.getCurrent().opType();
 
@@ -692,7 +689,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         if (opType == DocWriteRequest.OpType.UPDATE) {
             final UpdateRequest updateRequest = (UpdateRequest) context.getCurrent();
             // Consume-once: a conflict retry of this item finds its entry gone and re-reads live.
-            final org.opensearch.index.get.GetResult prefetched = updatePrefetch == null ? null : updatePrefetch.remove(updateRequest.id());
+            final GetResult prefetched = updatePrefetch == null ? null : updatePrefetch.remove(updateRequest.id());
             try {
                 updateResult = updateHelper.prepare(updateRequest, context.getPrimary(), nowInMillisSupplier, prefetched);
             } catch (Exception failure) {

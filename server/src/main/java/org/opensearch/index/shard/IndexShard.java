@@ -1606,11 +1606,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * could serve from committed segments in one pass; absent ids MUST be fetched via
      * {@link #get(Engine.Get)}. Returns an empty map when the engine has no batched path.
      */
-    public java.util.Map<String, Engine.GetResult> getAll(java.util.List<Engine.Get> gets) {
+    public Map<String, Engine.GetResult> getAll(List<Engine.Get> gets) {
         readAllowed();
         DocumentMapper mapper = mapperService.documentMapper();
         if (mapper == null) {
-            return java.util.Map.of();
+            return Map.of();
         }
         try {
             return getIndexer().getByIds(gets);

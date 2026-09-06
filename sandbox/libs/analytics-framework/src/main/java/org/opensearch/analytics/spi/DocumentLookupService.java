@@ -27,6 +27,7 @@ import org.opensearch.indices.IndicesModule;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -125,7 +126,7 @@ public class DocumentLookupService {
         }
         // Resolve in id order for terms-dict locality; output order is re-established at the end.
         List<BatchGet> sorted = new ArrayList<>(gets);
-        sorted.sort(java.util.Comparator.comparing(BatchGet::id));
+        sorted.sort(Comparator.comparing(BatchGet::id));
 
         // generation -> resolved metadata needing a row fetch
         Map<Long, List<DocumentMetadata>> pendingByGeneration = new LinkedHashMap<>();

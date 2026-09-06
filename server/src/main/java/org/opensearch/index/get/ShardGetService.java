@@ -44,6 +44,7 @@ import org.apache.lucene.index.VectorEncoding;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.opensearch.OpenSearchException;
 import org.opensearch.common.Nullable;
+import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.document.DocumentField;
@@ -80,6 +81,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -209,7 +211,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
      *
      * @opensearch.experimental
      */
-    @org.opensearch.common.annotation.ExperimentalApi
+    @ExperimentalApi
     public record UpdateGetSpec(String id, long ifSeqNo, long ifPrimaryTerm, @Nullable Set<String> updateFieldPaths) {
     }
 
@@ -239,7 +241,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         if (engineResults.isEmpty()) {
             return Map.of();
         }
-        Map<String, GetResult> out = new java.util.LinkedHashMap<>();
+        Map<String, GetResult> out = new LinkedHashMap<>();
         for (Map.Entry<String, Engine.GetResult> entry : engineResults.entrySet()) {
             try (Engine.GetResult get = entry.getValue()) {
                 if (get.exists() == false) {

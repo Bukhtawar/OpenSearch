@@ -12,6 +12,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.action.ActionRequest;
 import org.opensearch.analytics.spi.AnalyticsSearchBackendPlugin;
+import org.opensearch.analytics.spi.DocumentLookupService;
 import org.opensearch.analytics.spi.QueryExecutionMetrics;
 import org.opensearch.arrow.allocator.ArrowNativeAllocator;
 import org.opensearch.arrow.spi.NativeAllocator;
@@ -76,6 +77,7 @@ import org.opensearch.watcher.ResourceWatcherService;
 import java.io.IOException;
 import java.nio.file.FileStore;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -1083,16 +1085,16 @@ public class DataFusionPlugin extends Plugin
     }
 
     @Override
-    public java.util.Map<String, DocumentLookupResult> getByIds(
+    public Map<String, DocumentLookupResult> getByIds(
         List<Engine.Get> gets,
         IndexReaderProvider.Reader reader,
         Index index,
         DocumentMetadataResolver resolver
     ) throws IOException {
         GetService getService = getServiceOrThrow();
-        List<org.opensearch.analytics.spi.DocumentLookupService.BatchGet> batch = new java.util.ArrayList<>(gets.size());
+        List<DocumentLookupService.BatchGet> batch = new ArrayList<>(gets.size());
         for (Engine.Get get : gets) {
-            batch.add(new org.opensearch.analytics.spi.DocumentLookupService.BatchGet(get.id(), get.updateFieldPaths()));
+            batch.add(new DocumentLookupService.BatchGet(get.id(), get.updateFieldPaths()));
         }
         return getService.documentLookupService(resolver).getByIds(batch, reader, index);
     }

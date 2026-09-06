@@ -23,6 +23,8 @@ import org.opensearch.index.translog.TranslogManager;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.List;
+import java.util.Map;
 import java.util.function.BiFunction;
 
 /**
@@ -214,8 +216,8 @@ public interface Indexer
      * {@link #getById} for absent ids. The default returns an empty map (batching unsupported),
      * which makes the fallback total — engines with a cheaper bulk path override.
      */
-    default java.util.Map<String, Engine.GetResult> getByIds(java.util.List<Engine.Get> gets) throws IOException {
-        return java.util.Map.of();
+    default Map<String, Engine.GetResult> getByIds(List<Engine.Get> gets) throws IOException {
+        return Map.of();
     }
 
     /**

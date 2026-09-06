@@ -16,7 +16,9 @@ import org.opensearch.index.engine.exec.IndexReaderProvider;
 import org.opensearch.index.get.DocumentLookupResult;
 
 import java.io.IOException;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * SPI for pluggable get-by-id lookup. Implementations resolve a document id
@@ -51,13 +53,13 @@ public interface DocumentLookupProvider {
      * <p>The default delegates to per-get {@link #getById}; implementations with a cheaper
      * bulk path should override. Returns a map keyed by id with an entry for every get.
      */
-    default java.util.Map<String, DocumentLookupResult> getByIds(
+    default Map<String, DocumentLookupResult> getByIds(
         List<Engine.Get> gets,
         IndexReaderProvider.Reader reader,
         Index index,
         DocumentMetadataResolver resolver
     ) throws IOException {
-        java.util.Map<String, DocumentLookupResult> results = new java.util.LinkedHashMap<>();
+        Map<String, DocumentLookupResult> results = new LinkedHashMap<>();
         for (Engine.Get get : gets) {
             results.put(get.id(), getById(get, reader, index, resolver));
         }

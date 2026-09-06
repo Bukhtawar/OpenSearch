@@ -12,8 +12,10 @@ import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.index.engine.exec.WriterFileSet;
 
 import java.io.IOException;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Backend-specific execution contract for reading document rows. Backends implement this
@@ -54,7 +56,7 @@ public interface DocumentRowReader {
      * @return map from row id to its field-name → value map; ids whose row was not found are absent
      */
     default Map<Long, Map<String, Object>> executeRows(List<Long> rowIds, WriterFileSet fileSet) throws IOException {
-        Map<Long, Map<String, Object>> out = new java.util.LinkedHashMap<>();
+        Map<Long, Map<String, Object>> out = new LinkedHashMap<>();
         for (Long rowId : rowIds) {
             Map<String, Object> row = executeSingleRow(rowId, fileSet);
             if (row != null) {
@@ -82,7 +84,7 @@ public interface DocumentRowReader {
      * @return the column paths, or {@code null} when the backend cannot provide them (callers
      *         must then fall back to reading the row)
      */
-    default java.util.Set<String> columnPaths(WriterFileSet fileSet) throws IOException {
+    default Set<String> columnPaths(WriterFileSet fileSet) throws IOException {
         return null;
     }
 }
