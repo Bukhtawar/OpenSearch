@@ -78,6 +78,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -317,9 +318,25 @@ public final class DateFieldMapper extends ParametrizedFieldMapper {
             boolean ignoreMalformedByDefault,
             Version indexCreatedVersion
         ) {
+            this(name, resolution, dateFormatter, ignoreMalformedByDefault, indexCreatedVersion, List.of());
+        }
+
+        /**
+         * Creates a builder that also carries the mapping parameters contributed by the index's data-format plugin,
+         * so they are parsed, serialized and merged alongside the core parameters.
+         */
+        public Builder(
+            String name,
+            Resolution resolution,
+            DateFormatter dateFormatter,
+            boolean ignoreMalformedByDefault,
+            Version indexCreatedVersion,
+            List<Parameter<?>> pluginParameters
+        ) {
             super(name);
             this.resolution = resolution;
             this.indexCreatedVersion = indexCreatedVersion;
+            setPluginMappingParameters(pluginParameters);
             this.ignoreMalformed = Parameter.explicitBoolParam(
                 "ignore_malformed",
                 true,
@@ -347,7 +364,11 @@ public final class DateFieldMapper extends ParametrizedFieldMapper {
 
         @Override
         protected List<Parameter<?>> getParameters() {
-            return Arrays.asList(index, docValues, store, skiplist, format, printFormat, locale, nullValue, ignoreMalformed, boost, meta);
+            List<Parameter<?>> parameters = new ArrayList<>(
+                Arrays.asList(index, docValues, store, skiplist, format, printFormat, locale, nullValue, ignoreMalformed, boost, meta)
+            );
+            parameters.addAll(pluginMappingParameters());
+            return parameters;
         }
 
         private Long parseNullValue(DateFieldType fieldType) {
@@ -371,6 +392,7 @@ public final class DateFieldMapper extends ParametrizedFieldMapper {
 
         @Override
         public DateFieldMapper build(BuilderContext context) {
+            applyPluginParameterEffects();
             DateFieldType ft = new DateFieldType(
                 buildFullName(context),
                 index.getValue(),
@@ -394,13 +416,38 @@ public final class DateFieldMapper extends ParametrizedFieldMapper {
 
     public static final TypeParser MILLIS_PARSER = new TypeParser((n, c) -> {
         boolean ignoreMalformedByDefault = IGNORE_MALFORMED_SETTING.get(c.getSettings());
-        return new Builder(n, Resolution.MILLISECONDS, c.getDateFormatter(), ignoreMalformedByDefault, c.indexVersionCreated());
+        return new Builder(
+            n,
+            Resolution.MILLISECONDS,
+            c.getDateFormatter(),
+            ignoreMalformedByDefault,
+            c.indexVersionCreated(),
+            pluginMappingParameters(c, CONTENT_TYPE)
+        );
     });
 
     public static final TypeParser NANOS_PARSER = new TypeParser((n, c) -> {
         boolean ignoreMalformedByDefault = IGNORE_MALFORMED_SETTING.get(c.getSettings());
-        return new Builder(n, Resolution.NANOSECONDS, c.getDateFormatter(), ignoreMalformedByDefault, c.indexVersionCreated());
+        return new Builder(
+            n,
+            Resolution.NANOSECONDS,
+            c.getDateFormatter(),
+            ignoreMalformedByDefault,
+            c.indexVersionCreated(),
+            pluginMappingParameters(c, DATE_NANOS_CONTENT_TYPE)
+        );
     });
+
+    /**
+     * Resolves the mapping parameters the index's data-format plugin contributes to the given date content type.
+     * Empty when no registry is available or the index does not use a pluggable data format.
+     */
+    private static List<Parameter<?>> pluginMappingParameters(TypeParser.ParserContext c, String contentType) {
+        if (c.dataFormatRegistry() == null || c.mapperService() == null) {
+            return List.of();
+        }
+        return c.dataFormatRegistry().getPluginMappingParameters(contentType, c.mapperService().getIndexSettings());
+    }
 
     /**
      * Field type for date field mapper
@@ -771,6 +818,8 @@ public final class DateFieldMapper extends ParametrizedFieldMapper {
 
     private final boolean ignoreMalformedByDefault;
     private final Version indexCreatedVersion;
+    private final Map<String, Object> mappingPluginParameterValues;
+    private final List<Parameter<?>> mappingPluginParameters;
 
     private DateFieldMapper(
         String simpleName,
@@ -796,11 +845,20 @@ public final class DateFieldMapper extends ParametrizedFieldMapper {
         this.resolution = resolution;
         this.ignoreMalformedByDefault = builder.ignoreMalformed.getDefaultValue().value();
         this.indexCreatedVersion = builder.indexCreatedVersion;
+        this.mappingPluginParameterValues = builder.pluginMappingParameterValues();
+        this.mappingPluginParameters = builder.pluginMappingParameters();
+    }
+
+    @Override
+    public Map<String, Object> mappingPluginParameterValues() {
+        return mappingPluginParameterValues;
     }
 
     @Override
     public ParametrizedFieldMapper.Builder getMergeBuilder() {
-        return new Builder(simpleName(), resolution, null, ignoreMalformedByDefault, indexCreatedVersion).init(this);
+        return new Builder(simpleName(), resolution, null, ignoreMalformedByDefault, indexCreatedVersion, mappingPluginParameters).init(
+            this
+        );
     }
 
     @Override

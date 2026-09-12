@@ -33,10 +33,13 @@ import org.opensearch.index.engine.dataformat.DataFormat;
 import org.opensearch.index.engine.dataformat.DataFormatDescriptor;
 import org.opensearch.index.engine.dataformat.DataFormatPlugin;
 import org.opensearch.index.engine.dataformat.DataFormatRegistry;
+import org.opensearch.index.engine.dataformat.FieldStorageParameters;
 import org.opensearch.index.engine.dataformat.IndexingEngineConfig;
 import org.opensearch.index.engine.dataformat.IndexingExecutionEngine;
 import org.opensearch.index.engine.dataformat.StoreStrategy;
+import org.opensearch.index.mapper.DateFieldMapper;
 import org.opensearch.index.mapper.KeywordFieldMapper;
+import org.opensearch.index.mapper.NumberFieldMapper;
 import org.opensearch.index.mapper.ParametrizedFieldMapper;
 import org.opensearch.index.mapper.TextFieldMapper;
 import org.opensearch.index.store.PrecomputedChecksumStrategy;
@@ -72,6 +75,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -206,11 +210,31 @@ public class ParquetDataFormatPlugin extends Plugin implements DataFormatPlugin,
      * A mapping parameter this plugin contributes, paired with the field content types it applies to.
      *
      * @param contentTypes the core field content types (e.g. {@code keyword}, {@code text}) the parameter applies to
-     * @param factory      creates a fresh parameter instance per invocation; parameters are stateful during mapper
-     *                     building, so a new instance must be produced for each field being parsed
+     * @param factory      creates a fresh parameter instance per invocation for the given content type; parameters
+     *                     are stateful during mapper building, so a new instance must be produced for each field
+     *                     being parsed
      */
-    private record ParameterContribution(Set<String> contentTypes, Supplier<ParametrizedFieldMapper.Parameter<?>> factory) {
+    private record ParameterContribution(Set<String> contentTypes, Function<String, ParametrizedFieldMapper.Parameter<?>> factory) {
     }
+
+    /**
+     * Content types whose core mappers accept plugin-contributed parameters and that the Parquet plugin stores as
+     * columns, so a {@code codec} or {@code bloom_filter} declared on them can be honoured.
+     */
+    private static final Set<String> STORAGE_PARAMETER_CONTENT_TYPES = Set.of(
+        KeywordFieldMapper.CONTENT_TYPE,
+        TextFieldMapper.CONTENT_TYPE,
+        DateFieldMapper.CONTENT_TYPE,
+        DateFieldMapper.DATE_NANOS_CONTENT_TYPE,
+        NumberFieldMapper.NumberType.LONG.typeName(),
+        NumberFieldMapper.NumberType.INTEGER.typeName(),
+        NumberFieldMapper.NumberType.SHORT.typeName(),
+        NumberFieldMapper.NumberType.BYTE.typeName(),
+        NumberFieldMapper.NumberType.DOUBLE.typeName(),
+        NumberFieldMapper.NumberType.FLOAT.typeName(),
+        NumberFieldMapper.NumberType.HALF_FLOAT.typeName(),
+        NumberFieldMapper.NumberType.UNSIGNED_LONG.typeName()
+    );
 
     /**
      * All mapping parameters this plugin contributes. Each entry declares the field content types it applies to,
@@ -220,7 +244,7 @@ public class ParquetDataFormatPlugin extends Plugin implements DataFormatPlugin,
         // low_cardinality: when true, disables Lucene indexing (via side effect) and enables a Parquet column bloom filter.
         new ParameterContribution(
             Set.of(KeywordFieldMapper.CONTENT_TYPE, TextFieldMapper.CONTENT_TYPE),
-            () -> ParametrizedFieldMapper.SideEffectParameter.boolParam(
+            contentType -> ParametrizedFieldMapper.SideEffectParameter.boolParam(
                 ParquetSettings.LOW_CARDINALITY_PARAM,
                 false,
                 false,
@@ -230,7 +254,14 @@ public class ParquetDataFormatPlugin extends Plugin implements DataFormatPlugin,
                     }
                 }
             )
-        )
+        ),
+        // codec: storage-neutral encoding + compression for the field's column; validated against the field type here.
+        new ParameterContribution(
+            STORAGE_PARAMETER_CONTENT_TYPES,
+            contentType -> FieldStorageParameters.codec(codec -> ParquetFieldCodecs.validateForContentType(codec, contentType))
+        ),
+        // bloom_filter: per-column bloom filter for equality lookups.
+        new ParameterContribution(STORAGE_PARAMETER_CONTENT_TYPES, contentType -> FieldStorageParameters.bloomFilter())
     );
 
     @Override
@@ -242,7 +273,7 @@ public class ParquetDataFormatPlugin extends Plugin implements DataFormatPlugin,
         List<ParametrizedFieldMapper.Parameter<?>> parameters = new ArrayList<>();
         for (ParameterContribution contribution : CONTRIBUTIONS) {
             if (contribution.contentTypes().contains(contentType)) {
-                parameters.add(contribution.factory().get());
+                parameters.add(contribution.factory().apply(contentType));
             }
         }
         return List.copyOf(parameters);
@@ -257,6 +288,7 @@ public class ParquetDataFormatPlugin extends Plugin implements DataFormatPlugin,
             () -> ArrowSchemaBuilder.getSchema(engineConfig.mapperService()),
             () -> engineConfig.mapperService().getIndexSettings().getIndexMetadata().getMappingVersion(),
             () -> ParquetSettings.getLowCardinalityEnabledFields(engineConfig.mapperService()),
+            () -> ParquetFieldCodecs.resolve(engineConfig.indexSettings().getSettings(), engineConfig.mapperService()),
             engineConfig.indexSettings(),
             threadPool,
             engineConfig.checksumStrategies().get(ParquetDataFormat.PARQUET_DATA_FORMAT_NAME),

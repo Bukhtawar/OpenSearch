@@ -635,6 +635,30 @@ public abstract class ParametrizedFieldMapper extends FieldMapper {
             }, sideEffect);
         }
 
+        /**
+         * Like {@link #create(String, boolean, Object, TriFunction, BiConsumer)}, for parameters whose value type is
+         * not directly serializable as XContent. The value is written to the mapping as {@code mappingValue.apply(v)}
+         * and is omitted whenever it resolves to {@code null}, so an unset parameter leaves no trace in the mapping.
+         *
+         * @param mappingValue converts the resolved value into the XContent-serializable form written to the mapping
+         */
+        public static <T> SideEffectParameter<T> create(
+            String name,
+            boolean updateable,
+            T defaultValue,
+            TriFunction<String, ParserContext, Object, T> parser,
+            BiConsumer<Builder, T> sideEffect,
+            Function<T, Object> mappingValue
+        ) {
+            SideEffectParameter<T> parameter = create(name, updateable, defaultValue, parser, sideEffect);
+            parameter.setSerializer(
+                (b, n, v) -> b.field(n, mappingValue.apply(v)),
+                v -> String.valueOf(v == null ? null : mappingValue.apply(v))
+            );
+            parameter.setSerializerCheck((includeDefaults, isConfigured, value) -> value != null);
+            return parameter;
+        }
+
         /** Convenience factory for a boolean plugin-contributed parameter; see {@link #create}. */
         public static SideEffectParameter<Boolean> boolParam(
             String name,
