@@ -43,6 +43,9 @@ pub struct MergeContext {
     next_row_id: i64,
     total_rows_written: usize,
     rayon_threads: Option<usize>,
+    /// Batches with fewer rows than this are written to the column writers inline on the
+    /// calling thread instead of being fanned out across the rayon pool. See `push_batch`.
+    parallel_write_min_rows: usize,
     // Per-merge counters returned via `finish()` and forwarded to the per-shard tracker on the
     // Java side (see NativeParquetMergeStrategy + ParquetShardStatsTracker).
     flush_and_sort_chunk_count: i64,
@@ -121,6 +124,7 @@ impl MergeContext {
         let io_tx = spawn_io_task(writer, crc_handle, io_threads);
 
         let col_writers = rg_writer_factory.create_column_writers(0)?;
+        let parallel_write_min_rows = config.get_merge_parallel_write_min_rows();
 
         Ok(Self {
             data_schema,
@@ -134,6 +138,7 @@ impl MergeContext {
             next_row_id: 0,
             total_rows_written: 0,
             rayon_threads,
+            parallel_write_min_rows,
             flush_and_sort_chunk_count: 0,
             flush_and_sort_chunk_time_millis: 0,
             reservation,
@@ -163,8 +168,8 @@ impl MergeContext {
             .as_mut()
             .ok_or_else(|| MergeError::Logic("Column writers not initialized".into()))?;
 
-        // Compute leaf columns (O(columns) pointer math), then parallel-write
-        // across columns via rayon. Each column writer encodes independently.
+        // Compute leaf columns (O(columns) pointer math), then write them to the
+        // column writers. Each column writer encodes independently.
         let mut all_leaves: Vec<parquet::arrow::arrow_writer::ArrowLeafColumn> =
             Vec::with_capacity(col_writers.len());
         for (arr, field) in with_id.columns().iter().zip(self.output_schema.fields()) {
@@ -172,13 +177,30 @@ impl MergeContext {
             all_leaves.extend(leaves);
         }
 
-        let write_errors: Vec<_> = get_merge_pool(self.rayon_threads).install(|| {
-            col_writers
-                .par_iter_mut()
-                .zip(all_leaves.into_par_iter())
-                .filter_map(|(writer, leaf)| writer.write(&leaf).err())
-                .collect()
-        });
+        // Fan out across the rayon pool only when the batch is large enough for the
+        // per-column encode work to outweigh dispatch. A sorted merge over segments whose
+        // sort keys interleave (the normal case for a time-sorted log index) emits Tier-3
+        // runs of a few rows each; for those, one rayon job per column is almost pure
+        // scheduling: a join tree over ~N_columns jobs, cross-thread wake-ups, failed
+        // steals, and workers spinning in `sched_yield` between micro-jobs. Writing the
+        // leaves inline on this thread is cheaper and lets the pool go idle. Full batches
+        // (Tier 1/2, the unsorted path) and `do_flush` keep the parallel path.
+        let write_errors: Vec<parquet::errors::ParquetError> =
+            if num_rows < self.parallel_write_min_rows {
+                col_writers
+                    .iter_mut()
+                    .zip(all_leaves)
+                    .filter_map(|(writer, leaf)| writer.write(&leaf).err())
+                    .collect()
+            } else {
+                get_merge_pool(self.rayon_threads).install(|| {
+                    col_writers
+                        .par_iter_mut()
+                        .zip(all_leaves.into_par_iter())
+                        .filter_map(|(writer, leaf)| writer.write(&leaf).err())
+                        .collect()
+                })
+            };
 
         if let Some(e) = write_errors.into_iter().next() {
             log_error!("[RUST] Column write failed during push_batch: {}", e);

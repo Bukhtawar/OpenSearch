@@ -43,6 +43,10 @@ pub struct NativeSettings {
     pub merge_rayon_threads: Option<usize>,
     pub merge_io_threads: Option<usize>,
     pub merge_deferred_column_threshold: Option<usize>,
+    /// Minimum rows in a batch before `MergeContext::push_batch` fans the per-column
+    /// writes out across the rayon merge pool. Smaller batches are written inline on the
+    /// merge thread. `0` forces the parallel path for every batch.
+    pub merge_parallel_write_min_rows: Option<usize>,
 }
 
 impl NativeSettings {
@@ -119,6 +123,13 @@ impl NativeSettings {
 
     pub fn get_merge_deferred_column_threshold(&self) -> usize {
         self.merge_deferred_column_threshold.unwrap_or(0)
+    }
+
+    /// Default 1024: below this, dispatching one rayon job per column costs more than
+    /// encoding the rows. Sorted merges over time-interleaved segments emit runs of a few
+    /// rows each, so most of their `push_batch` calls sit far under this line.
+    pub fn get_merge_parallel_write_min_rows(&self) -> usize {
+        self.merge_parallel_write_min_rows.unwrap_or(1024)
     }
 }
 

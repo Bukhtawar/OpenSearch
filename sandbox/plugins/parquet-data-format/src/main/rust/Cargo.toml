@@ -27,8 +27,14 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 opensearch-parquet-format = { path = ".", features = ["test-utils"] }
+# getrusage() for process CPU time in benches; version already pinned in the workspace lock.
+libc = "=0.2.186"
 
 
 [[bench]]
 name = "merge_projection_bench"
+harness = false
+
+[[bench]]
+name = "merge_push_batch_gate_bench"
 harness = false

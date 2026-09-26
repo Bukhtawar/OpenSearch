@@ -230,6 +230,7 @@ public class ParquetIndexingEngine implements IndexingExecutionEngine<ParquetDat
             .rowGroupMaxBytes(ParquetSettings.ROW_GROUP_MAX_BYTES.get(settings).getBytes())
             .mergeBatchSize(ParquetSettings.MERGE_BATCH_SIZE.get(settings))
             .mergeDeferredColumnThreshold(ParquetSettings.MERGE_DEFERRED_COLUMN_THRESHOLD.get(settings))
+            .mergeParallelWriteMinRows(ParquetSettings.MERGE_PARALLEL_WRITE_MIN_ROWS.get(settings))
             .mergeRayonThreads(ParquetSettings.MERGE_RAYON_THREADS.get(nodeSettings))
             .mergeIoThreads(ParquetSettings.MERGE_IO_THREADS.get(nodeSettings))
             .fieldEncodings(ParquetSettings.getFieldEncodings(settings))

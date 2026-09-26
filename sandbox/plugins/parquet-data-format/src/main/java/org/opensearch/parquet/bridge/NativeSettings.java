@@ -35,6 +35,7 @@ public class NativeSettings {
     private final Integer mergeRayonThreads;
     private final Integer mergeIoThreads;
     private final Integer mergeDeferredColumnThreshold;
+    private final Integer mergeParallelWriteMinRows;
     private final Map<String, String> fieldEncodings;
     private final Map<String, String> fieldCompressions;
     private final Map<String, Boolean> fieldBloomFilterEnabled;
@@ -62,6 +63,7 @@ public class NativeSettings {
         this.mergeRayonThreads = builder.mergeRayonThreads;
         this.mergeIoThreads = builder.mergeIoThreads;
         this.mergeDeferredColumnThreshold = builder.mergeDeferredColumnThreshold;
+        this.mergeParallelWriteMinRows = builder.mergeParallelWriteMinRows;
         this.fieldEncodings = builder.fieldEncodings != null ? Collections.unmodifiableMap(builder.fieldEncodings) : Collections.emptyMap();
         this.fieldCompressions = builder.fieldCompressions != null
             ? Collections.unmodifiableMap(builder.fieldCompressions)
@@ -151,6 +153,10 @@ public class NativeSettings {
         return mergeDeferredColumnThreshold;
     }
 
+    public Integer getMergeParallelWriteMinRows() {
+        return mergeParallelWriteMinRows;
+    }
+
     public Map<String, String> getFieldEncodings() {
         return fieldEncodings;
     }
@@ -212,6 +218,7 @@ public class NativeSettings {
         private Integer mergeRayonThreads;
         private Integer mergeIoThreads;
         private Integer mergeDeferredColumnThreshold;
+        private Integer mergeParallelWriteMinRows;
         private Map<String, String> fieldEncodings;
         private Map<String, String> fieldCompressions;
         private Map<String, Boolean> fieldBloomFilterEnabled;
@@ -299,6 +306,11 @@ public class NativeSettings {
 
         public Builder mergeDeferredColumnThreshold(Integer v) {
             this.mergeDeferredColumnThreshold = v;
+            return this;
+        }
+
+        public Builder mergeParallelWriteMinRows(Integer v) {
+            this.mergeParallelWriteMinRows = v;
             return this;
         }
 

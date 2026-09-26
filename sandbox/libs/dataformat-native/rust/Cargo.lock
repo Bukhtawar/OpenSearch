@@ -2906,6 +2906,7 @@ dependencies = [
  "crc32fast",
  "dashmap 5.5.3",
  "lazy_static",
+ "libc",
  "native-bridge-common",
  "opensearch-parquet-format",
  "parquet",

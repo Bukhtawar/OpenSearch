@@ -233,6 +233,21 @@ public final class ParquetSettings {
         Setting.Property.Dynamic
     );
 
+    /**
+     * Minimum rows in a merge batch before the native merge fans the per-column writes out
+     * across the rayon merge pool; smaller batches are written inline on the merge thread.
+     * Sorted merges over time-interleaved segments emit many batches of a few rows, for which
+     * one rayon job per column is almost pure scheduling overhead. {@code 0} forces the
+     * parallel path for every batch (pre-gate behavior).
+     */
+    public static final Setting<Integer> MERGE_PARALLEL_WRITE_MIN_ROWS = Setting.intSetting(
+        "index.parquet.merge_parallel_write_min_rows",
+        1024,
+        0,
+        Setting.Property.IndexScope,
+        Setting.Property.Dynamic
+    );
+
     /** Minimum guaranteed bytes for the native write pool. Default is 2% of budget on warm nodes, 4% otherwise. */
     public static final Setting<Long> WRITE_POOL_MIN = new Setting<>(
         "parquet.native.pool.write.min",
@@ -956,6 +971,7 @@ public final class ParquetSettings {
             MERGE_RAYON_THREADS,
             MERGE_IO_THREADS,
             MERGE_DEFERRED_COLUMN_THRESHOLD,
+            MERGE_PARALLEL_WRITE_MIN_ROWS,
             WRITE_POOL_MIN,
             WRITE_POOL_MAX,
             MERGE_POOL_MIN,
