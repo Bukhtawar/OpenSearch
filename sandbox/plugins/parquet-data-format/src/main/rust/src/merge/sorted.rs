@@ -10,7 +10,9 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
 
+use arrow::compute::concat_batches;
 use arrow::datatypes::Schema as ArrowSchema;
+use arrow::record_batch::RecordBatch;
 
 use crate::log_debug;
 
@@ -22,6 +24,79 @@ use super::schema::ColumnMapping;
 
 use crate::memory::merge_pool;
 use native_bridge_common::memory_pool::{MemoryReservation, PoolBehavior};
+
+/// Accumulates the slices the k-way merge emits and hands them to
+/// [`MergeContext::push_batch`] in batches of at least `target_rows` rows.
+///
+/// A sorted merge over inputs whose sort keys interleave (adjacent segments of one
+/// time-sorted log stream) emits one Tier-3 run per heap pop, often a handful of rows.
+/// Every `push_batch` pays a per-call cost that does not shrink with row count
+/// (`append_row_id`, `compute_leaves`, a level-buffer allocation and a `ColumnPath` hash
+/// lookup per column, the writer `memory_size` sum), so millions of tiny pushes per merge
+/// dominate the encode work. Concatenating pending runs into one batch first makes an
+/// interleaved merge cost the same number of pushes as a disjoint one, and every push is
+/// then large enough to take the parallel write path in `push_batch`.
+///
+/// Slices are zero-copy views into a cursor's current batch, so holding them pins that
+/// batch after the cursor has released its memory tracking. `flush` is therefore called
+/// before any cursor drops a batch (`advance_past_batch`, and `advance` at the last row),
+/// which bounds pinned memory to the batches the cursors already hold. Those flushes are
+/// rare (once per source batch) so they do not undo the coalescing.
+///
+/// Output ordering and row ids are unchanged: rows reach the writer in emission order,
+/// and `push_batch` assigns row ids sequentially over whatever it receives.
+struct RunCoalescer {
+    target_rows: usize,
+    pending: Vec<RecordBatch>,
+    pending_rows: usize,
+    /// `MergeContext::data_schema()`: the union schema every padded slice already has.
+    schema: Arc<ArrowSchema>,
+    pushes: usize,
+}
+
+impl RunCoalescer {
+    fn new(target_rows: usize, schema: Arc<ArrowSchema>) -> Self {
+        Self {
+            target_rows: target_rows.max(1),
+            pending: Vec::new(),
+            pending_rows: 0,
+            schema,
+            pushes: 0,
+        }
+    }
+
+    /// Queues a padded slice, pushing to the writer once `target_rows` are pending.
+    #[inline]
+    fn push(&mut self, slice: RecordBatch, ctx: &mut MergeContext) -> super::MergeResult<()> {
+        if slice.num_rows() == 0 {
+            return Ok(());
+        }
+        self.pending_rows += slice.num_rows();
+        self.pending.push(slice);
+        if self.pending_rows >= self.target_rows {
+            self.flush(ctx)?;
+        }
+        Ok(())
+    }
+
+    /// Pushes whatever is pending. A single pending slice goes through untouched (no copy);
+    /// several are concatenated into one owned batch first.
+    fn flush(&mut self, ctx: &mut MergeContext) -> super::MergeResult<()> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        let batch = if self.pending.len() == 1 {
+            self.pending.pop().unwrap()
+        } else {
+            let merged = concat_batches(&self.schema, &self.pending)?;
+            self.pending.clear();
+            merged
+        };
+        self.pending_rows = 0;
+        self.pushes += 1;
+        ctx.push_batch(batch)
+    }
+}
 
 /// Checked write of a surviving row's new id into the flat mapping. A row id at or beyond
 /// the file's footer-declared span would silently corrupt the next file's slots, so it is
@@ -103,6 +178,7 @@ pub fn merge_sorted_with_pool(
     let rayon_threads = config.get_merge_rayon_threads();
     let io_threads = config.get_merge_io_threads();
     let deferred_threshold = config.get_merge_deferred_column_threshold();
+    let coalesce_rows = config.get_merge_coalesce_rows();
     if input_files.is_empty() {
         return Err(super::MergeError::Logic(
             "merge_sorted called with empty input_files".into(),
@@ -126,12 +202,13 @@ pub fn merge_sorted_with_pool(
 
     log_debug!(
         "[RUST] Starting streaming merge ({}): {} input files, sort_columns={:?}, \
-         batch_size={}, flush_rows={}, merge_threads={}, output='{}'",
+         batch_size={}, flush_rows={}, coalesce_rows={}, merge_threads={}, output='{}'",
         direction_label,
         input_files.len(),
         sort_columns,
         batch_size,
         output_flush_rows,
+        coalesce_rows,
         pool.current_num_threads(),
         output_path
     );
@@ -185,6 +262,8 @@ pub fn merge_sorted_with_pool(
         .iter()
         .map(|s| ColumnMapping::new(s, ctx.data_schema()))
         .collect();
+
+    let mut runs = RunCoalescer::new(coalesce_rows, Arc::clone(ctx.data_schema()));
 
     // Row-ID mapping: pre-allocate the flat mapping array and compute offsets
     // from file metadata row counts (known before reading any data). The mapping
@@ -266,9 +345,11 @@ pub fn merge_sorted_with_pool(
                         }
                     }
                     if slice.num_rows() > 0 {
-                        ctx.push_batch(col_mapping.pad_batch(&slice)?)?;
+                        runs.push(col_mapping.pad_batch(&slice)?, &mut ctx)?;
                     }
                 }
+                // The next call drops this cursor's batch; pending slices view into it.
+                runs.flush(&mut ctx)?;
                 if !cursor.advance_past_batch(reservation)? {
                     break;
                 }
@@ -307,9 +388,11 @@ pub fn merge_sorted_with_pool(
                     }
                 }
                 if slice.num_rows() > 0 {
-                    ctx.push_batch(col_mapping.pad_batch(&slice)?)?;
+                    runs.push(col_mapping.pad_batch(&slice)?, &mut ctx)?;
                 }
 
+                // The next call drops this cursor's batch; pending slices view into it.
+                runs.flush(&mut ctx)?;
                 if !cursor.advance_past_batch(reservation)? {
                     break;
                 }
@@ -372,11 +455,17 @@ pub fn merge_sorted_with_pool(
                     }
                 }
                 if slice.num_rows() > 0 {
-                    ctx.push_batch(col_mapping.pad_batch(&slice)?)?;
+                    runs.push(col_mapping.pad_batch(&slice)?, &mut ctx)?;
                 }
             }
 
             cursor.row_idx = run_end;
+            // `advance` drops the current batch when the run ended on its last row;
+            // pending slices view into it, so hand them to the writer first. Runs that
+            // end mid-batch (the common case) keep accumulating.
+            if run_end + 1 >= batch_h {
+                runs.flush(&mut ctx)?;
+            }
             if !cursor.advance(reservation)? {
                 break;
             }
@@ -394,14 +483,17 @@ pub fn merge_sorted_with_pool(
     }
 
     // ── Phase 5: Close ──────────────────────────────────────────────────
+    runs.flush(&mut ctx)?;
     let stats = ctx.finish()?;
 
     log_debug!(
-        "[RUST] Merge complete ({}): {} total rows written to '{}' in {} row groups, crc32={:#010x}",
+        "[RUST] Merge complete ({}): {} total rows written to '{}' in {} row groups \
+         via {} push_batch calls, crc32={:#010x}",
         direction_label,
         stats.metadata.file_metadata().num_rows(),
         output_path,
         stats.metadata.num_row_groups(),
+        runs.pushes,
         stats.crc32
     );
 

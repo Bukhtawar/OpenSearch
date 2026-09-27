@@ -47,6 +47,11 @@ pub struct NativeSettings {
     /// writes out across the rayon merge pool. Smaller batches are written inline on the
     /// merge thread. `0` forces the parallel path for every batch.
     pub merge_parallel_write_min_rows: Option<usize>,
+    /// Sorted merge only: emitted runs are accumulated and handed to `push_batch` once at
+    /// least this many rows are pending (or a source batch is about to be released).
+    /// Unset or `0` follows `merge_batch_size`; `1` pushes every run immediately (the
+    /// pre-coalescing behaviour).
+    pub merge_coalesce_rows: Option<usize>,
 }
 
 impl NativeSettings {
@@ -130,6 +135,15 @@ impl NativeSettings {
     /// rows each, so most of their `push_batch` calls sit far under this line.
     pub fn get_merge_parallel_write_min_rows(&self) -> usize {
         self.merge_parallel_write_min_rows.unwrap_or(1024)
+    }
+
+    /// Unset or `0` follows the merge batch size so a coalesced push carries as many rows as
+    /// a Tier-1/2 whole-batch push; `1` pushes every run immediately.
+    pub fn get_merge_coalesce_rows(&self) -> usize {
+        match self.merge_coalesce_rows {
+            None | Some(0) => self.get_merge_batch_size(),
+            Some(n) => n,
+        }
     }
 }
 

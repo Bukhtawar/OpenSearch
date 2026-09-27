@@ -2315,3 +2315,154 @@ fn test_base_row_id_advances_across_sort_batches() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Run coalescing (sorted.rs RunCoalescer)
+// ---------------------------------------------------------------------------
+
+/// Reads `(sort key, payload, row id)` triples in file order.
+fn read_key_payload_rowid(path: &str) -> Vec<(i64, String, i64)> {
+    let file = File::open(path).unwrap();
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut out = Vec::new();
+    for batch in reader {
+        let batch = batch.unwrap();
+        let keys = batch
+            .column(batch.schema().index_of("time").unwrap())
+            .as_primitive::<arrow::datatypes::Int64Type>();
+        let payload = batch
+            .column(batch.schema().index_of("payload").unwrap())
+            .as_string::<i32>();
+        let row_ids = batch
+            .column(batch.schema().index_of("__row_id__").unwrap())
+            .as_primitive::<arrow::datatypes::Int64Type>();
+        for i in 0..batch.num_rows() {
+            out.push((
+                keys.value(i),
+                payload.value(i).to_string(),
+                row_ids.value(i),
+            ));
+        }
+    }
+    out
+}
+
+/// Coalescing groups Tier-3 runs into fewer, larger `push_batch` calls. It must not change
+/// which rows are written, their order, their row ids, or the source->target row-id mapping,
+/// including when runs straddle reader-batch boundaries (the flush-before-release path) and
+/// when a file carries deletes (filtered, owned slices). Compares the default (coalesce to
+/// `merge_batch_size`) against `merge_coalesce_rows = 1` (push every run, the old behaviour).
+#[test]
+fn test_run_coalescing_matches_per_run_output() {
+    let dir = tempdir().unwrap();
+    let base = dir.path().to_str().unwrap();
+    const FILES: usize = 3;
+    const ROWS: usize = 1000;
+    // Batch size below the file size so every cursor crosses several batch boundaries while
+    // runs are pending, and not a divisor of ROWS so the last batch is short.
+    const BATCH: usize = 96;
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("time", DataType::Int64, false),
+        Field::new("payload", DataType::Utf8, true),
+    ]));
+
+    // Interleave keys across files with a run length of 3 so almost every emitted run is a
+    // Tier-3 slice of a few rows.
+    let mut inputs = Vec::new();
+    for f in 0..FILES {
+        let keys: Vec<i64> = (0..ROWS)
+            .map(|r| ((r / 3) * FILES * 3 + f * 3 + (r % 3)) as i64)
+            .collect();
+        let payload: Vec<Option<String>> = (0..ROWS)
+            .map(|r| {
+                if (r + f) % 17 == 0 {
+                    None
+                } else {
+                    Some(format!("f{}-r{}", f, r))
+                }
+            })
+            .collect();
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int64Array::from(keys)),
+                Arc::new(StringArray::from(payload)),
+            ],
+        )
+        .unwrap();
+        let path = format!("{}/in_{}.parquet", base, f);
+        write_parquet(&path, &batch);
+        inputs.push(path);
+    }
+
+    // File 1 loses every 7th row plus a stretch at a batch boundary; others are fully live.
+    let mut dead: Vec<u64> = (0..ROWS as u64).filter(|r| r % 7 == 0).collect();
+    dead.extend((BATCH as u64 - 3)..(BATCH as u64 + 3));
+    dead.sort_unstable();
+    dead.dedup();
+    let live_docs = vec![None, Some(live_bits_except(ROWS, &dead)), None];
+    let expected_rows = (FILES * ROWS - dead.len()) as i64;
+
+    let run = |index_name: &str, coalesce_rows: Option<usize>, out: &str| {
+        SETTINGS_STORE.insert(
+            index_name.to_string(),
+            NativeSettings {
+                merge_batch_size: Some(BATCH),
+                merge_coalesce_rows: coalesce_rows,
+                ..Default::default()
+            },
+        );
+        merge_sorted(
+            &inputs,
+            out,
+            index_name,
+            &["time".to_string()],
+            &[false],
+            &[false],
+            &[],
+            7,
+            &live_docs,
+        )
+        .unwrap()
+    };
+
+    let out_per_run = format!("{}/out_per_run.parquet", base);
+    let out_coalesced = format!("{}/out_coalesced.parquet", base);
+    let per_run = run("coalesce_test_per_run", Some(1), &out_per_run);
+    let coalesced = run("coalesce_test_default", None, &out_coalesced);
+
+    assert_eq!(per_run.metadata.file_metadata().num_rows(), expected_rows);
+    assert_eq!(coalesced.metadata.file_metadata().num_rows(), expected_rows);
+
+    let rows_per_run = read_key_payload_rowid(&out_per_run);
+    let rows_coalesced = read_key_payload_rowid(&out_coalesced);
+    assert_eq!(rows_per_run.len(), expected_rows as usize);
+    assert_eq!(
+        rows_coalesced, rows_per_run,
+        "row content/order/row-id differ"
+    );
+    assert!(
+        rows_coalesced.windows(2).all(|w| w[0].0 < w[1].0),
+        "output must be sorted by key"
+    );
+    assert!(
+        rows_coalesced
+            .iter()
+            .enumerate()
+            .all(|(i, r)| r.2 == i as i64),
+        "row ids must be dense and sequential"
+    );
+
+    assert_eq!(coalesced.mapping, per_run.mapping, "row-id mapping differs");
+    assert_eq!(coalesced.gen_offsets, per_run.gen_offsets);
+    assert_eq!(coalesced.gen_sizes, per_run.gen_sizes);
+    // Dead rows keep the -1 sentinel in the mapping.
+    let file1_offset = per_run.gen_offsets[1] as usize;
+    for &d in &dead {
+        assert_eq!(coalesced.mapping[file1_offset + d as usize], -1);
+    }
+}

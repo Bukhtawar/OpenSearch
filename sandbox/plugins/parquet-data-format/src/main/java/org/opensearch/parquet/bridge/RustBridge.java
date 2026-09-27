@@ -165,6 +165,7 @@ public class RustBridge {
                 ValueLayout.JAVA_LONG,                        // merge_rayon_threads
                 ValueLayout.JAVA_LONG,                        // merge_io_threads
                 ValueLayout.JAVA_LONG,                        // merge_parallel_write_min_rows
+                ValueLayout.JAVA_LONG,                        // merge_coalesce_rows
                 ValueLayout.ADDRESS,
                 ValueLayout.ADDRESS,
                 ValueLayout.ADDRESS,
@@ -515,6 +516,7 @@ public class RustBridge {
                 nativeSettings.getMergeRayonThreads() != null ? (long) nativeSettings.getMergeRayonThreads() : -1L,
                 nativeSettings.getMergeIoThreads() != null ? (long) nativeSettings.getMergeIoThreads() : -1L,
                 nativeSettings.getMergeParallelWriteMinRows() != null ? (long) nativeSettings.getMergeParallelWriteMinRows() : -1L,
+                nativeSettings.getMergeCoalesceRows() != null ? (long) nativeSettings.getMergeCoalesceRows() : -1L,
                 fieldEncodings.keys().ptrs(),
                 fieldEncodings.keys().lens(),
                 fieldEncodings.values().ptrs(),

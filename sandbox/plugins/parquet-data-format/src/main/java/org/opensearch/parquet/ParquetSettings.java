@@ -248,6 +248,22 @@ public final class ParquetSettings {
         Setting.Property.Dynamic
     );
 
+    /**
+     * Sorted merges only: rows emitted by the k-way merge are accumulated and handed to the
+     * native column writers once at least this many are pending (or a source batch is about to
+     * be released). Interleaved inputs otherwise produce one write call per run of a few rows,
+     * each paying a fixed per-column cost. {@code 0} (default) follows
+     * {@code index.parquet.merge_batch_size}; {@code 1} writes every run immediately
+     * (pre-coalescing behavior).
+     */
+    public static final Setting<Integer> MERGE_COALESCE_ROWS = Setting.intSetting(
+        "index.parquet.merge_coalesce_rows",
+        0,
+        0,
+        Setting.Property.IndexScope,
+        Setting.Property.Dynamic
+    );
+
     /** Minimum guaranteed bytes for the native write pool. Default is 2% of budget on warm nodes, 4% otherwise. */
     public static final Setting<Long> WRITE_POOL_MIN = new Setting<>(
         "parquet.native.pool.write.min",
@@ -972,6 +988,7 @@ public final class ParquetSettings {
             MERGE_IO_THREADS,
             MERGE_DEFERRED_COLUMN_THRESHOLD,
             MERGE_PARALLEL_WRITE_MIN_ROWS,
+            MERGE_COALESCE_ROWS,
             WRITE_POOL_MIN,
             WRITE_POOL_MAX,
             MERGE_POOL_MIN,

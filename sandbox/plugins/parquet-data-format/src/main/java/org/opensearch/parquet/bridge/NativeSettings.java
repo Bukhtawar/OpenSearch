@@ -36,6 +36,7 @@ public class NativeSettings {
     private final Integer mergeIoThreads;
     private final Integer mergeDeferredColumnThreshold;
     private final Integer mergeParallelWriteMinRows;
+    private final Integer mergeCoalesceRows;
     private final Map<String, String> fieldEncodings;
     private final Map<String, String> fieldCompressions;
     private final Map<String, Boolean> fieldBloomFilterEnabled;
@@ -64,6 +65,7 @@ public class NativeSettings {
         this.mergeIoThreads = builder.mergeIoThreads;
         this.mergeDeferredColumnThreshold = builder.mergeDeferredColumnThreshold;
         this.mergeParallelWriteMinRows = builder.mergeParallelWriteMinRows;
+        this.mergeCoalesceRows = builder.mergeCoalesceRows;
         this.fieldEncodings = builder.fieldEncodings != null ? Collections.unmodifiableMap(builder.fieldEncodings) : Collections.emptyMap();
         this.fieldCompressions = builder.fieldCompressions != null
             ? Collections.unmodifiableMap(builder.fieldCompressions)
@@ -157,6 +159,10 @@ public class NativeSettings {
         return mergeParallelWriteMinRows;
     }
 
+    public Integer getMergeCoalesceRows() {
+        return mergeCoalesceRows;
+    }
+
     public Map<String, String> getFieldEncodings() {
         return fieldEncodings;
     }
@@ -219,6 +225,7 @@ public class NativeSettings {
         private Integer mergeIoThreads;
         private Integer mergeDeferredColumnThreshold;
         private Integer mergeParallelWriteMinRows;
+        private Integer mergeCoalesceRows;
         private Map<String, String> fieldEncodings;
         private Map<String, String> fieldCompressions;
         private Map<String, Boolean> fieldBloomFilterEnabled;
@@ -311,6 +318,11 @@ public class NativeSettings {
 
         public Builder mergeParallelWriteMinRows(Integer v) {
             this.mergeParallelWriteMinRows = v;
+            return this;
+        }
+
+        public Builder mergeCoalesceRows(Integer v) {
+            this.mergeCoalesceRows = v;
             return this;
         }
 

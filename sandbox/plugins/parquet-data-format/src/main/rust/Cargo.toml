@@ -38,3 +38,7 @@ harness = false
 [[bench]]
 name = "merge_push_batch_gate_bench"
 harness = false
+
+[[bench]]
+name = "merge_run_coalescing_bench"
+harness = false
