@@ -61,6 +61,10 @@ pub struct FileCursor {
     num_rows: u64,
     /// Source row-id offset at the start of the current sort batch.
     pub base_row_id: u64,
+    /// Rows in the current sort batch. Kept separately from `sort_batch` because
+    /// `advance`/`advance_past_batch` clear `sort_batch` before `load_next_batch` runs,
+    /// and `base_row_id` must still move past the batch that was just dropped.
+    current_sort_batch_rows: u64,
 }
 
 /// Returns `true` if `abs_row_id` is alive given the optional `live_bits` packed bitset.
@@ -292,6 +296,7 @@ impl FileCursor {
 
         // Resolve sort column indices within the sort batch schema
         let sort_batch_schema = first_sort_batch.schema();
+        let first_sort_batch_rows = first_sort_batch.num_rows() as u64;
         let sort_col_indices: Vec<usize> = sort_columns
             .iter()
             .map(|col| {
@@ -334,6 +339,7 @@ impl FileCursor {
             live_bits,
             num_rows: total_row_count as u64,
             base_row_id: 0,
+            current_sort_batch_rows: first_sort_batch_rows,
         };
 
         // Track sort batch + prefetch (estimate 2x first batch)
@@ -402,11 +408,7 @@ impl FileCursor {
 
     pub fn load_next_batch(&mut self, reservation: &mut MemoryReservation) -> MergeResult<bool> {
         let old_sort_bytes = self.current_sort_batch_bytes;
-        let prev_rows = self
-            .sort_batch
-            .as_ref()
-            .map(|b| b.num_rows() as u64)
-            .unwrap_or(0);
+        let prev_rows = self.current_sort_batch_rows;
         self.sort_batch = None;
 
         // Release data batch tracking — previous data_batch is dropped
@@ -432,6 +434,7 @@ impl FileCursor {
         match sort_result {
             Some(batch) => {
                 let new_bytes = batch.get_array_memory_size();
+                self.current_sort_batch_rows = batch.num_rows() as u64;
                 self.sort_batch = Some(batch);
                 // Advance the absolute source row-id offset past the batch we just dropped.
                 self.base_row_id += prev_rows;

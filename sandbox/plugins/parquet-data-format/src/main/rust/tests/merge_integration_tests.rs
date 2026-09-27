@@ -2218,3 +2218,100 @@ fn test_deferred_three_files_different_schemas() {
     }
     assert_eq!(extra_vals, vec!["NULL", "x2", "x3", "NULL", "x5", "x6"]);
 }
+
+// ---------------------------------------------------------------------------
+// Regression: base_row_id must advance across sort batches
+// ---------------------------------------------------------------------------
+
+/// Bitset with every row alive except those in `dead` (bit set = alive).
+fn live_bits_except(num_rows: usize, dead: &[u64]) -> Vec<u64> {
+    let mut words = vec![u64::MAX; (num_rows + 63) / 64];
+    for &d in dead {
+        words[(d / 64) as usize] &= !(1u64 << (d % 64));
+    }
+    words
+}
+
+/// `FileCursor::advance` and `advance_past_batch` clear `sort_batch` before calling
+/// `load_next_batch`, which used to derive the dropped batch's row count from `sort_batch`
+/// and therefore never moved `base_row_id` past the first batch. Every input longer than one
+/// merge batch then (a) wrote its later rows' row-id mapping into the first batch's slots,
+/// leaving the rest at -1, and (b) tested the wrong bits of the live-docs bitset. Both the
+/// mapping and the delete filter must be correct for rows beyond the first batch.
+#[test]
+fn test_base_row_id_advances_across_sort_batches() {
+    let dir = tempdir().unwrap();
+    let base = dir.path().to_str().unwrap();
+    const ROWS: usize = 1000;
+    const BATCH: usize = 96; // not a divisor of ROWS: last batch is short
+
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "time",
+        DataType::Int64,
+        false,
+    )]));
+    let mut inputs = Vec::new();
+    for f in 0..2usize {
+        // Disjoint key ranges so file 0 drains first (Tier 2 then Tier 1 for file 1).
+        let keys: Vec<i64> = (0..ROWS).map(|r| (f * ROWS + r) as i64).collect();
+        let batch =
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(keys))]).unwrap();
+        let path = format!("{}/in_{}.parquet", base, f);
+        write_parquet(&path, &batch);
+        inputs.push(path);
+    }
+
+    // Delete rows in file 1 that all live beyond its first batch, one straddling a boundary.
+    let dead: Vec<u64> = vec![100, 191, 192, 500, 999];
+    let live_docs = vec![None, Some(live_bits_except(ROWS, &dead))];
+
+    let index_name = "base_row_id_regression";
+    register_small_batch_size(index_name, BATCH);
+    let out = format!("{}/out.parquet", base);
+    let result = merge_sorted(
+        &inputs,
+        &out,
+        index_name,
+        &["time".to_string()],
+        &[false],
+        &[false],
+        &[],
+        1,
+        &live_docs,
+    )
+    .unwrap();
+
+    let expected_rows = (2 * ROWS - dead.len()) as i64;
+    assert_eq!(result.metadata.file_metadata().num_rows(), expected_rows);
+
+    // Exactly the deleted keys are absent.
+    let keys = read_all_int64(&out, "time");
+    let dead_keys: std::collections::HashSet<i64> =
+        dead.iter().map(|&d| (ROWS as u64 + d) as i64).collect();
+    let expected_keys: Vec<i64> = (0..(2 * ROWS) as i64)
+        .filter(|k| !dead_keys.contains(k))
+        .collect();
+    assert_eq!(keys, expected_keys);
+
+    // Mapping: every live source row maps to its position in the output; dead rows are -1.
+    assert_eq!(result.mapping.len(), 2 * ROWS);
+    let mut expected_new_id = 0i64;
+    for f in 0..2usize {
+        let off = result.gen_offsets[f] as usize;
+        for r in 0..ROWS {
+            let is_dead = f == 1 && dead.contains(&(r as u64));
+            if is_dead {
+                assert_eq!(result.mapping[off + r], -1, "file {} row {}", f, r);
+            } else {
+                assert_eq!(
+                    result.mapping[off + r],
+                    expected_new_id,
+                    "file {} row {}",
+                    f,
+                    r
+                );
+                expected_new_id += 1;
+            }
+        }
+    }
+}
