@@ -383,14 +383,19 @@ impl WriterPropertiesBuilder {
                     })
                     .unwrap_or(config.get_bloom_filter_fpp());
                 builder = builder.set_column_bloom_filter_fpp(column_path.clone(), bf_fpp);
+                // NDV is an explicit override only (field > type > index). When none is set,
+                // leave it unset so parquet pre-sizes the filter from max_row_group_row_count
+                // and folds it to the target FPP at row-group close.
                 let bf_ndv = index_cfg
                     .and_then(|fc| fc.bloom_filter_ndv)
                     .or_else(|| {
                         type_key
                             .and_then(|t| config.type_bloom_filter_ndv.as_ref()?.get(t).copied())
                     })
-                    .unwrap_or(config.get_bloom_filter_ndv());
-                builder = builder.set_column_bloom_filter_ndv(column_path.clone(), bf_ndv);
+                    .or(config.get_bloom_filter_ndv());
+                if let Some(ndv) = bf_ndv {
+                    builder = builder.set_column_bloom_filter_ndv(column_path.clone(), ndv);
+                }
             }
         }
         Ok(builder)
@@ -1051,6 +1056,77 @@ mod tests {
             bf_props.is_some(),
             "bloom_filter_properties should be Some when enabled"
         );
+    }
+
+    /// With no NDV configured anywhere, the column must NOT be pinned: parquet then
+    /// resolves the NDV to `max_row_group_row_count` so the filter is pre-sized for a
+    /// full row group and folded down to the target FPP at row-group close.
+    #[test]
+    fn test_bloom_filter_ndv_unset_resolves_to_row_group_max_rows() {
+        let config = NativeSettings {
+            bloom_filter_enabled: Some(true),
+            bloom_filter_fpp: Some(0.05),
+            bloom_filter_ndv: None,
+            row_group_max_rows: Some(250_000),
+            ..Default::default()
+        };
+        assert_eq!(config.get_bloom_filter_ndv(), None);
+        let schema = schema_with(vec![("test_col", ArrowDataType::Utf8)]);
+        let props = WriterPropertiesBuilder::build(&config, &schema).unwrap();
+        let col_path = parquet::schema::types::ColumnPath::from("test_col");
+        let bf_props = props
+            .bloom_filter_properties(&col_path)
+            .expect("bloom filter should be enabled");
+        assert_eq!(bf_props.fpp, 0.05);
+        assert_eq!(
+            bf_props.ndv, 250_000,
+            "unset NDV must resolve to max_row_group_row_count, not a fixed 100k"
+        );
+    }
+
+    /// An explicit index-level NDV is still honored as a hard pin.
+    #[test]
+    fn test_bloom_filter_ndv_explicit_index_level_is_pinned() {
+        let config = NativeSettings {
+            bloom_filter_enabled: Some(true),
+            bloom_filter_ndv: Some(1_000),
+            row_group_max_rows: Some(250_000),
+            ..Default::default()
+        };
+        let schema = schema_with(vec![("test_col", ArrowDataType::Utf8)]);
+        let props = WriterPropertiesBuilder::build(&config, &schema).unwrap();
+        let col_path = parquet::schema::types::ColumnPath::from("test_col");
+        let bf_props = props.bloom_filter_properties(&col_path).unwrap();
+        assert_eq!(bf_props.ndv, 1_000);
+    }
+
+    /// Field-level NDV pins only that column; siblings keep the self-sizing default.
+    #[test]
+    fn test_bloom_filter_ndv_field_override_does_not_leak_to_siblings() {
+        let mut field_configs = HashMap::new();
+        field_configs.insert(
+            "pinned".to_string(),
+            FieldConfig {
+                bloom_filter_ndv: Some(2_000),
+                ..Default::default()
+            },
+        );
+        let config = NativeSettings {
+            bloom_filter_enabled: Some(true),
+            bloom_filter_ndv: None,
+            row_group_max_rows: Some(250_000),
+            field_configs: Some(field_configs),
+            ..Default::default()
+        };
+        let schema = schema_with(vec![
+            ("pinned", ArrowDataType::Utf8),
+            ("free", ArrowDataType::Utf8),
+        ]);
+        let props = WriterPropertiesBuilder::build(&config, &schema).unwrap();
+        let pinned = parquet::schema::types::ColumnPath::from("pinned");
+        let free = parquet::schema::types::ColumnPath::from("free");
+        assert_eq!(props.bloom_filter_properties(&pinned).unwrap().ndv, 2_000);
+        assert_eq!(props.bloom_filter_properties(&free).unwrap().ndv, 250_000);
     }
 
     #[test]

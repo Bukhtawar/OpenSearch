@@ -231,6 +231,32 @@ public class ParquetSettingsTests extends OpenSearchTestCase {
         assertEquals(Long.valueOf(50000L), result.get("name"));
     }
 
+    // --- Index-level bloom filter NDV: unset by default so the writer self-sizes and folds ---
+
+    public void testIndexBloomFilterNdvUnsetByDefault() {
+        Settings settings = Settings.EMPTY;
+        assertEquals(ParquetSettings.BLOOM_FILTER_NDV_UNSET, ParquetSettings.BLOOM_FILTER_NDV.get(settings).longValue());
+        assertNull(ParquetSettings.getBloomFilterNdv(settings));
+    }
+
+    public void testIndexBloomFilterNdvExplicitValueIsPinned() {
+        Settings settings = Settings.builder().put("index.parquet.bloom_filter_ndv", "25000").build();
+        assertEquals(Long.valueOf(25000L), ParquetSettings.getBloomFilterNdv(settings));
+    }
+
+    public void testIndexBloomFilterNdvExplicitUnsetSentinelIsNull() {
+        Settings settings = Settings.builder().put("index.parquet.bloom_filter_ndv", "-1").build();
+        assertNull(ParquetSettings.getBloomFilterNdv(settings));
+    }
+
+    public void testIndexBloomFilterNdvRejectsZeroAndOtherNegatives() {
+        for (String bad : new String[] { "0", "-2" }) {
+            Settings settings = Settings.builder().put("index.parquet.bloom_filter_ndv", bad).build();
+            IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> ParquetSettings.BLOOM_FILTER_NDV.get(settings));
+            assertTrue(e.getMessage(), e.getMessage().contains("bloom_filter_ndv"));
+        }
+    }
+
     // --- Type-level bloom filter validation tests ---
 
     public void testTypeBloomFilterValidSettings() {

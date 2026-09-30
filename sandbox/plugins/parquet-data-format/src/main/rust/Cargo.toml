@@ -42,3 +42,7 @@ harness = false
 [[bench]]
 name = "merge_run_coalescing_bench"
 harness = false
+
+[[bench]]
+name = "bloom_ndv_bench"
+harness = false

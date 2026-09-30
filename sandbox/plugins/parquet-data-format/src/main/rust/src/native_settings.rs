@@ -87,8 +87,15 @@ impl NativeSettings {
         self.bloom_filter_fpp.unwrap_or(0.1)
     }
 
-    pub fn get_bloom_filter_ndv(&self) -> u64 {
-        self.bloom_filter_ndv.unwrap_or(100_000)
+    /// Explicit global NDV hint for bloom filters, or `None` when unset.
+    ///
+    /// Unset is the intended default: `parquet` then sizes each filter from
+    /// `max_row_group_row_count` and folds it down to the target FPP at row-group
+    /// close (`Sbbf::fold_to_target_fpp`), so the filter is never undersized for
+    /// high-cardinality columns and never oversized for low-cardinality ones.
+    /// Pinning an NDV disables that self-sizing for the column.
+    pub fn get_bloom_filter_ndv(&self) -> Option<u64> {
+        self.bloom_filter_ndv
     }
 
     pub fn get_field_config(&self, field_name: &str) -> Option<&FieldConfig> {

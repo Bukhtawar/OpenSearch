@@ -149,13 +149,37 @@ public final class ParquetSettings {
         Setting.Property.IndexScope
     );
 
-    /** Bloom filter number of distinct values hint (default 100000). */
-    public static final Setting<Long> BLOOM_FILTER_NDV = Setting.longSetting(
+    /** Sentinel for {@link #BLOOM_FILTER_NDV} meaning "not set": let the writer self-size the filter. */
+    public static final long BLOOM_FILTER_NDV_UNSET = -1L;
+
+    /**
+     * Optional hard pin for the bloom filter distinct-value (NDV) hint. Unset by default
+     * ({@value #BLOOM_FILTER_NDV_UNSET}): the native writer then pre-sizes each filter for a full
+     * row group ({@link #ROW_GROUP_MAX_ROWS}) and folds it down to {@link #BLOOM_FILTER_FPP} at
+     * row-group close, so high-cardinality columns are never undersized (saturated) and
+     * low-cardinality columns shrink to a few bytes. Setting a value disables that self-sizing
+     * for all columns without a type/field-level override; must be >= 1 when set.
+     */
+    public static final Setting<Long> BLOOM_FILTER_NDV = new Setting<>(
         "index.parquet.bloom_filter_ndv",
-        100_000L,
-        1L,
+        Long.toString(BLOOM_FILTER_NDV_UNSET),
+        s -> {
+            long v = Long.parseLong(s);
+            if (v != BLOOM_FILTER_NDV_UNSET && v < 1) {
+                throw new IllegalArgumentException(
+                    "Setting [index.parquet.bloom_filter_ndv] must be >= 1, or " + BLOOM_FILTER_NDV_UNSET + " to leave unset, got " + v
+                );
+            }
+            return v;
+        },
         Setting.Property.IndexScope
     );
+
+    /** Returns the explicit bloom filter NDV pin, or {@code null} when {@link #BLOOM_FILTER_NDV} is unset. */
+    public static Long getBloomFilterNdv(Settings settings) {
+        long v = BLOOM_FILTER_NDV.get(settings);
+        return v == BLOOM_FILTER_NDV_UNSET ? null : v;
+    }
 
     /**
      * Maximum rows per VectorSchemaRoot before rotation is triggered. Default scales with total RAM
