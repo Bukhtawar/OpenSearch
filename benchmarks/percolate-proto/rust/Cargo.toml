@@ -1,0 +1,38 @@
+[package]
+name = "percolate-proto"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[features]
+vs = []
+
+[[bin]]
+name = "gen"
+path = "src/gen.rs"
+
+[[bin]]
+name = "dfscan"
+path = "src/dfscan.rs"
+
+[[bin]]
+name = "rsmatch"
+path = "src/rsmatch.rs"
+
+[dependencies]
+aho-corasick = "1"
+ahash = "0.8"
+memchr = "2"
+regex = "1"
+datafusion = "54"
+arrow = "54"
+parquet = { version = "54", features = ["lz4"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+rand_pcg = "0.3"
+
+[profile.release]
+opt-level = 3
+debug = 1
